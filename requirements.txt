@@ -13,6 +13,5 @@ psycopg[binary]
 pgvector
 
 pandas
-docx
+python-docx
 tiktoken
-
