@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     database_url: str = Field(alias="DATABASE_URL")
 
     postgres_host: str | None = Field(default=None, alias="POSTGRES_HOST")
-    postgres_port: int = Field(default="POSTGRES_PORT")
+    postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
     postgres_db: str | None = Field(default=None, alias="POSTGRES_DB")
     postgres_user: str | None = Field(default=None, alias="POSTGRES_USER")
     postgres_password: str | None = Field(default=None, alias="POSTGRES_PASSWORD")
@@ -21,10 +21,10 @@ class Settings(BaseSettings):
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
     embedding_dim: int = Field(default=1536, alias="EMBEDDING_DIM")
 
-    # vLLM
-    vllm_base_url: str = Field(default="VLLM_BASE_URL")
+    # vLLM OpenAI-compatible endpoint
+    vllm_base_url: str = Field(default="http://localhost:8000/v1", alias="VLLM_BASE_URL")
     vllm_api_key: str = Field(default="EMPTY", alias="VLLM_API_KEY")
-    vllm_model: str = Field(default="VLLM_MODEL")
+    vllm_model: str = Field(default="google/gemma-2-9b-it", alias="VLLM_MODEL")
 
     # App
     app_env: str = Field(default="local", alias="APP_ENV")
