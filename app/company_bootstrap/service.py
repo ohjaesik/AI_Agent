@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.chains.company_process_discovery import discover_company_process_specs
 from app.company_bootstrap.dart_client import DartCompany, load_dart_company
 from app.company_bootstrap.url_loader import OfficialUrlDocument, load_official_url
 from app.db.models import AnalysisProject, BusinessProcess, Company, Department, EnterpriseSystem, ProcessDocument
@@ -23,6 +24,7 @@ class BootstrapResult:
     chunk_count: int
     source_count: int
     warnings: list[str]
+    discovery_mode: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -33,6 +35,7 @@ class BootstrapResult:
             "chunk_count": self.chunk_count,
             "source_count": self.source_count,
             "warnings": self.warnings,
+            "discovery_mode": self.discovery_mode,
         }
 
 
@@ -315,23 +318,62 @@ def build_process_specs(combined_text: str) -> list[dict[str, Any]]:
     return specs
 
 
+def build_official_source_payloads(
+    official_docs: list[OfficialUrlDocument],
+    dart_company: DartCompany | None,
+) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+
+    if dart_company is not None:
+        sources.append(
+            {
+                "label": "[DART-기업개황]",
+                "source_type": "opendart_company_overview",
+                "title": f"{dart_company.corp_name} OpenDART 기업개황",
+                "url": None,
+                "content": dart_company.to_document_content(),
+            }
+        )
+
+    for index, doc in enumerate(official_docs, start=1):
+        sources.append(
+            {
+                "label": f"[공식URL-{index}]",
+                "source_type": "official_url",
+                "title": doc.title,
+                "url": doc.url,
+                "content": doc.content,
+            }
+        )
+
+    return sources
+
+
 def create_business_processes(
     db: Session,
     company_id: int,
     departments: dict[str, Department],
-    combined_text: str,
+    process_specs: list[dict[str, Any]],
 ) -> list[BusinessProcess]:
     rows: list[BusinessProcess] = []
 
-    for spec in build_process_specs(combined_text):
-        department = departments[spec["department"]]
+    for spec in process_specs:
+        department = departments.get(spec.get("department")) or departments["AX전략/기획"]
+        discovery_note = ""
+
+        if spec.get("discovery_mode"):
+            discovery_note = f"\n\n생성방식: {spec.get('discovery_mode')}"
+
+        if spec.get("discovery_warning"):
+            discovery_note += f"\n주의: {spec.get('discovery_warning')}"
+
         row = BusinessProcess(
             company_id=company_id,
             department_id=department.id,
             name=spec["name"],
             target_user=spec["target_user"],
             problem=spec["problem"],
-            current_workflow=spec["current_workflow"],
+            current_workflow=f"{spec.get('current_workflow') or ''}{discovery_note}".strip(),
             weekly_hours=spec["weekly_hours"],
             hourly_cost=40000,
             expected_effect=spec["expected_effect"],
@@ -466,11 +508,28 @@ def bootstrap_company(
     )
     departments = create_default_departments(db, company_id=company.id)
     create_default_systems(db, company_id=company.id)
+
+    fallback_process_specs = build_process_specs(combined_text)
+    official_sources = build_official_source_payloads(
+        official_docs=official_docs,
+        dart_company=dart_company,
+    )
+    discovered_process_specs = discover_company_process_specs(
+        company_name=company.name,
+        official_sources=official_sources,
+        fallback_processes=fallback_process_specs,
+    )
+
+    discovery_mode = discovered_process_specs[0].get("discovery_mode") if discovered_process_specs else None
+    discovery_warning = discovered_process_specs[0].get("discovery_warning") if discovered_process_specs else None
+    if discovery_warning:
+        warnings.append(discovery_warning)
+
     processes = create_business_processes(
         db=db,
         company_id=company.id,
         departments=departments,
-        combined_text=combined_text,
+        process_specs=discovered_process_specs,
     )
     documents = create_source_documents(
         db=db,
@@ -496,4 +555,5 @@ def bootstrap_company(
         chunk_count=chunk_count,
         source_count=len(documents),
         warnings=warnings,
+        discovery_mode=discovery_mode,
     )
