@@ -10,6 +10,16 @@ from app.agents.registry import get_agent_spec
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+FALLBACK_AGENT_TOOLS = {
+    "agent_evaluator_agent": [
+        "agent evaluator",
+        "LLM critic",
+        "evidence coverage scorer",
+        "tool permission checker",
+        "analysis result writer",
+    ],
+}
+
 
 class AgentToolPermissionError(PermissionError):
     pass
@@ -21,9 +31,11 @@ def normalize_tool_name(tool: str) -> str:
 
 def get_allowed_tools(agent_id: str) -> set[str]:
     spec = get_agent_spec(agent_id)
-    if not spec:
-        raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
-    return {normalize_tool_name(tool) for tool in spec.get("tools", [])}
+    if spec:
+        return {normalize_tool_name(tool) for tool in spec.get("tools", [])}
+    if agent_id in FALLBACK_AGENT_TOOLS:
+        return {normalize_tool_name(tool) for tool in FALLBACK_AGENT_TOOLS[agent_id]}
+    raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
 
 
 def assert_tools_allowed(agent_id: str, requested_tools: list[str]) -> None:
@@ -57,7 +69,7 @@ def enforce_agent_tools(agent_id: str, requested_tools: list[str]) -> Callable[[
 def build_tool_permission_report() -> list[dict[str, Any]]:
     from app.agents.registry import get_agent_registry
 
-    return [
+    rows = [
         {
             "agent_id": agent.get("id"),
             "agent_name": agent.get("name"),
@@ -66,3 +78,13 @@ def build_tool_permission_report() -> list[dict[str, Any]]:
         }
         for agent in get_agent_registry()
     ]
+    rows.extend(
+        {
+            "agent_id": agent_id,
+            "agent_name": agent_id,
+            "allowed_tools": tools,
+            "controls": ["runtime_tool_permission_check"],
+        }
+        for agent_id, tools in FALLBACK_AGENT_TOOLS.items()
+    )
+    return rows
