@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.api.security import create_access_token, require_api_key, validate_api_key
+from app.auth.users import authenticate_user, create_user
 from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
@@ -48,6 +49,18 @@ class TokenRequest(BaseModel):
     expires_minutes: int | None = None
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "analyst"
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+    expires_minutes: int | None = None
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -73,6 +86,29 @@ def issue_token(request: TokenRequest, x_api_key: str | None = Header(default=No
     validate_api_key(x_api_key)
     token = create_access_token(user_id=request.user_id, role=request.role, expires_minutes=request.expires_minutes)
     return {"access_token": token, "token_type": "bearer", "role": request.role, "user_id": request.user_id}
+
+
+@app.post("/auth/register")
+def register_user(request: RegisterRequest, access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
+    if access.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin role can create local users.")
+    try:
+        with SessionLocal() as db:
+            user = create_user(db=db, username=request.username, password=request.password, role=request.role)
+        return {"status": "ok", "user": {"id": user.id, "username": user.username, "role": user.role, "is_active": user.is_active}}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"User registration failed: {type(exc).__name__}: {exc}") from exc
+
+
+@app.post("/auth/login")
+def login_user(request: LoginRequest) -> dict[str, Any]:
+    try:
+        with SessionLocal() as db:
+            user = authenticate_user(db=db, username=request.username, password=request.password)
+        token = create_access_token(user_id=user.username, role=user.role, expires_minutes=request.expires_minutes)
+        return {"access_token": token, "token_type": "bearer", "role": user.role, "user_id": user.username}
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Login failed: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/companies/bootstrap")
