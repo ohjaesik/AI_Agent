@@ -7,8 +7,7 @@ import json
 
 from sqlalchemy.exc import ProgrammingError
 
-from app.company_bootstrap.service import bootstrap_company
-from app.db.database import SessionLocal
+from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-project", action="store_true")
     parser.add_argument("--no-index", action="store_true")
     parser.add_argument("--reset-company-chunks", action="store_true")
+    parser.add_argument("--thread-id", type=str, default="bootstrap-supervisor-cli")
     parser.add_argument(
         "--init-db",
         action="store_true",
@@ -46,18 +46,17 @@ def main() -> None:
         initialize_database()
 
     try:
-        with SessionLocal() as db:
-            result = bootstrap_company(
-                db=db,
-                company_name=args.company_name,
-                official_urls=args.official_url,
-                dart_api_key=args.dart_api_key,
-                corp_code=args.corp_code,
-                stock_code=args.stock_code,
-                create_project=not args.no_project,
-                index=not args.no_index,
-                reset_company_chunks=args.reset_company_chunks,
-            )
+        result = run_bootstrap_supervisor_graph(
+            company_name=args.company_name,
+            official_urls=args.official_url,
+            dart_api_key=args.dart_api_key,
+            corp_code=args.corp_code,
+            stock_code=args.stock_code,
+            create_project=not args.no_project,
+            index=not args.no_index,
+            reset_company_chunks=args.reset_company_chunks,
+            thread_id=args.thread_id,
+        )
     except ProgrammingError as exc:
         message = str(exc).lower()
         if "undefinedtable" in message or "relation \"companies\" does not exist" in message:
