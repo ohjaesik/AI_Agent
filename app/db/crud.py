@@ -113,6 +113,7 @@ def get_business_processes(db: Session, company_id: int) -> list[dict[str, Any]]
             "implementation_cost_score": item.implementation_cost_score,
             "security_level": item.security_level,
             "candidate_agent_name": item.candidate_agent_name,
+            "discovery_metadata": item.discovery_metadata,
         }
         for item in processes
     ]
@@ -278,9 +279,9 @@ def save_human_review(
 
 def write_audit_log(
     db: Session,
+    project_id: int | None,
     node_name: str,
     event_type: str,
-    project_id: int | None = None,
     payload: dict[str, Any] | None = None,
 ) -> AuditLog:
     row = AuditLog(
@@ -295,19 +296,8 @@ def write_audit_log(
     return row
 
 
-def delete_seed_data(db: Session) -> None:
-    """
-    개발 중 seed를 여러 번 실행하기 위한 초기화 함수.
-    FK 의존성 때문에 하위 테이블부터 삭제한다.
-    """
-    db.execute(delete(DocumentChunk))
-    db.execute(delete(AuditLog))
-    db.execute(delete(HumanReview))
-    db.execute(delete(AnalysisResult))
-    db.execute(delete(AnalysisProject))
-    db.execute(delete(ProcessDocument))
-    db.execute(delete(BusinessProcess))
-    db.execute(delete(EnterpriseSystem))
-    db.execute(delete(Department))
-    db.execute(delete(Company))
+def delete_chunks_by_company(db: Session, company_id: int) -> int:
+    stmt = delete(DocumentChunk).where(DocumentChunk.company_id == company_id)
+    result = db.execute(stmt)
     db.commit()
+    return result.rowcount or 0
