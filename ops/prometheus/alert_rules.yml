@@ -18,3 +18,21 @@ groups:
         annotations:
           summary: "AX Planner API average latency is above 10s"
           description: "Check graph execution, external URL fetch, embedding, and vLLM latency."
+
+      - alert: AXPlannerAgentNodeFailure
+        expr: sum(increase(ax_agent_node_runs_total{status="failed"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AX Planner agent node failure detected"
+          description: "Check node_worker logs and the failed node label in ax_agent_node_runs_total."
+
+      - alert: AXPlannerSlowAgentNode
+        expr: max(ax_agent_node_latency_seconds_max) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AX Planner agent node max latency is above 60s"
+          description: "Check retrieval, replan URL fetch, embedding, and vLLM critic latency."
