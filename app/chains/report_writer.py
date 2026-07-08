@@ -12,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
 from app.tools.citation_validator import validate_report_citations
-from app.tools.report_data_builder import build_report_data
+from app.tools.deterministic_report_data_builder import build_report_data as build_deterministic_report_data
 
 
 SYSTEM_PROMPT = """
@@ -212,7 +212,7 @@ def build_fallback_report_data(
     state: dict[str, Any],
     reason: str,
 ) -> dict[str, Any]:
-    report_data = build_report_data(state)
+    report_data = build_deterministic_report_data(state)
     report_data["generation"] = {
         "mode": "deterministic_fallback",
         "reason": reason,
@@ -221,7 +221,7 @@ def build_fallback_report_data(
 
 
 def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
-    base_report_data = build_report_data(state)
+    base_report_data = build_deterministic_report_data(state)
     evidence_items = state.get("evidence_items", [])
     allowed_citation_labels = build_allowed_citation_labels(evidence_items)
 
