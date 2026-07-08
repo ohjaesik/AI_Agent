@@ -1,0 +1,20 @@
+groups:
+  - name: ax-planner-api
+    rules:
+      - alert: AXPlannerHighErrorRate
+        expr: sum(rate(ax_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(ax_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AX Planner API 5xx error rate is above 5%"
+          description: "Check API logs, vLLM fallback behavior, DB connectivity, and agent graph errors."
+
+      - alert: AXPlannerHighLatency
+        expr: sum(rate(ax_http_request_latency_seconds_sum[5m])) / clamp_min(sum(rate(ax_http_requests_total[5m])), 0.001) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AX Planner API average latency is above 10s"
+          description: "Check graph execution, external URL fetch, embedding, and vLLM latency."
