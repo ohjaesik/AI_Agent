@@ -32,6 +32,7 @@ class AXPlannerState(TypedDict, total=False):
     automation_feasibility: dict[str, Any]
     roi_cost: dict[str, Any]
     risk_governance: dict[str, Any]
+    compliance_assessment: dict[str, Any]
     priority_ranking: dict[str, Any]
 
     # Human Review
