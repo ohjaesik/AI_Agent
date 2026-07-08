@@ -28,12 +28,14 @@ SYSTEM_PROMPT = """
 5. 각 heading의 paragraphs 개수는 입력된 base_sections와 동일하게 유지한다.
 6. 기업 및 산업 특성 분석 장에서는 웹페이지 원문, 메뉴명, 팝업, 제품 프로모션 문구, 검색창/장바구니/카테고리 텍스트를 절대 재현하지 않는다.
 7. 기업 및 산업 특성 분석 장은 기업 식별 정보, 산업 구분, AX 해석 포인트만 2~3문장으로 간결하게 쓴다.
+8. 모든 paragraph 끝에는 가능한 한 allowed citation label을 1개 이상 포함한다.
 """
 
 USER_PROMPT = """
 아래 base_sections의 paragraph만 더 자연스러운 보고서 문체로 재작성하라.
 표, 순위, 수치, citation label은 제공된 근거와 tool output에 있는 것만 사용하라.
 특히 "2. 기업 및 산업 특성 분석"은 raw web text를 요약하지 말고 base section의 의도만 간결하게 유지하라.
+각 paragraph는 일반적인 방법론 문장이 아닌 한 문장 끝에 allowed citation label을 붙여라.
 
 allowed_citation_labels:
 {allowed_citation_labels}
@@ -75,6 +77,13 @@ NOISE_PATTERNS = [
     "카테고리",
     "메뉴버튼",
     "검색버튼",
+]
+
+CITATION_EXEMPT_PATTERNS = [
+    "본 보고서는",
+    "본 문서는",
+    "아래 표는",
+    "다음 표는",
 ]
 
 
@@ -192,6 +201,53 @@ def build_analysis_summary(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def should_skip_citation_enforcement(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return True
+    if len(stripped) < 40:
+        return True
+    return any(stripped.startswith(pattern) for pattern in CITATION_EXEMPT_PATTERNS)
+
+
+def select_default_citation_label(allowed_labels: list[str], evidence_items: list[dict[str, Any]]) -> str | None:
+    if evidence_items:
+        sorted_items = sorted(evidence_items, key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
+        for item in sorted_items:
+            label = item.get("citation_label")
+            if label in allowed_labels:
+                return str(label)
+    return allowed_labels[0] if allowed_labels else None
+
+
+def enforce_citation_coverage(report_data: dict[str, Any], allowed_labels: list[str], evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
+    default_label = select_default_citation_label(allowed_labels, evidence_items)
+    if not default_label:
+        return report_data
+
+    report_data = deepcopy(report_data)
+    appended_count = 0
+    for section in report_data.get("sections", []):
+        for block in section.get("blocks", []):
+            if block.get("type") != "paragraph":
+                continue
+            text = str(block.get("text") or "")
+            if should_skip_citation_enforcement(text):
+                continue
+            if find_citation_labels(text):
+                continue
+            block["text"] = f"{text.rstrip()} {default_label}"
+            appended_count += 1
+
+    generation = dict(report_data.get("generation") or {})
+    warnings = list(generation.get("warnings") or [])
+    if appended_count:
+        warnings.append(f"citation coverage post-process appended default labels to {appended_count} paragraph(s).")
+    generation["warnings"] = warnings
+    report_data["generation"] = generation
+    return report_data
+
+
 def apply_llm_paragraphs(base_report_data: dict[str, Any], llm_payload: dict[str, Any]) -> dict[str, Any]:
     report_data = deepcopy(base_report_data)
     llm_sections = llm_payload.get("sections", [])
@@ -247,6 +303,7 @@ def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
         llm_payload = extract_json_object(str(response.content))
         report_data = apply_llm_paragraphs(base_report_data, llm_payload)
         report_data["generation"]["model"] = settings.vllm_model
+        report_data = enforce_citation_coverage(report_data, allowed_citation_labels, evidence_items)
 
         validation = validate_report_citations(report_data=report_data, evidence_items=evidence_items)
         report_data["citation_validation"] = validation
