@@ -101,6 +101,25 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("report_sections:", len(result.get("report_data", {}).get("sections", [])))
 
 
+def build_cli_human_decision(
+    reviewer_name: str,
+    review_decision: str,
+    review_comment: str | None,
+) -> dict[str, Any]:
+    default_comment = (
+        "CLI 실행 옵션에 따라 우선순위 결과를 승인 처리하였다. "
+        "운영 적용 전에는 현업 부서, IT기획, 보안/거버넌스 담당자의 검토 기록을 별도로 남겨야 한다."
+    )
+
+    return {
+        "reviewer_name": reviewer_name,
+        "decision": review_decision,
+        "comment": review_comment or default_comment,
+        "edited_payload": None,
+        "review_channel": "cli",
+    }
+
+
 def run_demo(
     project_id: int | None,
     company_id: int | None,
@@ -109,6 +128,10 @@ def run_demo(
     report_title: str | None = None,
     report_author: str | None = None,
     report_date: str | None = None,
+    report_status: str | None = None,
+    reviewer_name: str = "IT기획팀 담당자",
+    review_decision: str = "approve",
+    review_comment: str | None = None,
     verbose: bool = False,
 ) -> dict[str, Any]:
     resolved = resolve_ids(project_id=project_id, company_id=company_id)
@@ -123,11 +146,13 @@ def run_demo(
         }
     }
 
+    normalized_report_status = report_status or ("reviewed" if auto_approve else "draft")
+
     initial_state = {
         "project_id": resolved_project_id,
         "company_id": resolved_company_id,
         "user_request": (
-            "제조기업의 업무 프로세스와 내부 문서를 분석하여 "
+            "제조기업의 업무 프로세스와 공식/내부 문서를 분석하여 "
             "AI Agent 도입 후보를 도출하고 PoC 우선순위 보고서를 생성한다."
         ),
         "report_requirements": {
@@ -135,6 +160,7 @@ def run_demo(
             or "제조기업 AX 전환 업무 프로세스 진단 및 AI Agent 도입 우선순위 추천 보고서",
             "author": report_author or "",
             "date": report_date or "",
+            "status": normalized_report_status,
         },
         "audit_logs": [],
         "errors": [],
@@ -143,6 +169,7 @@ def run_demo(
     print("=== AX Delivery Planner Graph Start ===")
     print(f"project_id={resolved_project_id}, company_id={resolved_company_id}")
     print(f"thread_id={thread_id}")
+    print(f"report_status={normalized_report_status}")
 
     result = graph.invoke(initial_state, config=config)
 
@@ -153,15 +180,11 @@ def run_demo(
             print("\nGraph paused. Resume with a human decision in code or run with --auto-approve.")
             return result
 
-        human_decision = {
-            "reviewer_name": "IT기획팀 담당자",
-            "decision": "approve",
-            "comment": (
-                "v1 데모 실행을 위해 자동 승인한다. "
-                "실제 운영에서는 IT기획팀, 현업 부서장, 보안 담당자 검토가 필요하다."
-            ),
-            "edited_payload": None,
-        }
+        human_decision = build_cli_human_decision(
+            reviewer_name=reviewer_name,
+            review_decision=review_decision,
+            review_comment=review_comment,
+        )
 
         print("\n=== Auto Resume With Human Decision ===")
         print(compact_payload(human_decision))
@@ -212,12 +235,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Company ID. If omitted, it is resolved from the selected project.",
     )
-    parser.add_argument("--thread-id", type=str, default="ax-planner-demo-001")
+    parser.add_argument("--thread-id", type=str, default="ax-planner-cli")
     parser.add_argument("--auto-approve", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--report-title", type=str, default=None)
     parser.add_argument("--report-author", type=str, default=None)
     parser.add_argument("--report-date", type=str, default=None)
+    parser.add_argument("--report-status", type=str, default=None, choices=["draft", "reviewed", "final"])
+    parser.add_argument("--reviewer-name", type=str, default="IT기획팀 담당자")
+    parser.add_argument("--review-decision", type=str, default="approve", choices=["approve", "edit", "reject"])
+    parser.add_argument("--review-comment", type=str, default=None)
     return parser.parse_args()
 
 
@@ -232,5 +259,9 @@ if __name__ == "__main__":
         report_title=args.report_title,
         report_author=args.report_author,
         report_date=args.report_date,
+        report_status=args.report_status,
+        reviewer_name=args.reviewer_name,
+        review_decision=args.review_decision,
+        review_comment=args.review_comment,
         verbose=args.verbose,
     )
