@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -62,13 +62,12 @@ def ui() -> str:
 
 
 @app.post("/auth/token")
-def issue_token(request: TokenRequest, x_api_key: str | None = None) -> dict[str, Any]:
+def issue_token(
+    request: TokenRequest,
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> dict[str, Any]:
     validate_api_key(x_api_key)
-    token = create_access_token(
-        user_id=request.user_id,
-        role=request.role,
-        expires_minutes=request.expires_minutes,
-    )
+    token = create_access_token(user_id=request.user_id, role=request.role, expires_minutes=request.expires_minutes)
     return {"access_token": token, "token_type": "bearer", "role": request.role, "user_id": request.user_id}
 
 
@@ -141,41 +140,19 @@ def ingest_document(
 
 
 @app.get("/rag/search")
-def rag_search(
-    query: str,
-    company_id: int,
-    process_id: int | None = None,
-    top_k: int = 5,
-    access: AccessContext = Depends(require_api_key),
-) -> dict[str, Any]:
+def rag_search(query: str, company_id: int, process_id: int | None = None, top_k: int = 5, access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
     try:
         with SessionLocal() as db:
-            results = search_similar_chunks(
-                db=db,
-                query=query,
-                company_id=company_id,
-                process_id=process_id,
-                top_k=top_k,
-                user_role=access.role,
-            )
-
+            results = search_similar_chunks(db=db, query=query, company_id=company_id, process_id=process_id, top_k=top_k, user_role=access.role)
         return {"status": "ok", "query": query, "company_id": company_id, "process_id": process_id, "user_role": access.role, "count": len(results), "results": results}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"RAG search failed: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/rag/reindex")
-def reindex_rag(
-    company_id: int | None = None,
-    reset: bool = True,
-    chunk_size: int = 800,
-    chunk_overlap: int = 120,
-    batch_size: int = 64,
-    access: AccessContext = Depends(require_api_key),
-) -> dict[str, Any]:
+def reindex_rag(company_id: int | None = None, reset: bool = True, chunk_size: int = 800, chunk_overlap: int = 120, batch_size: int = 64, access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
     if access.role != "admin":
         raise HTTPException(status_code=403, detail="Only admin role can reindex RAG documents.")
-
     try:
         inserted_count = index_documents(company_id=company_id, reset=reset, chunk_size=chunk_size, chunk_overlap=chunk_overlap, batch_size=batch_size)
         return {"status": "ok", "inserted_chunks": inserted_count}
@@ -184,19 +161,11 @@ def reindex_rag(
 
 
 @app.post("/analysis/run")
-def run_analysis(
-    project_id: int | None = None,
-    company_id: int | None = None,
-    auto_approve: bool = True,
-    thread_id: str = "ax-planner-api",
-    access: AccessContext = Depends(require_api_key),
-) -> dict[str, Any]:
+def run_analysis(project_id: int | None = None, company_id: int | None = None, auto_approve: bool = True, thread_id: str = "ax-planner-api", access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
     try:
         result = run_demo(project_id=project_id, company_id=company_id, thread_id=thread_id, auto_approve=auto_approve, verbose=False)
-
         if "__interrupt__" in result:
             return {"status": "interrupted", "interrupt": str(result.get("__interrupt__"))}
-
         return {
             "status": "ok",
             "access": {"user_id": access.user_id, "role": access.role},
@@ -207,7 +176,6 @@ def run_analysis(
             "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),
             "errors": result.get("errors", []),
         }
-
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Analysis failed: {type(exc).__name__}: {exc}") from exc
 
@@ -216,7 +184,6 @@ def run_analysis(
 def apply_review_to_ranking(request: ReviewApplyRequest, access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
     if access.role not in {"manager", "admin"}:
         raise HTTPException(status_code=403, detail="Only manager/admin role can apply human review decisions.")
-
     result = apply_human_review_to_ranking(priority_ranking=request.priority_ranking, human_review=request.human_review)
     return {"status": "ok", "priority_ranking": result}
 
@@ -238,7 +205,6 @@ TEST_UI_HTML = """
 </head>
 <body>
   <h1>AX Delivery Planner Test UI</h1>
-
   <section>
     <h2>0. Local API Key</h2>
     <label>APP_API_KEY(optional)</label>
@@ -247,7 +213,6 @@ TEST_UI_HTML = """
     <input id="userRole" type="text" value="admin" style="width: 120px" />
     <button onclick="saveApiKey()">Save</button>
   </section>
-
   <section>
     <h2>1. 회사명 기반 DB 생성</h2>
     <label>Company Name</label>
@@ -256,7 +221,6 @@ TEST_UI_HTML = """
     <input id="officialUrl" type="text" placeholder="https://..." style="width: 640px" />
     <button onclick="bootstrapCompany()">Bootstrap Company</button>
   </section>
-
   <section>
     <h2>2. 문서 업로드 + RAG 색인</h2>
     <label>Company ID</label>
@@ -267,14 +231,12 @@ TEST_UI_HTML = """
     <input id="file" type="file" />
     <button onclick="ingest()">Upload & Index</button>
   </section>
-
   <section>
     <h2>3. RAG 검색 확인</h2>
     <label>Query</label>
     <input id="ragQuery" type="text" value="SOP 검색 작업표준서" style="width: 420px" />
     <button onclick="ragSearch()">Search RAG</button>
   </section>
-
   <section>
     <h2>4. 분석 실행</h2>
     <label>Project ID(optional)</label>
@@ -283,28 +245,19 @@ TEST_UI_HTML = """
     <input id="analysisCompanyId" type="number" placeholder="optional" />
     <button onclick="runAnalysis()">Run Analysis</button>
   </section>
-
   <pre id="output">ready</pre>
-
 <script>
 function saveApiKey() {
   localStorage.setItem('AX_APP_API_KEY', document.getElementById('apiKey').value || '');
   localStorage.setItem('AX_USER_ROLE', document.getElementById('userRole').value || 'analyst');
   document.getElementById('output').textContent = 'saved';
 }
-
 async function show(promise) {
   const out = document.getElementById('output');
   out.textContent = 'loading...';
-  try {
-    const res = await promise;
-    const data = await res.json();
-    out.textContent = JSON.stringify(data, null, 2);
-  } catch (e) {
-    out.textContent = String(e);
-  }
+  try { const res = await promise; const data = await res.json(); out.textContent = JSON.stringify(data, null, 2); }
+  catch (e) { out.textContent = String(e); }
 }
-
 function authHeaders(json=true) {
   const key = localStorage.getItem('AX_APP_API_KEY') || '';
   const role = localStorage.getItem('AX_USER_ROLE') || 'analyst';
@@ -313,23 +266,11 @@ function authHeaders(json=true) {
   if (role) headers['X-User-Role'] = role;
   return headers;
 }
-
 function bootstrapCompany() {
   const companyName = document.getElementById('bootstrapCompanyName').value;
   const officialUrl = document.getElementById('officialUrl').value;
-  show(fetch('/companies/bootstrap', {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({
-      company_name: companyName,
-      official_urls: officialUrl ? [officialUrl] : [],
-      create_project: true,
-      index: true,
-      thread_id: 'bootstrap-supervisor-ui'
-    })
-  }));
+  show(fetch('/companies/bootstrap', {method: 'POST', headers: authHeaders(), body: JSON.stringify({company_name: companyName, official_urls: officialUrl ? [officialUrl] : [], create_project: true, index: true, thread_id: 'bootstrap-supervisor-ui'})}));
 }
-
 function ingest() {
   const fd = new FormData();
   fd.append('company_id', document.getElementById('companyId').value);
@@ -338,13 +279,11 @@ function ingest() {
   fd.append('file', document.getElementById('file').files[0]);
   show(fetch('/documents/ingest', {method:'POST', headers: authHeaders(false), body: fd}));
 }
-
 function ragSearch() {
   const q = encodeURIComponent(document.getElementById('ragQuery').value);
   const companyId = document.getElementById('companyId').value;
   show(fetch(`/rag/search?query=${q}&company_id=${companyId}`, {headers: authHeaders(false)}));
 }
-
 function runAnalysis() {
   const projectId = document.getElementById('projectId').value;
   const companyId = document.getElementById('analysisCompanyId').value;
