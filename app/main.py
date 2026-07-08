@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import pprint
+from pathlib import Path
 from typing import Any
 
 from langgraph.types import Command
@@ -46,6 +47,12 @@ def compact_payload(payload: Any, max_chars: int = 700) -> str:
         return text
 
     return text[:max_chars] + "..."
+
+
+def save_graph_state(path: str | Path, state: dict[str, Any]) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(state, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 
 def print_execution_trace(result: dict[str, Any]) -> None:
@@ -133,6 +140,7 @@ def run_demo(
     review_decision: str = "approve",
     review_comment: str | None = None,
     verbose: bool = False,
+    state_json_output: str | None = None,
 ) -> dict[str, Any]:
     resolved = resolve_ids(project_id=project_id, company_id=company_id)
     resolved_project_id = resolved["project_id"]
@@ -178,6 +186,9 @@ def run_demo(
 
         if not auto_approve:
             print("\nGraph paused. Resume with a human decision in code or run with --auto-approve.")
+            if state_json_output:
+                save_graph_state(state_json_output, result)
+                print("state_json_output:", state_json_output)
             return result
 
         human_decision = build_cli_human_decision(
@@ -218,6 +229,10 @@ def run_demo(
         print_state_summary(result)
         print_execution_trace(result)
 
+    if state_json_output:
+        save_graph_state(state_json_output, result)
+        print("state_json_output:", state_json_output)
+
     return result
 
 
@@ -245,6 +260,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reviewer-name", type=str, default="IT기획팀 담당자")
     parser.add_argument("--review-decision", type=str, default="approve", choices=["approve", "edit", "reject"])
     parser.add_argument("--review-comment", type=str, default=None)
+    parser.add_argument("--state-json-output", type=str, default=None, help="Optional path to save final graph state as JSON for holdout labeling export")
     return parser.parse_args()
 
 
@@ -264,4 +280,5 @@ if __name__ == "__main__":
         review_decision=args.review_decision,
         review_comment=args.review_comment,
         verbose=args.verbose,
+        state_json_output=args.state_json_output,
     )
