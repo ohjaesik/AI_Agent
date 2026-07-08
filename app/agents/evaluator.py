@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.registry import get_agent_registry
+from app.agents.tool_guard import build_tool_permission_report
 
 STATUS_ORDER = {
     "recommended": 6,
@@ -237,21 +237,15 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    updated_ranking = apply_evaluation_to_ranking(
-        priority_ranking=ranking_for_evaluation,
-        evaluation_items=evaluation_items,
-    )
+    updated_ranking = apply_evaluation_to_ranking(priority_ranking=ranking_for_evaluation, evaluation_items=evaluation_items)
 
     low_confidence_count = sum(1 for item in evaluation_items if item.get("confidence_score", 1) < 0.50)
     human_review_required_count = sum(1 for item in evaluation_items if item.get("requires_human_review"))
     additional_evidence_count = sum(1 for item in evaluation_items if item.get("requires_additional_evidence"))
-    avg_confidence = round(
-        sum(float(item.get("confidence_score") or 0.0) for item in evaluation_items) / len(evaluation_items),
-        3,
-    ) if evaluation_items else 0.0
+    avg_confidence = round(sum(float(item.get("confidence_score") or 0.0) for item in evaluation_items) / len(evaluation_items), 3) if evaluation_items else 0.0
 
     return {
-        "agent_registry": get_agent_registry(),
+        "agent_registry": build_tool_permission_report(),
         "items": evaluation_items,
         "summary": {
             "evaluated_candidates": len(evaluation_items),
