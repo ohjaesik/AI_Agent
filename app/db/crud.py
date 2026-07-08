@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app.db.models import (
     AnalysisProject,
@@ -153,6 +153,10 @@ def get_project_payload(db: Session, project_id: int) -> dict[str, Any]:
     if project is None:
         raise ValueError(f"AnalysisProject not found: {project_id}")
 
+    return project_to_payload(project)
+
+
+def project_to_payload(project: AnalysisProject) -> dict[str, Any]:
     return {
         "id": project.id,
         "company_id": project.company_id,
@@ -162,9 +166,70 @@ def get_project_payload(db: Session, project_id: int) -> dict[str, Any]:
     }
 
 
-def load_project_data(db: Session, project_id: int, company_id: int) -> dict[str, Any]:
+def get_latest_project(
+    db: Session,
+    company_id: int | None = None,
+) -> dict[str, Any]:
+    stmt = select(AnalysisProject)
+
+    if company_id is not None:
+        stmt = stmt.where(AnalysisProject.company_id == company_id)
+
+    stmt = stmt.order_by(
+        AnalysisProject.created_at.desc(),
+        AnalysisProject.id.desc(),
+    )
+
+    project = db.execute(stmt).scalars().first()
+
+    if project is None:
+        if company_id is None:
+            raise ValueError("AnalysisProject not found. Run seed first.")
+        raise ValueError(f"AnalysisProject not found for company_id={company_id}. Run seed first.")
+
+    return project_to_payload(project)
+
+
+def resolve_project_selection(
+    db: Session,
+    project_id: int | None = None,
+    company_id: int | None = None,
+) -> dict[str, int]:
+    if project_id is not None:
+        project = get_project_payload(db, project_id)
+
+        resolved_company_id = int(project["company_id"])
+
+        if company_id is not None and company_id != resolved_company_id:
+            raise ValueError(
+                f"project_id={project_id} belongs to company_id={resolved_company_id}, "
+                f"but company_id={company_id} was provided."
+            )
+
+        return {
+            "project_id": int(project["id"]),
+            "company_id": resolved_company_id,
+        }
+
+    project = get_latest_project(db, company_id=company_id)
+
     return {
-        "project": get_project_payload(db, project_id),
+        "project_id": int(project["id"]),
+        "company_id": int(project["company_id"]),
+    }
+
+
+def load_project_data(db: Session, project_id: int, company_id: int) -> dict[str, Any]:
+    project = get_project_payload(db, project_id)
+
+    if int(project["company_id"]) != int(company_id):
+        raise ValueError(
+            f"project_id={project_id} belongs to company_id={project['company_id']}, "
+            f"but company_id={company_id} was provided."
+        )
+
+    return {
+        "project": project,
         "company_profile": get_company_profile(db, company_id),
         "departments": get_departments(db, company_id),
         "systems": get_systems(db, company_id),
