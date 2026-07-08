@@ -57,6 +57,18 @@ def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[i
     return result
 
 
+def compute_replan_evidence_lift(state: dict[str, Any]) -> float:
+    source_collection = (state.get("replan_request") or {}).get("source_collection") or {}
+    public_results = ((source_collection.get("public_web_search") or {}).get("results") or [])
+    same_domain = source_collection.get("same_domain_discovered") or []
+    indexed_chunks = int(source_collection.get("indexed_chunks") or 0)
+
+    public_lift = min(len(public_results), 3) * 0.025
+    official_lift = min(len(same_domain), 3) * 0.02
+    chunk_lift = min(indexed_chunks, 60) / 60 * 0.055
+    return clamp(public_lift + official_lift + chunk_lift, maximum=0.15)
+
+
 def score_rationale_coverage(candidate: dict[str, Any]) -> float:
     rationale = candidate.get("score_rationale") or {}
     if not isinstance(rationale, dict):
@@ -73,20 +85,20 @@ def score_rationale_coverage(candidate: dict[str, Any]) -> float:
     return clamp(len(present) / len(required))
 
 
-def score_evidence_coverage(candidate: dict[str, Any], context_count: int, evidence_count: int) -> float:
+def score_evidence_coverage(candidate: dict[str, Any], context_count: int, evidence_count: int, replan_evidence_lift: float = 0.0) -> float:
     metadata = candidate.get("discovery_metadata") or {}
     labels = metadata.get("evidence_labels") if isinstance(metadata, dict) else []
     label_score = min(len(labels or []), 3) / 3
-    context_score = min(context_count, 3) / 3
-    evidence_score = min(evidence_count, 2) / 2
-    return clamp(label_score * 0.45 + context_score * 0.35 + evidence_score * 0.20)
+    context_score = min(context_count, 4) / 4
+    evidence_score = min(evidence_count, 3) / 3
+    return clamp(label_score * 0.38 + context_score * 0.34 + evidence_score * 0.28 + replan_evidence_lift)
 
 
-def score_data_confidence(candidate: dict[str, Any], context_count: int) -> float:
+def score_data_confidence(candidate: dict[str, Any], context_count: int, replan_evidence_lift: float = 0.0) -> float:
     data_accessibility = float(candidate.get("data_accessibility") or 3)
     data_score = clamp(data_accessibility / 5)
-    context_score = clamp(min(context_count, 3) / 3)
-    return clamp(data_score * 0.70 + context_score * 0.30)
+    context_score = clamp(min(context_count, 4) / 4)
+    return clamp(data_score * 0.66 + context_score * 0.30 + replan_evidence_lift * 0.04)
 
 
 def score_compliance_alignment(candidate: dict[str, Any]) -> tuple[float, list[str]]:
@@ -120,19 +132,19 @@ def score_risk_uncertainty(candidate: dict[str, Any]) -> float:
     return clamp(risk_part * 0.55 + compliance_part * 0.45)
 
 
-def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_count: int) -> dict[str, Any]:
-    evidence_coverage = score_evidence_coverage(candidate, context_count=context_count, evidence_count=evidence_count)
-    data_confidence = score_data_confidence(candidate, context_count=context_count)
+def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_count: int, replan_evidence_lift: float = 0.0) -> dict[str, Any]:
+    evidence_coverage = score_evidence_coverage(candidate, context_count=context_count, evidence_count=evidence_count, replan_evidence_lift=replan_evidence_lift)
+    data_confidence = score_data_confidence(candidate, context_count=context_count, replan_evidence_lift=replan_evidence_lift)
     rationale_coverage = score_rationale_coverage(candidate)
     compliance_alignment, issues = score_compliance_alignment(candidate)
     risk_uncertainty = score_risk_uncertainty(candidate)
 
     confidence_score = clamp(
-        evidence_coverage * 0.34
+        evidence_coverage * 0.36
         + data_confidence * 0.24
         + rationale_coverage * 0.18
-        + compliance_alignment * 0.24
-        - risk_uncertainty * 0.14
+        + compliance_alignment * 0.22
+        - risk_uncertainty * 0.12
     )
 
     if evidence_coverage < 0.45:
@@ -154,6 +166,7 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
         "rationale_coverage": rationale_coverage,
         "compliance_alignment": compliance_alignment,
         "risk_uncertainty": risk_uncertainty,
+        "replan_evidence_lift": replan_evidence_lift,
         "requires_additional_evidence": requires_additional_evidence,
         "requires_human_review": requires_human_review,
         "issues": issues,
@@ -220,6 +233,7 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
         state.get("compliance_assessment")
         or (state.get("risk_governance", {}) or {}).get("compliance_assessment")
     )
+    replan_evidence_lift = compute_replan_evidence_lift(state)
 
     evaluation_items = []
     ranking_for_evaluation = {**ranking, "items": []}
@@ -234,6 +248,7 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
                 candidate=enriched_candidate,
                 context_count=context_map.get(process_id, 0),
                 evidence_count=evidence_map.get(process_id, 0),
+                replan_evidence_lift=replan_evidence_lift,
             )
         )
 
@@ -253,6 +268,7 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
             "low_confidence_count": low_confidence_count,
             "human_review_required_count": human_review_required_count,
             "additional_evidence_required_count": additional_evidence_count,
+            "replan_evidence_lift": replan_evidence_lift,
         },
         "updated_priority_ranking": updated_ranking,
     }
