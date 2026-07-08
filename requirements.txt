@@ -12,6 +12,11 @@ sqlalchemy
 psycopg[binary]
 pgvector
 
+fastapi
+uvicorn[standard]
+python-multipart
+
 pandas
 python-docx
+pypdf
 tiktoken
