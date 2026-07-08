@@ -40,15 +40,32 @@ def build_ax_planner_graph():
     builder.add_node("report_writer", report_writer_node)
     builder.add_node("docx_generator", docx_generator_node)
 
+    # 공통 입력 로드 단계
     builder.add_edge(START, "load_project_data")
     builder.add_edge("load_project_data", "retrieve_context")
+
+    # 병렬 분석 fan-out
     builder.add_edge("retrieve_context", "process_analyzer")
-    builder.add_edge("process_analyzer", "data_readiness")
-    builder.add_edge("data_readiness", "automation_feasibility")
+    builder.add_edge("retrieve_context", "data_readiness")
+    builder.add_edge("retrieve_context", "automation_feasibility")
+    builder.add_edge("retrieve_context", "risk_governance")
+
+    # 부분 의존성
     builder.add_edge("automation_feasibility", "roi_cost")
-    builder.add_edge("roi_cost", "risk_governance")
     builder.add_edge("risk_governance", "compliance_assessment")
-    builder.add_edge("compliance_assessment", "priority_ranking")
+
+    # fan-in: 모든 핵심 분석 결과가 준비된 뒤 우선순위 산정
+    builder.add_edge(
+        [
+            "process_analyzer",
+            "data_readiness",
+            "roi_cost",
+            "compliance_assessment",
+        ],
+        "priority_ranking",
+    )
+
+    # 의사결정 및 산출물 생성 단계
     builder.add_edge("priority_ranking", "human_review")
     builder.add_edge("human_review", "poc_delivery_planner")
     builder.add_edge("poc_delivery_planner", "report_writer")
