@@ -55,9 +55,7 @@ def get_or_create_departments(db: Session, company_id: int) -> tuple[dict[str, D
     ]
     existing = {
         item.name: item
-        for item in db.execute(
-            select(Department).where(Department.company_id == company_id)
-        ).scalars().all()
+        for item in db.execute(select(Department).where(Department.company_id == company_id)).scalars().all()
     }
     created_count = 0
 
@@ -86,9 +84,7 @@ def get_or_create_systems(db: Session, company_id: int) -> tuple[list[Enterprise
     ]
     existing = {
         item.name: item
-        for item in db.execute(
-            select(EnterpriseSystem).where(EnterpriseSystem.company_id == company_id)
-        ).scalars().all()
+        for item in db.execute(select(EnterpriseSystem).where(EnterpriseSystem.company_id == company_id)).scalars().all()
     }
     rows: list[EnterpriseSystem] = []
     created_count = 0
@@ -115,6 +111,16 @@ def get_or_create_systems(db: Session, company_id: int) -> tuple[list[Enterprise
 
 
 def find_official_url_document(db: Session, company_id: int, url: str) -> ProcessDocument | None:
+    row = db.execute(
+        select(ProcessDocument).where(
+            ProcessDocument.company_id == company_id,
+            ProcessDocument.document_type == "official_url",
+            ProcessDocument.source_url == url,
+        )
+    ).scalars().first()
+    if row is not None:
+        return row
+
     prefix = f"공식 URL: {url}\n"
     rows = db.execute(
         select(ProcessDocument).where(
@@ -141,11 +147,12 @@ def upsert_source_documents(
 
     if dart_company is not None:
         title = f"{dart_company.corp_name} OpenDART 기업개황"
+        source_url = f"opendart://company/{dart_company.corp_code}"
         row = db.execute(
             select(ProcessDocument).where(
                 ProcessDocument.company_id == company_id,
                 ProcessDocument.document_type == "opendart_company_overview",
-                ProcessDocument.title == title,
+                ProcessDocument.source_url == source_url,
             )
         ).scalars().first()
         if row is None:
@@ -158,15 +165,20 @@ def upsert_source_documents(
                 department="공식공시",
                 security_level="public_official",
                 contains_sensitive_info=False,
+                source_url=source_url,
+                allowed_roles=["viewer", "analyst", "manager", "admin"],
             )
             db.add(row)
             created_count += 1
         else:
             updated_count += 1
+        row.title = title
         row.content = dart_company.to_document_content()
         row.department = "공식공시"
         row.security_level = "public_official"
         row.contains_sensitive_info = False
+        row.source_url = source_url
+        row.allowed_roles = ["viewer", "analyst", "manager", "admin"]
         rows.append(row)
 
     for doc in official_docs:
@@ -182,6 +194,8 @@ def upsert_source_documents(
                 department="공식웹사이트",
                 security_level="public_official",
                 contains_sensitive_info=False,
+                source_url=doc.url,
+                allowed_roles=["viewer", "analyst", "manager", "admin"],
             )
             db.add(row)
             created_count += 1
@@ -192,6 +206,8 @@ def upsert_source_documents(
             row.department = "공식웹사이트"
             row.security_level = "public_official"
             row.contains_sensitive_info = False
+            row.source_url = doc.url
+            row.allowed_roles = ["viewer", "analyst", "manager", "admin"]
         rows.append(row)
 
     db.commit()
@@ -214,9 +230,7 @@ def upsert_business_processes(
 
     existing = {
         (item.name, item.candidate_agent_name or ""): item
-        for item in db.execute(
-            select(BusinessProcess).where(BusinessProcess.company_id == company_id)
-        ).scalars().all()
+        for item in db.execute(select(BusinessProcess).where(BusinessProcess.company_id == company_id)).scalars().all()
     }
 
     for spec in process_specs:
@@ -224,13 +238,7 @@ def upsert_business_processes(
         key = (spec["name"], spec.get("candidate_agent_name") or "")
         row = existing.get(key)
         if row is None:
-            row = BusinessProcess(
-                company_id=company_id,
-                department_id=department.id,
-                name=spec["name"],
-                target_user=spec["target_user"],
-                problem=spec["problem"],
-            )
+            row = BusinessProcess(company_id=company_id, department_id=department.id, name=spec["name"], target_user=spec["target_user"], problem=spec["problem"])
             db.add(row)
             created_count += 1
         else:
@@ -269,17 +277,10 @@ def upsert_business_processes(
     return rows, created_count, updated_count
 
 
-def get_or_create_analysis_project(
-    db: Session,
-    company_id: int,
-    company_name: str,
-) -> tuple[AnalysisProject, bool]:
+def get_or_create_analysis_project(db: Session, company_id: int, company_name: str) -> tuple[AnalysisProject, bool]:
     title = f"{company_name} 공식자료 기반 AX 전환 진단"
     project = db.execute(
-        select(AnalysisProject).where(
-            AnalysisProject.company_id == company_id,
-            AnalysisProject.title == title,
-        ).order_by(AnalysisProject.id.asc())
+        select(AnalysisProject).where(AnalysisProject.company_id == company_id, AnalysisProject.title == title).order_by(AnalysisProject.id.asc())
     ).scalars().first()
 
     if project is not None:
