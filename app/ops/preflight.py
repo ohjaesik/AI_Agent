@@ -94,7 +94,12 @@ def check_graph_worker() -> CheckResult:
     if mode == "subprocess":
         return ok("graph_node_worker", "subprocess mode configured")
     if mode == "docker":
-        result = subprocess.run(["docker", "image", "inspect", settings.graph_node_worker_image], capture_output=True, text=True, timeout=10, check=False)
+        try:
+            result = subprocess.run(["docker", "image", "inspect", settings.graph_node_worker_image], capture_output=True, text=True, timeout=10, check=False)
+        except FileNotFoundError:
+            return fail("graph_node_worker", "docker CLI not found. Install Docker Desktop or set GRAPH_NODE_EXECUTION_MODE=subprocess/direct.")
+        except Exception as exc:
+            return fail("graph_node_worker", f"docker check failed: {type(exc).__name__}: {exc}")
         if result.returncode != 0:
             return fail("graph_node_worker", f"docker image not found: {settings.graph_node_worker_image}. Run docker build -t {settings.graph_node_worker_image} .")
         return ok("graph_node_worker", f"docker mode configured with image {settings.graph_node_worker_image}")
