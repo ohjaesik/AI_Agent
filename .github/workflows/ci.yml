@@ -56,26 +56,41 @@ jobs:
           pip install -r requirements.txt
       - name: Run tests
         run: pytest
-      - name: Run agent quality gate
+      - name: Run regression quality gate
         run: |
           mkdir -p outputs
           python -m app.evaluation.agent_quality_eval \
+            --dataset regression \
             --strict \
-            --min-status-accuracy 0.80 \
-            --min-review-accuracy 0.90 \
-            --min-status-macro-f1 0.75 \
-            --min-review-f1 0.90 \
+            --min-status-accuracy 0.95 \
+            --min-review-accuracy 0.95 \
+            --min-status-macro-f1 0.95 \
+            --min-review-f1 0.95 \
             --json \
-            --csv outputs/agent_quality_eval.csv \
-            --markdown outputs/agent_quality_eval.md
+            --csv outputs/agent_quality_regression.csv \
+            --markdown outputs/agent_quality_regression.md
+      - name: Run blind holdout quality gate
+        run: |
+          python -m app.evaluation.agent_quality_eval \
+            --dataset holdout \
+            --strict \
+            --min-status-accuracy 0.85 \
+            --min-review-accuracy 0.85 \
+            --min-status-macro-f1 0.80 \
+            --min-review-f1 0.85 \
+            --json \
+            --csv outputs/agent_quality_holdout.csv \
+            --markdown outputs/agent_quality_holdout.md
       - name: Upload agent quality reports
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: agent-quality-reports
           path: |
-            outputs/agent_quality_eval.csv
-            outputs/agent_quality_eval.md
+            outputs/agent_quality_regression.csv
+            outputs/agent_quality_regression.md
+            outputs/agent_quality_holdout.csv
+            outputs/agent_quality_holdout.md
       - name: Run preflight smoke
         run: |
           python -m app.ops.preflight --json --skip-optional
