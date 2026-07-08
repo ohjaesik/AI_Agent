@@ -14,6 +14,7 @@ from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
 from app.main import run_demo
 from app.rag.indexer import index_documents
+from app.rag.retriever import search_similar_chunks
 from app.tools.review_applier import apply_human_review_to_ranking
 
 app = FastAPI(title="AX Delivery Planner API", version="0.1.0")
@@ -82,6 +83,35 @@ def ingest_document(
                 temp_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+
+@app.get("/rag/search")
+def rag_search(
+    query: str,
+    company_id: int,
+    process_id: int | None = None,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    try:
+        with SessionLocal() as db:
+            results = search_similar_chunks(
+                db=db,
+                query=query,
+                company_id=company_id,
+                process_id=process_id,
+                top_k=top_k,
+            )
+
+        return {
+            "status": "ok",
+            "query": query,
+            "company_id": company_id,
+            "process_id": process_id,
+            "count": len(results),
+            "results": results,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"RAG search failed: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/rag/reindex")
@@ -179,7 +209,14 @@ TEST_UI_HTML = """
   </section>
 
   <section>
-    <h2>2. 분석 실행</h2>
+    <h2>2. RAG 검색 확인</h2>
+    <label>Query</label>
+    <input id="ragQuery" type="text" value="SOP 검색 작업표준서" style="width: 420px" />
+    <button onclick="ragSearch()">Search RAG</button>
+  </section>
+
+  <section>
+    <h2>3. 분석 실행</h2>
     <label>Project ID(optional)</label>
     <input id="projectId" type="number" placeholder="optional" />
     <button onclick="runAnalysis()">Run Analysis</button>
@@ -207,6 +244,19 @@ async function ingest() {
   form.append('index', 'true');
 
   const res = await fetch('/documents/ingest', {method: 'POST', body: form});
+  show(await res.json());
+}
+
+async function ragSearch() {
+  const companyId = document.getElementById('companyId').value;
+  const processId = document.getElementById('processId').value;
+  const query = document.getElementById('ragQuery').value;
+  const params = new URLSearchParams();
+  params.append('company_id', companyId);
+  params.append('query', query);
+  params.append('top_k', '10');
+  if (processId) params.append('process_id', processId);
+  const res = await fetch('/rag/search?' + params.toString());
   show(await res.json());
 }
 
