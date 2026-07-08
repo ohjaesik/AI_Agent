@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Annotated, Any
 
 import jwt
 from fastapi import Header, HTTPException, status
@@ -61,10 +61,10 @@ def validate_api_key(x_api_key: str | None) -> None:
 
 
 def require_api_key(
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
-    x_user_role: str | None = Header(default=None, alias="X-User-Role"),
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
+    x_user_role: Annotated[str | None, Header(alias="X-User-Role")] = None,
 ) -> AccessContext:
     """Protect API endpoints.
 
