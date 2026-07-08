@@ -1,6 +1,6 @@
 import pytest
 
-from app.graph.node_worker import NodeWorkerError, import_node, workerized_node
+from app.graph.node_worker import NON_WORKERIZABLE_NODES, NodeWorkerError, import_node, workerized_node
 
 
 def test_import_node_known_name_returns_callable():
@@ -16,3 +16,7 @@ def test_import_node_rejects_unknown_name():
 def test_workerized_node_sets_name():
     fn = workerized_node("agent_evaluator")
     assert fn.__name__ == "workerized_agent_evaluator"
+
+
+def test_human_review_is_not_workerizable():
+    assert "human_review" in NON_WORKERIZABLE_NODES
