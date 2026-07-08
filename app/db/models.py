@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -21,6 +22,7 @@ from app.db.database import Base
 
 class Company(Base):
     __tablename__ = "companies"
+    __table_args__ = (UniqueConstraint("name", name="uq_companies_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -36,6 +38,7 @@ class Company(Base):
 
 class Department(Base):
     __tablename__ = "departments"
+    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_departments_company_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -50,6 +53,7 @@ class Department(Base):
 
 class EnterpriseSystem(Base):
     __tablename__ = "systems"
+    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_systems_company_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -61,11 +65,12 @@ class EnterpriseSystem(Base):
     api_available: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    company: Mapped["Company"] = relationship(back_populates="systems")
+    company: Mapped["Company"] = relationship(back_populates="company")
 
 
 class BusinessProcess(Base):
     __tablename__ = "business_processes"
+    __table_args__ = (UniqueConstraint("company_id", "name", "candidate_agent_name", name="uq_processes_company_name_agent"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -101,6 +106,9 @@ class BusinessProcess(Base):
 
 class ProcessDocument(Base):
     __tablename__ = "process_documents"
+    __table_args__ = (
+        UniqueConstraint("company_id", "document_type", "source_url", name="uq_documents_company_type_source_url"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -115,6 +123,8 @@ class ProcessDocument(Base):
     department: Mapped[str | None] = mapped_column(String(100), nullable=True)
     security_level: Mapped[str] = mapped_column(String(50), default="internal")
     contains_sensitive_info: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allowed_roles: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -125,6 +135,7 @@ class ProcessDocument(Base):
 
 class DocumentChunk(Base):
     __tablename__ = "document_chunks"
+    __table_args__ = (UniqueConstraint("document_id", "chunk_index", name="uq_chunks_document_index"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("process_documents.id"), nullable=False)
@@ -142,7 +153,6 @@ class DocumentChunk(Base):
 
     # text-embedding-3-small 기본 차원은 1536
     embedding: Mapped[list[float]] = mapped_column(VECTOR(1536), nullable=False)
-
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     document: Mapped["ProcessDocument"] = relationship(back_populates="chunks")
@@ -151,6 +161,7 @@ class DocumentChunk(Base):
 
 class AnalysisProject(Base):
     __tablename__ = "analysis_projects"
+    __table_args__ = (UniqueConstraint("company_id", "title", name="uq_analysis_projects_company_title"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
