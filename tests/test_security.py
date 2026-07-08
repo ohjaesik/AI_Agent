@@ -4,6 +4,8 @@ from fastapi import HTTPException
 from app.api.security import create_access_token, require_api_key
 from app.security.access_control import allowed_security_levels
 
+TEST_JWT_SECRET = "test-jwt-secret-at-least-32-bytes-long"
+
 
 class DummySettings:
     app_api_key = None
@@ -48,7 +50,7 @@ def test_api_key_guard_accepts_matching_key(monkeypatch):
 def test_jwt_auth_accepts_bearer_token(monkeypatch):
     class Settings:
         app_api_key = "secret"
-        app_jwt_secret = "jwt-secret"
+        app_jwt_secret = TEST_JWT_SECRET
         app_jwt_algorithm = "HS256"
         app_jwt_exp_minutes = 480
 
