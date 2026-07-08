@@ -19,6 +19,9 @@ class InMemoryMetrics:
         self.request_count: dict[tuple[str, str, int], int] = defaultdict(int)
         self.request_latency_sum: dict[tuple[str, str, int], float] = defaultdict(float)
         self.request_latency_max: dict[tuple[str, str, int], float] = defaultdict(float)
+        self.agent_node_count: dict[tuple[str, str, str], int] = defaultdict(int)
+        self.agent_node_latency_sum: dict[tuple[str, str, str], float] = defaultdict(float)
+        self.agent_node_latency_max: dict[tuple[str, str, str], float] = defaultdict(float)
 
     def observe(self, method: str, path: str, status_code: int, latency_seconds: float) -> None:
         key = (method, path, status_code)
@@ -26,6 +29,13 @@ class InMemoryMetrics:
             self.request_count[key] += 1
             self.request_latency_sum[key] += latency_seconds
             self.request_latency_max[key] = max(self.request_latency_max[key], latency_seconds)
+
+    def observe_agent_node(self, node_name: str, mode: str, status: str, latency_seconds: float) -> None:
+        key = (node_name, mode, status)
+        with self._lock:
+            self.agent_node_count[key] += 1
+            self.agent_node_latency_sum[key] += latency_seconds
+            self.agent_node_latency_max[key] = max(self.agent_node_latency_max[key], latency_seconds)
 
     def render_prometheus(self) -> str:
         lines = [
@@ -53,6 +63,30 @@ class InMemoryMetrics:
                 labels = f'method="{method}",path="{path}",status="{status}"'
                 lines.append(f"ax_http_request_latency_seconds_max{{{labels}}} {value:.6f}")
 
+            lines.extend([
+                "# HELP ax_agent_node_runs_total Total LangGraph agent node runs.",
+                "# TYPE ax_agent_node_runs_total counter",
+            ])
+            for (node_name, mode, status), count in sorted(self.agent_node_count.items()):
+                labels = f'node="{node_name}",mode="{mode}",status="{status}"'
+                lines.append(f"ax_agent_node_runs_total{{{labels}}} {count}")
+
+            lines.extend([
+                "# HELP ax_agent_node_latency_seconds_sum Total LangGraph agent node latency seconds.",
+                "# TYPE ax_agent_node_latency_seconds_sum counter",
+            ])
+            for (node_name, mode, status), value in sorted(self.agent_node_latency_sum.items()):
+                labels = f'node="{node_name}",mode="{mode}",status="{status}"'
+                lines.append(f"ax_agent_node_latency_seconds_sum{{{labels}}} {value:.6f}")
+
+            lines.extend([
+                "# HELP ax_agent_node_latency_seconds_max Max LangGraph agent node latency seconds.",
+                "# TYPE ax_agent_node_latency_seconds_max gauge",
+            ])
+            for (node_name, mode, status), value in sorted(self.agent_node_latency_max.items()):
+                labels = f'node="{node_name}",mode="{mode}",status="{status}"'
+                lines.append(f"ax_agent_node_latency_seconds_max{{{labels}}} {value:.6f}")
+
         return "\n".join(lines) + "\n"
 
 
@@ -61,6 +95,19 @@ metrics = InMemoryMetrics()
 
 def log_event(event: dict[str, Any]) -> None:
     print(json.dumps(event, ensure_ascii=False, default=str), flush=True)
+
+
+def record_agent_node(node_name: str, mode: str, status: str, latency_seconds: float) -> None:
+    metrics.observe_agent_node(node_name=node_name, mode=mode, status=status, latency_seconds=latency_seconds)
+    log_event(
+        {
+            "event": "agent_node_run",
+            "node": node_name,
+            "mode": mode,
+            "status": status,
+            "latency_seconds": round(latency_seconds, 6),
+        }
+    )
 
 
 class RequestMetricsMiddleware(BaseHTTPMiddleware):
