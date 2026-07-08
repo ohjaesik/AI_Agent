@@ -7,6 +7,7 @@ from functools import wraps
 from typing import Any, TypeVar
 
 from app.agents.registry import get_agent_spec
+from app.agents.sandbox import SandboxResult, run_sandboxed_command
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -49,11 +50,21 @@ def assert_tools_allowed(agent_id: str, requested_tools: list[str]) -> None:
         )
 
 
+def run_allowed_command_tool(agent_id: str, tool_name: str, command: list[str], timeout_seconds: int | None = None) -> SandboxResult:
+    """Run a command tool only after permission check, optionally inside Docker sandbox.
+
+    Use this for command-style tools. Normal Python function tools should still be
+    called directly but must use assert_tools_allowed or enforce_agent_tools.
+    """
+    assert_tools_allowed(agent_id=agent_id, requested_tools=[tool_name])
+    return run_sandboxed_command(command=command, timeout_seconds=timeout_seconds)
+
+
 def enforce_agent_tools(agent_id: str, requested_tools: list[str]) -> Callable[[F], F]:
     """Decorator for runtime tool permission checks.
 
-    This is not a sandbox. It is a runtime contract gate that ensures every graph
-    node declares tools that are present in Agent Registry before it runs.
+    This is not a full Python object sandbox. It is a runtime contract gate.
+    Command-style tools can use run_allowed_command_tool for Docker isolation.
     """
     def decorator(fn: F) -> F:
         @wraps(fn)
@@ -74,7 +85,7 @@ def build_tool_permission_report() -> list[dict[str, Any]]:
             "agent_id": agent.get("id"),
             "agent_name": agent.get("name"),
             "allowed_tools": agent.get("tools", []),
-            "controls": agent.get("controls", []),
+            "controls": [*agent.get("controls", []), "runtime_tool_permission_check"],
         }
         for agent in get_agent_registry()
     ]
@@ -83,7 +94,7 @@ def build_tool_permission_report() -> list[dict[str, Any]]:
             "agent_id": agent_id,
             "agent_name": agent_id,
             "allowed_tools": tools,
-            "controls": ["runtime_tool_permission_check"],
+            "controls": ["runtime_tool_permission_check", "optional_docker_command_sandbox"],
         }
         for agent_id, tools in FALLBACK_AGENT_TOOLS.items()
     )
