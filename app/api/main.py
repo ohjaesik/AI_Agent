@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from app.api.security import require_api_key
+from app.api.security import create_access_token, require_api_key, validate_api_key
 from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
@@ -40,6 +40,12 @@ class ReviewApplyRequest(BaseModel):
     human_review: dict[str, Any]
 
 
+class TokenRequest(BaseModel):
+    user_id: str = "api-user"
+    role: str = "analyst"
+    expires_minutes: int | None = None
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -55,11 +61,19 @@ def ui() -> str:
     return TEST_UI_HTML
 
 
+@app.post("/auth/token")
+def issue_token(request: TokenRequest, x_api_key: str | None = None) -> dict[str, Any]:
+    validate_api_key(x_api_key)
+    token = create_access_token(
+        user_id=request.user_id,
+        role=request.role,
+        expires_minutes=request.expires_minutes,
+    )
+    return {"access_token": token, "token_type": "bearer", "role": request.role, "user_id": request.user_id}
+
+
 @app.post("/companies/bootstrap")
-def bootstrap_company_endpoint(
-    request: CompanyBootstrapRequest,
-    access: AccessContext = Depends(require_api_key),
-) -> dict[str, Any]:
+def bootstrap_company_endpoint(request: CompanyBootstrapRequest, access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
     try:
         result = run_bootstrap_supervisor_graph(
             company_name=request.company_name,
@@ -145,15 +159,7 @@ def rag_search(
                 user_role=access.role,
             )
 
-        return {
-            "status": "ok",
-            "query": query,
-            "company_id": company_id,
-            "process_id": process_id,
-            "user_role": access.role,
-            "count": len(results),
-            "results": results,
-        }
+        return {"status": "ok", "query": query, "company_id": company_id, "process_id": process_id, "user_role": access.role, "count": len(results), "results": results}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"RAG search failed: {type(exc).__name__}: {exc}") from exc
 
@@ -171,13 +177,7 @@ def reindex_rag(
         raise HTTPException(status_code=403, detail="Only admin role can reindex RAG documents.")
 
     try:
-        inserted_count = index_documents(
-            company_id=company_id,
-            reset=reset,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            batch_size=batch_size,
-        )
+        inserted_count = index_documents(company_id=company_id, reset=reset, chunk_size=chunk_size, chunk_overlap=chunk_overlap, batch_size=batch_size)
         return {"status": "ok", "inserted_chunks": inserted_count}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Reindex failed: {type(exc).__name__}: {exc}") from exc
@@ -192,19 +192,10 @@ def run_analysis(
     access: AccessContext = Depends(require_api_key),
 ) -> dict[str, Any]:
     try:
-        result = run_demo(
-            project_id=project_id,
-            company_id=company_id,
-            thread_id=thread_id,
-            auto_approve=auto_approve,
-            verbose=False,
-        )
+        result = run_demo(project_id=project_id, company_id=company_id, thread_id=thread_id, auto_approve=auto_approve, verbose=False)
 
         if "__interrupt__" in result:
-            return {
-                "status": "interrupted",
-                "interrupt": str(result.get("__interrupt__")),
-            }
+            return {"status": "interrupted", "interrupt": str(result.get("__interrupt__"))}
 
         return {
             "status": "ok",
@@ -222,17 +213,11 @@ def run_analysis(
 
 
 @app.post("/reviews/apply-ranking")
-def apply_review_to_ranking(
-    request: ReviewApplyRequest,
-    access: AccessContext = Depends(require_api_key),
-) -> dict[str, Any]:
+def apply_review_to_ranking(request: ReviewApplyRequest, access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
     if access.role not in {"manager", "admin"}:
         raise HTTPException(status_code=403, detail="Only manager/admin role can apply human review decisions.")
 
-    result = apply_human_review_to_ranking(
-        priority_ranking=request.priority_ranking,
-        human_review=request.human_review,
-    )
+    result = apply_human_review_to_ranking(priority_ranking=request.priority_ranking, human_review=request.human_review)
     return {"status": "ok", "priority_ranking": result}
 
 
