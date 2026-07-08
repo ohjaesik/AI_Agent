@@ -6,10 +6,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from app.api.security import require_api_key
 from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
@@ -54,7 +55,10 @@ def ui() -> str:
 
 
 @app.post("/companies/bootstrap")
-def bootstrap_company_endpoint(request: CompanyBootstrapRequest) -> dict[str, Any]:
+def bootstrap_company_endpoint(
+    request: CompanyBootstrapRequest,
+    _: None = Depends(require_api_key),
+) -> dict[str, Any]:
     try:
         result = run_bootstrap_supervisor_graph(
             company_name=request.company_name,
@@ -74,6 +78,7 @@ def bootstrap_company_endpoint(request: CompanyBootstrapRequest) -> dict[str, An
 
 @app.post("/documents/ingest")
 def ingest_document(
+    _: None = Depends(require_api_key),
     company_id: int = Form(...),
     file: UploadFile = File(...),
     process_id: int | None = Form(None),
@@ -123,6 +128,7 @@ def rag_search(
     company_id: int,
     process_id: int | None = None,
     top_k: int = 5,
+    _: None = Depends(require_api_key),
 ) -> dict[str, Any]:
     try:
         with SessionLocal() as db:
@@ -153,6 +159,7 @@ def reindex_rag(
     chunk_size: int = 800,
     chunk_overlap: int = 120,
     batch_size: int = 64,
+    _: None = Depends(require_api_key),
 ) -> dict[str, Any]:
     try:
         inserted_count = index_documents(
@@ -173,6 +180,7 @@ def run_analysis(
     company_id: int | None = None,
     auto_approve: bool = True,
     thread_id: str = "ax-planner-api",
+    _: None = Depends(require_api_key),
 ) -> dict[str, Any]:
     try:
         result = run_demo(
@@ -204,7 +212,10 @@ def run_analysis(
 
 
 @app.post("/reviews/apply-ranking")
-def apply_review_to_ranking(request: ReviewApplyRequest) -> dict[str, Any]:
+def apply_review_to_ranking(
+    request: ReviewApplyRequest,
+    _: None = Depends(require_api_key),
+) -> dict[str, Any]:
     result = apply_human_review_to_ranking(
         priority_ranking=request.priority_ranking,
         human_review=request.human_review,
@@ -281,12 +292,17 @@ async function show(promise) {
   }
 }
 
+function authHeaders() {
+  const key = localStorage.getItem('AX_APP_API_KEY') || '';
+  return key ? {'Content-Type':'application/json', 'X-API-Key': key} : {'Content-Type':'application/json'};
+}
+
 function bootstrapCompany() {
   const companyName = document.getElementById('bootstrapCompanyName').value;
   const officialUrl = document.getElementById('officialUrl').value;
   show(fetch('/companies/bootstrap', {
     method: 'POST',
-    headers: {'Content-Type':'application/json'},
+    headers: authHeaders(),
     body: JSON.stringify({
       company_name: companyName,
       official_urls: officialUrl ? [officialUrl] : [],
@@ -303,13 +319,17 @@ function ingest() {
   const processId = document.getElementById('processId').value;
   if (processId) fd.append('process_id', processId);
   fd.append('file', document.getElementById('file').files[0]);
-  show(fetch('/documents/ingest', {method:'POST', body: fd}));
+  const key = localStorage.getItem('AX_APP_API_KEY') || '';
+  const headers = key ? {'X-API-Key': key} : {};
+  show(fetch('/documents/ingest', {method:'POST', headers, body: fd}));
 }
 
 function ragSearch() {
   const q = encodeURIComponent(document.getElementById('ragQuery').value);
   const companyId = document.getElementById('companyId').value;
-  show(fetch(`/rag/search?query=${q}&company_id=${companyId}`));
+  const key = localStorage.getItem('AX_APP_API_KEY') || '';
+  const headers = key ? {'X-API-Key': key} : {};
+  show(fetch(`/rag/search?query=${q}&company_id=${companyId}`, {headers}));
 }
 
 function runAnalysis() {
@@ -318,7 +338,9 @@ function runAnalysis() {
   const params = new URLSearchParams({auto_approve: 'true'});
   if (projectId) params.append('project_id', projectId);
   if (companyId) params.append('company_id', companyId);
-  show(fetch(`/analysis/run?${params.toString()}`, {method:'POST'}));
+  const key = localStorage.getItem('AX_APP_API_KEY') || '';
+  const headers = key ? {'X-API-Key': key} : {};
+  show(fetch(`/analysis/run?${params.toString()}`, {method:'POST', headers}));
 }
 </script>
 </body>
