@@ -33,10 +33,12 @@ def initialize_database() -> None:
     from app.db.create_tables import main as create_tables
     from app.db.init_pgvector import main as init_pgvector
     from app.db.migrate_discovery_metadata import main as migrate_discovery_metadata
+    from app.db.migrate_operational_hardening import main as migrate_operational_hardening
 
     init_pgvector()
     create_tables()
     migrate_discovery_metadata()
+    migrate_operational_hardening()
 
 
 def main() -> None:
@@ -64,7 +66,7 @@ def main() -> None:
                 "Database tables are not initialized. Run:\n"
                 "  python -m app.db.init_pgvector\n"
                 "  python -m app.db.create_tables\n"
-                "  python -m app.db.migrate_discovery_metadata\n"
+                "  python -m app.db.migrate_operational_hardening\n"
                 "or rerun this command with --init-db."
             ) from exc
         raise
