@@ -26,7 +26,32 @@
 | safety_reliability_management | Agent Evaluator, LLM Critic, Replan, quality gate | robustness and accuracy management | MEASURE/MANAGE reliability | AI performance monitoring | 안전성·신뢰성 확보 및 낮은 confidence 추천 차단 |
 | assistive_use_boundary | 자동 실행 금지, PoC 추천·보고서 생성으로 제한 | risk minimization | scope/context control | intended use boundary | 판단 보조·사람 승인 구조 |
 
-## 3. Korea AI Basic Act Operational Mapping
+## 3. Code-level Regulatory Mapping Rules
+
+`app/compliance/regulatory_mapping.py`는 compliance level을 다음 규제 mapping으로 변환한다.
+
+| Rule ID | Framework | Risk category | Level | Trigger |
+|---|---|---|---|---|
+| `eu_ai_act_prohibited_use` | EU AI Act | unacceptable_risk_prohibited_practice | blocked | social scoring, prohibited biometric use, emotion recognition, manipulation, predictive policing |
+| `eu_ai_act_high_risk` | EU AI Act | high_risk_ai_system | enhanced_review | employment, finance, healthcare, education, critical infrastructure, law/public service |
+| `korea_ai_basic_act_high_impact` | Korea AI Basic Act | high_impact_ai_operational_proxy | enhanced_review | user-impacting high-impact AI 가능 영역 |
+| `privacy_confidential_data` | Privacy/Security Governance | personal_or_confidential_data_processing | sensitive_review | 개인정보, 고객정보, 계좌, 기밀, 영업비밀, restricted access |
+| `standard_assistive_ai` | Korea AI Basic Act / NIST AI RMF / ISO 42001 | standard_assistive_ai | standard | 일반 문서 검색·요약·보고서 작성 보조 |
+
+각 process item에는 다음 필드가 추가된다.
+
+- `regulatory_mappings`
+- `regulatory_summary.frameworks`
+- `regulatory_summary.risk_categories`
+- `regulatory_summary.required_controls`
+- `regulatory_summary.obligations`
+
+전체 assessment summary에는 다음 집계가 추가된다.
+
+- `framework_counts`
+- `risk_category_counts`
+
+## 4. Korea AI Basic Act Operational Mapping
 
 아래 mapping은 AX Planner 내부 통제 기준이다. 조항 번호 확정 mapping이 아니라, 공식 조문·시행령·고시 확인 전 단계의 운영형 control mapping이다.
 
@@ -42,7 +67,7 @@
 | 책임 추적 | node별 analysis_result, audit_log, used_sources 저장 | `analysis_results`, `audit_logs` |
 | 자동 실행 제한 | PoC 후보 추천·보고서 생성으로 제한하고 업무 시스템 자동 실행 tool 미제공 | `mvp_agent.type=assistive_ai_agent` |
 
-## 4. Compliance Levels
+## 5. Compliance Levels
 
 | Level | 의미 | 한국 AI 기본법 운영 대응 | 시스템 처리 |
 |---|---|---|---|
@@ -51,7 +76,7 @@
 | enhanced_review | 고영향 AI 가능성 | 고영향 AI 가능성 검토, 설명가능성·기록관리·데이터 품질 증빙, 법무·보안 승인 | Human Review 및 강화 통제 필요 |
 | blocked | 부적절·금지 가능 사용 | 법무 검토 전 추천·PoC 진행 금지 | MVP 후보 제외 |
 
-## 5. Current System Classification
+## 6. Current System Classification
 
 AX Delivery Planner는 현재 다음 범위로 제한한다.
 
@@ -61,7 +86,13 @@ AX Delivery Planner는 현재 다음 범위로 제한한다.
 - `blocked` 후보는 MVP 후보에서 제외
 - `sensitive_review`, `enhanced_review` 후보는 Human Review 필요
 
-## 6. Remaining Legal Work
+## 7. Test command
+
+```bash
+pytest tests/test_regulatory_mapping.py
+```
+
+## 8. Remaining Legal Work
 
 - 국가법령정보센터 원문 기준 조항 번호 확정
 - 시행령·고시·가이드라인 확정본 반영
