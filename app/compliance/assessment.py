@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.registry import get_agent_registry
-from app.compliance.regulatory_policy import get_korea_ai_basic_act_reference, get_regulatory_controls
+from app.compliance.regulatory_mapping import build_regulatory_mappings, summarize_regulatory_mappings
+from app.compliance.regulatory_policy import (
+    get_korea_ai_basic_act_reference,
+    get_regulatory_controls,
+)
 
 PROHIBITED_KEYWORDS = [
     "사회적 점수",
@@ -161,6 +165,20 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
         compliance_level = "sensitive_review"
         required_controls.extend(["security_privacy_controls", "human_oversight", "data_quality_governance"])
 
+    regulatory_mappings = build_regulatory_mappings(
+        compliance_level=compliance_level,
+        prohibited_hits=prohibited_hits,
+        high_impact_categories=high_impact_categories,
+        sensitive_hits=sensitive_hits,
+        sensitive_risk_flags=sensitive_risk_flags,
+        high_impact_risk_flags=high_impact_risk_flags,
+        risk_flags=risk_flags,
+    )
+    regulatory_summary = summarize_regulatory_mappings(regulatory_mappings)
+    for control in regulatory_summary["required_controls"]:
+        if control not in required_controls:
+            required_controls.append(control)
+
     deduped_controls = []
     for control in required_controls:
         if control not in deduped_controls:
@@ -181,6 +199,8 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
         "high_impact_risk_flags": high_impact_risk_flags,
         "required_controls": deduped_controls,
         "korea_ai_basic_act_requirements": korea_ai_basic_act_requirements_for_level(compliance_level),
+        "regulatory_mappings": regulatory_mappings,
+        "regulatory_summary": regulatory_summary,
     }
 
 
@@ -213,6 +233,13 @@ def assess_ai_compliance(
     enhanced_items = [item for item in items if item["compliance_level"] == "enhanced_review"]
     sensitive_items = [item for item in items if item["compliance_level"] == "sensitive_review"]
     human_review_items = [item for item in items if item["human_review_required"]]
+    framework_counts: dict[str, int] = {}
+    risk_category_counts: dict[str, int] = {}
+    for item in items:
+        for framework in (item.get("regulatory_summary") or {}).get("frameworks", []):
+            framework_counts[framework] = framework_counts.get(framework, 0) + 1
+        for risk_category in (item.get("regulatory_summary") or {}).get("risk_categories", []):
+            risk_category_counts[risk_category] = risk_category_counts.get(risk_category, 0) + 1
 
     overall_status = "pass"
     if blocked_items:
@@ -229,6 +256,8 @@ def assess_ai_compliance(
             "enhanced_review_count": len(enhanced_items),
             "sensitive_review_count": len(sensitive_items),
             "human_review_required_count": len(human_review_items),
+            "framework_counts": framework_counts,
+            "risk_category_counts": risk_category_counts,
         },
         "agent_registry": get_agent_registry(),
         "regulatory_controls": get_regulatory_controls(),
