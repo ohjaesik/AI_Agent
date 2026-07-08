@@ -41,16 +41,15 @@ class BootstrapResult:
 
 
 def infer_industry(text: str, dart_company: DartCompany | None = None) -> str:
-    lowered = text.lower()
-
     if dart_company and dart_company.profile.get("induty_code"):
         return f"공식자료 기반 업종코드 {dart_company.profile.get('induty_code')}"
 
+    lowered = text.lower()
     keyword_map = [
-        ("제조", "제조업"),
-        ("manufacturing", "제조업"),
         ("반도체", "반도체/전자 제조업"),
         ("전자", "전자/전기 제조업"),
+        ("제조", "제조업"),
+        ("manufacturing", "제조업"),
         ("자동차", "자동차/부품 제조업"),
         ("건설", "건설업"),
         ("금융", "금융업"),
@@ -73,7 +72,6 @@ def infer_size(dart_company: DartCompany | None = None) -> str:
         return "확인 필요"
 
     corp_cls = dart_company.corp_cls or ""
-
     if corp_cls == "Y":
         return "유가증권시장 상장사"
     if corp_cls == "K":
@@ -82,7 +80,6 @@ def infer_size(dart_company: DartCompany | None = None) -> str:
         return "코넥스 상장사"
     if corp_cls == "E":
         return "기타 외감법인"
-
     return "확인 필요"
 
 
@@ -95,16 +92,16 @@ def build_company_description(
 
     if dart_company is not None:
         profile = dart_company.profile
-        if profile.get("adres"):
-            parts.append(f"주소: {profile.get('adres')}")
-        if profile.get("hm_url"):
-            parts.append(f"홈페이지: {profile.get('hm_url')}")
-        if profile.get("induty_code"):
-            parts.append(f"업종코드: {profile.get('induty_code')}")
-        if profile.get("est_dt"):
-            parts.append(f"설립일: {profile.get('est_dt')}")
-        if profile.get("acc_mt"):
-            parts.append(f"결산월: {profile.get('acc_mt')}")
+        for label, key in [
+            ("주소", "adres"),
+            ("홈페이지", "hm_url"),
+            ("업종코드", "induty_code"),
+            ("설립일", "est_dt"),
+            ("결산월", "acc_mt"),
+        ]:
+            value = profile.get(key)
+            if value:
+                parts.append(f"{label}: {value}")
 
     return "\n".join(parts)
 
@@ -139,7 +136,6 @@ def create_default_departments(db: Session, company_id: int) -> dict[str, Depart
         ("영업/고객", "고객 대응, 제안, 계약, 문의 처리", "문의 대응과 자료 검색 자동화 필요"),
         ("경영지원", "보고, 회의, 규정, 내부 지원", "보고서·회의록·규정 검색 자동화 필요"),
     ]
-
     result: dict[str, Department] = {}
 
     for name, role, pain in specs:
@@ -153,10 +149,8 @@ def create_default_departments(db: Session, company_id: int) -> dict[str, Depart
         result[name] = department
 
     db.commit()
-
     for department in result.values():
         db.refresh(department)
-
     return result
 
 
@@ -166,8 +160,8 @@ def create_default_systems(db: Session, company_id: int) -> list[EnterpriseSyste
         ("업무 프로세스 분석 DB", "analysis_db", "AX전략/기획", 4, True, "AX 후보 업무와 평가 결과 저장"),
         ("Human Review 로그", "governance_log", "경영지원", 3, True, "의사결정 근거와 승인 이력 저장"),
     ]
+    rows: list[EnterpriseSystem] = []
 
-    rows = []
     for name, system_type, owner, level, api_available, description in specs:
         row = EnterpriseSystem(
             company_id=company_id,
@@ -182,10 +176,8 @@ def create_default_systems(db: Session, company_id: int) -> list[EnterpriseSyste
         rows.append(row)
 
     db.commit()
-
     for row in rows:
         db.refresh(row)
-
     return rows
 
 
@@ -194,126 +186,164 @@ def contains_any(text: str, keywords: list[str]) -> bool:
     return any(keyword.lower() in lowered for keyword in keywords)
 
 
+def process_spec(
+    department: str,
+    name: str,
+    target_user: str,
+    problem: str,
+    current_workflow: str,
+    candidate_agent_name: str,
+    weekly_hours: float,
+    expected_effect: int,
+    repeatability: int,
+    document_dependency: int,
+    decision_complexity: int,
+    data_accessibility: int,
+    tech_feasibility: int,
+    user_acceptance: int,
+    risk_score: int,
+    implementation_cost_score: int,
+) -> dict[str, Any]:
+    return {
+        "department": department,
+        "name": name,
+        "target_user": target_user,
+        "problem": problem,
+        "current_workflow": current_workflow,
+        "candidate_agent_name": candidate_agent_name,
+        "weekly_hours": weekly_hours,
+        "expected_effect": expected_effect,
+        "repeatability": repeatability,
+        "document_dependency": document_dependency,
+        "decision_complexity": decision_complexity,
+        "data_accessibility": data_accessibility,
+        "tech_feasibility": tech_feasibility,
+        "user_acceptance": user_acceptance,
+        "risk_score": risk_score,
+        "implementation_cost_score": implementation_cost_score,
+    }
+
+
 def build_process_specs(combined_text: str) -> list[dict[str, Any]]:
-    specs: list[dict[str, Any]] = [
-        {
-            "department": "AX전략/기획",
-            "name": "공식자료 기반 AX 과제 발굴",
-            "target_user": "AX 기획 담당자",
-            "problem": "회사 공식자료, 사업영역, 공시, 홈페이지 정보를 수동으로 읽고 AX 후보를 정리해야 한다.",
-            "current_workflow": "담당자가 공식자료를 수집하고 사업·업무 단서를 수작업으로 요약한다.",
-            "candidate_agent_name": "공식자료 AX 진단 Agent",
-            "weekly_hours": 8.0,
-            "expected_effect": 4,
-            "repeatability": 4,
-            "document_dependency": 5,
-            "decision_complexity": 3,
-            "data_accessibility": 4,
-            "tech_feasibility": 4,
-            "user_acceptance": 4,
-            "risk_score": 3,
-            "implementation_cost_score": 3,
-        },
-        {
-            "department": "경영지원",
-            "name": "내부/공식 문서 질의응답",
-            "target_user": "기획·지원 부서 담당자",
-            "problem": "회사소개, 사업영역, 공시, 규정성 문서를 찾고 요약하는 데 시간이 든다.",
-            "current_workflow": "문서나 웹페이지를 직접 열람하고 필요한 내용을 복사해 정리한다.",
-            "candidate_agent_name": "공식자료 RAG Q&A Agent",
-            "weekly_hours": 10.0,
-            "expected_effect": 4,
-            "repeatability": 5,
-            "document_dependency": 5,
-            "decision_complexity": 2,
-            "data_accessibility": 4,
-            "tech_feasibility": 5,
-            "user_acceptance": 4,
-            "risk_score": 2,
-            "implementation_cost_score": 2,
-        },
-        {
-            "department": "경영지원",
-            "name": "회의록 및 보고서 초안 작성",
-            "target_user": "기획·관리 담당자",
-            "problem": "회의 내용과 공식 근거를 결합해 보고서 초안을 작성하는 반복 업무가 많다.",
-            "current_workflow": "회의 메모와 자료를 사람이 취합해 보고서 초안을 작성한다.",
-            "candidate_agent_name": "회의록·보고서 Draft Agent",
-            "weekly_hours": 6.0,
-            "expected_effect": 4,
-            "repeatability": 4,
-            "document_dependency": 4,
-            "decision_complexity": 3,
-            "data_accessibility": 3,
-            "tech_feasibility": 4,
-            "user_acceptance": 4,
-            "risk_score": 3,
-            "implementation_cost_score": 3,
-        },
+    specs = [
+        process_spec(
+            "AX전략/기획",
+            "공식자료 기반 AX 과제 발굴",
+            "AX 기획 담당자",
+            "회사 공식자료, 사업영역, 공시, 홈페이지 정보를 수동으로 읽고 AX 후보를 정리해야 한다.",
+            "담당자가 공식자료를 수집하고 사업·업무 단서를 수작업으로 요약한다.",
+            "공식자료 AX 진단 Agent",
+            8.0,
+            4,
+            4,
+            5,
+            3,
+            4,
+            4,
+            4,
+            3,
+            3,
+        ),
+        process_spec(
+            "경영지원",
+            "내부/공식 문서 질의응답",
+            "기획·지원 부서 담당자",
+            "회사소개, 사업영역, 공시, 규정성 문서를 찾고 요약하는 데 시간이 든다.",
+            "문서나 웹페이지를 직접 열람하고 필요한 내용을 복사해 정리한다.",
+            "공식자료 RAG Q&A Agent",
+            10.0,
+            4,
+            5,
+            5,
+            2,
+            4,
+            5,
+            4,
+            2,
+            2,
+        ),
+        process_spec(
+            "경영지원",
+            "회의록 및 보고서 초안 작성",
+            "기획·관리 담당자",
+            "회의 내용과 공식 근거를 결합해 보고서 초안을 작성하는 반복 업무가 많다.",
+            "회의 메모와 자료를 사람이 취합해 보고서 초안을 작성한다.",
+            "회의록·보고서 Draft Agent",
+            6.0,
+            4,
+            4,
+            4,
+            3,
+            3,
+            4,
+            4,
+            3,
+            3,
+        ),
     ]
 
     if contains_any(combined_text, ["제조", "생산", "품질", "공장", "설비", "공정", "manufacturing", "factory"]):
         specs.extend(
             [
-                {
-                    "department": "운영/생산",
-                    "name": "생산·품질 문서 검색 및 표준작업 지원",
-                    "target_user": "생산·품질 담당자",
-                    "problem": "제품, 공정, 품질 관련 문서를 찾고 표준작업 기준을 확인하는 시간이 발생한다.",
-                    "current_workflow": "담당자가 문서함과 기존 보고서를 직접 검색해 기준을 확인한다.",
-                    "candidate_agent_name": "생산·품질 SOP 질의응답 Agent",
-                    "weekly_hours": 12.0,
-                    "expected_effect": 5,
-                    "repeatability": 5,
-                    "document_dependency": 5,
-                    "decision_complexity": 3,
-                    "data_accessibility": 4,
-                    "tech_feasibility": 5,
-                    "user_acceptance": 4,
-                    "risk_score": 3,
-                    "implementation_cost_score": 3,
-                },
-                {
-                    "department": "운영/생산",
-                    "name": "설비·공정 이슈 이력 분석",
-                    "target_user": "운영·설비 담당자",
-                    "problem": "설비, 공정, 품질 이슈의 반복 패턴을 사람이 보고서 중심으로 확인해야 한다.",
-                    "current_workflow": "이슈 보고서와 정비 기록을 수동으로 검토해 원인과 대응을 정리한다.",
-                    "candidate_agent_name": "설비·공정 이슈 분석 Agent",
-                    "weekly_hours": 10.0,
-                    "expected_effect": 4,
-                    "repeatability": 4,
-                    "document_dependency": 4,
-                    "decision_complexity": 4,
-                    "data_accessibility": 3,
-                    "tech_feasibility": 4,
-                    "user_acceptance": 3,
-                    "risk_score": 4,
-                    "implementation_cost_score": 4,
-                },
+                process_spec(
+                    "운영/생산",
+                    "생산·품질 문서 검색 및 표준작업 지원",
+                    "생산·품질 담당자",
+                    "제품, 공정, 품질 관련 문서를 찾고 표준작업 기준을 확인하는 시간이 발생한다.",
+                    "담당자가 문서함과 기존 보고서를 직접 검색해 기준을 확인한다.",
+                    "생산·품질 SOP 질의응답 Agent",
+                    12.0,
+                    5,
+                    5,
+                    5,
+                    3,
+                    4,
+                    5,
+                    4,
+                    3,
+                    3,
+                ),
+                process_spec(
+                    "운영/생산",
+                    "설비·공정 이슈 이력 분석",
+                    "운영·설비 담당자",
+                    "설비, 공정, 품질 이슈의 반복 패턴을 사람이 보고서 중심으로 확인해야 한다.",
+                    "이슈 보고서와 정비 기록을 수동으로 검토해 원인과 대응을 정리한다.",
+                    "설비·공정 이슈 분석 Agent",
+                    10.0,
+                    4,
+                    4,
+                    4,
+                    4,
+                    3,
+                    4,
+                    3,
+                    4,
+                    4,
+                ),
             ]
         )
 
     if contains_any(combined_text, ["고객", "문의", "서비스", "영업", "판매", "customer", "sales"]):
         specs.append(
-            {
-                "department": "영업/고객",
-                "name": "고객 문의 및 제품 자료 응답 지원",
-                "target_user": "영업·고객 대응 담당자",
-                "problem": "고객 문의에 답변하기 위해 회사소개, 제품, 서비스 자료를 반복적으로 확인해야 한다.",
-                "current_workflow": "담당자가 공식자료와 내부 문서를 직접 찾아 답변 초안을 작성한다.",
-                "candidate_agent_name": "고객문의 응답 지원 Agent",
-                "weekly_hours": 10.0,
-                "expected_effect": 4,
-                "repeatability": 5,
-                "document_dependency": 4,
-                "decision_complexity": 3,
-                "data_accessibility": 4,
-                "tech_feasibility": 4,
-                "user_acceptance": 4,
-                "risk_score": 3,
-                "implementation_cost_score": 3,
-            }
+            process_spec(
+                "영업/고객",
+                "고객 문의 및 제품 자료 응답 지원",
+                "영업·고객 대응 담당자",
+                "고객 문의에 답변하기 위해 회사소개, 제품, 서비스 자료를 반복적으로 확인해야 한다.",
+                "담당자가 공식자료와 내부 문서를 직접 찾아 답변 초안을 작성한다.",
+                "고객문의 응답 지원 Agent",
+                10.0,
+                4,
+                5,
+                4,
+                3,
+                4,
+                4,
+                4,
+                3,
+                3,
+            )
         )
 
     return specs
@@ -373,10 +403,8 @@ def create_business_processes(
     for spec in process_specs:
         department = departments.get(spec.get("department")) or departments["AX전략/기획"]
         discovery_note = ""
-
         if spec.get("discovery_mode"):
             discovery_note = f"\n\n생성방식: {spec.get('discovery_mode')}"
-
         if spec.get("discovery_warning"):
             discovery_note += f"\n주의: {spec.get('discovery_warning')}"
 
@@ -406,10 +434,8 @@ def create_business_processes(
         rows.append(row)
 
     db.commit()
-
     for row in rows:
         db.refresh(row)
-
     return rows
 
 
@@ -451,12 +477,120 @@ def create_source_documents(
         rows.append(row)
 
     db.commit()
-
     for row in rows:
         db.refresh(row)
-
     return rows
 
 
 def create_analysis_project(db: Session, company_id: int, company_name: str) -> AnalysisProject:
     project = AnalysisProject(
+        company_id=company_id,
+        title=f"{company_name} 공식자료 기반 AX 전환 진단",
+        status="created",
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def bootstrap_company(
+    db: Session,
+    company_name: str,
+    official_urls: list[str] | None = None,
+    dart_api_key: str | None = None,
+    corp_code: str | None = None,
+    stock_code: str | None = None,
+    create_project: bool = True,
+    index: bool = True,
+    reset_company_chunks: bool = False,
+) -> BootstrapResult:
+    warnings: list[str] = []
+    official_urls = official_urls or []
+
+    dart_company = None
+    if dart_api_key:
+        try:
+            dart_company = load_dart_company(
+                api_key=dart_api_key,
+                company_name=company_name,
+                corp_code=corp_code,
+                stock_code=stock_code,
+            )
+            if dart_company is None:
+                warnings.append("OpenDART에서 회사 고유번호를 찾지 못했습니다.")
+        except Exception as exc:
+            warnings.append(f"OpenDART 수집 실패: {type(exc).__name__}: {exc}")
+
+    official_docs: list[OfficialUrlDocument] = []
+    for url in official_urls:
+        try:
+            official_docs.append(load_official_url(url))
+        except Exception as exc:
+            warnings.append(f"공식 URL 수집 실패: {url} ({type(exc).__name__}: {exc})")
+
+    if dart_company is None and not official_docs:
+        raise ValueError("No official source was collected. Provide --official-url or --dart-api-key.")
+
+    combined_parts = []
+    if dart_company is not None:
+        combined_parts.append(dart_company.to_document_content())
+    combined_parts.extend(doc.content for doc in official_docs)
+    combined_text = "\n\n".join(combined_parts)
+
+    company = create_company(
+        db=db,
+        company_name=dart_company.corp_name if dart_company is not None else company_name,
+        combined_text=combined_text,
+        dart_company=dart_company,
+    )
+    departments = create_default_departments(db, company_id=company.id)
+    create_default_systems(db, company_id=company.id)
+
+    fallback_process_specs = build_process_specs(combined_text)
+    official_sources = build_official_source_payloads(
+        official_docs=official_docs,
+        dart_company=dart_company,
+    )
+    discovered_process_specs = discover_company_process_specs(
+        company_name=company.name,
+        official_sources=official_sources,
+        fallback_processes=fallback_process_specs,
+    )
+
+    discovery_mode = discovered_process_specs[0].get("discovery_mode") if discovered_process_specs else None
+    discovery_warning = discovered_process_specs[0].get("discovery_warning") if discovered_process_specs else None
+    if discovery_warning:
+        warnings.append(discovery_warning)
+
+    processes = create_business_processes(
+        db=db,
+        company_id=company.id,
+        departments=departments,
+        process_specs=discovered_process_specs,
+    )
+    documents = create_source_documents(
+        db=db,
+        company_id=company.id,
+        official_docs=official_docs,
+        dart_company=dart_company,
+    )
+    project = create_analysis_project(db, company_id=company.id, company_name=company.name) if create_project else None
+
+    chunk_count = 0
+    if index:
+        if reset_company_chunks:
+            delete_existing_chunks(db, company_id=company.id)
+        for document in documents:
+            chunk_count += index_single_document(db=db, document=document)
+
+    return BootstrapResult(
+        company_id=company.id,
+        project_id=project.id if project else None,
+        document_ids=[document.id for document in documents],
+        process_ids=[process.id for process in processes],
+        chunk_count=chunk_count,
+        source_count=len(documents),
+        warnings=warnings,
+        discovery_mode=discovery_mode,
+    )
