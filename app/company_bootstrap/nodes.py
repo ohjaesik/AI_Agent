@@ -6,16 +6,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.company_bootstrap.dart_client import load_dart_company
-from app.company_bootstrap.service import (
-    build_official_source_payloads,
-    build_process_specs,
-    create_analysis_project,
-    create_business_processes,
-    create_company,
-    create_default_departments,
-    create_default_systems,
-    create_source_documents,
+from app.company_bootstrap.idempotency import (
+    get_or_create_analysis_project,
+    get_or_create_departments,
+    get_or_create_systems,
+    get_or_update_company,
+    upsert_business_processes,
+    upsert_source_documents,
 )
+from app.company_bootstrap.service import build_official_source_payloads, build_process_specs
 from app.company_bootstrap.state import BootstrapState
 from app.company_bootstrap.url_loader import load_official_url
 from app.chains.company_process_discovery import discover_company_process_specs
@@ -68,7 +67,7 @@ def company_profile_agent_node(state: BootstrapState) -> dict[str, Any]:
         dart_text = dart_company.to_document_content() if dart_company is not None else ""
 
         with SessionLocal() as db:
-            company = create_company(
+            company, created = get_or_update_company(
                 db=db,
                 company_name=resolved_name,
                 combined_text=dart_text,
@@ -85,6 +84,7 @@ def company_profile_agent_node(state: BootstrapState) -> dict[str, Any]:
                 "industry": company.industry,
                 "size": company.size,
                 "description": company.description,
+                "created": created,
             },
             "warnings": warnings,
             "audit_logs": audit(
@@ -94,6 +94,7 @@ def company_profile_agent_node(state: BootstrapState) -> dict[str, Any]:
                     "company_id": company.id,
                     "resolved_company_name": company.name,
                     "dart_collected": dart_company is not None,
+                    "created": created,
                 },
             ),
         }
@@ -131,7 +132,7 @@ def source_ingestion_agent_node(state: BootstrapState) -> dict[str, Any]:
         combined_text = "\n\n".join(combined_parts)
 
         with SessionLocal() as db:
-            documents = create_source_documents(
+            documents, created_count, updated_count = upsert_source_documents(
                 db=db,
                 company_id=company_id,
                 official_docs=official_docs,
@@ -143,7 +144,7 @@ def source_ingestion_agent_node(state: BootstrapState) -> dict[str, Any]:
                 if state.get("reset_company_chunks", False):
                     delete_existing_chunks(db, company_id=company_id)
                 for document in documents:
-                    chunk_count += index_single_document(db=db, document=document)
+                    chunk_count += index_single_document(db=db, document=document, reset_existing=True)
 
         official_sources = build_official_source_payloads(
             official_docs=official_docs,
@@ -164,6 +165,8 @@ def source_ingestion_agent_node(state: BootstrapState) -> dict[str, Any]:
                 {
                     "official_url_count": len(official_docs),
                     "document_count": len(documents),
+                    "created_documents": created_count,
+                    "updated_documents": updated_count,
                     "chunk_count": chunk_count,
                 },
             ),
@@ -199,19 +202,22 @@ def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
             warnings.append(discovery_warning)
 
         with SessionLocal() as db:
-            departments = create_default_departments(db, company_id=company_id)
-            create_default_systems(db, company_id=company_id)
-            processes = create_business_processes(
+            departments, created_departments = get_or_create_departments(db, company_id=company_id)
+            _, created_systems = get_or_create_systems(db, company_id=company_id)
+            processes, created_processes, updated_processes = upsert_business_processes(
                 db=db,
                 company_id=company_id,
                 departments=departments,
                 process_specs=discovered_process_specs,
             )
-            project = (
-                create_analysis_project(db, company_id=company_id, company_name=company_name)
-                if state.get("create_project", True)
-                else None
-            )
+            project = None
+            project_created = False
+            if state.get("create_project", True):
+                project, project_created = get_or_create_analysis_project(
+                    db,
+                    company_id=company_id,
+                    company_name=company_name,
+                )
 
         result = {
             "company_id": company_id,
@@ -223,6 +229,13 @@ def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
             "warnings": warnings,
             "discovery_mode": discovery_mode,
             "workflow_mode": "bootstrap_supervisor_graph",
+            "idempotency": {
+                "created_departments": created_departments,
+                "created_systems": created_systems,
+                "created_processes": created_processes,
+                "updated_processes": updated_processes,
+                "project_created": project_created,
+            },
         }
 
         return {
@@ -237,7 +250,10 @@ def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
                 "success",
                 {
                     "process_count": len(processes),
+                    "created_processes": created_processes,
+                    "updated_processes": updated_processes,
                     "project_id": project.id if project else None,
+                    "project_created": project_created,
                     "discovery_mode": discovery_mode,
                 },
             ),
