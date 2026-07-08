@@ -19,3 +19,6 @@ outputs/
 # Cache
 .pytest_cache/
 .mypy_cache/
+
+files/
+CLAUDE.md
