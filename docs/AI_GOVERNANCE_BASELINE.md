@@ -37,7 +37,29 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 | Risk & Governance Agent | 위험·고영향·민감정보 평가 | prohibited-use screening, high-impact screening |
 | Priority & Delivery Agent | 우선순위·Human Review·PoC·보고서 | Human Review gate, transparency disclosure, citation validation |
 
-## 4. Compliance levels
+## 4. Supervisor Graph 실행 구조
+
+현재 Graph는 공통 입력을 로드한 뒤 독립 분석 Agent를 병렬로 실행한다.
+
+```text
+START
+→ load_project_data
+→ retrieve_context
+  ├─ process_analyzer
+  ├─ data_readiness
+  ├─ automation_feasibility → roi_cost
+  └─ risk_governance → compliance_assessment
+→ priority_ranking
+→ human_review
+→ poc_delivery_planner
+→ report_writer
+→ docx_generator
+→ END
+```
+
+병렬 branch가 동시에 `audit_logs`, `errors`를 갱신하므로 `AXPlannerState`에는 dedupe reducer를 적용한다.
+
+## 5. Compliance levels
 
 | Level | 의미 | 처리 |
 |---|---|---|
@@ -46,9 +68,9 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 | enhanced_review | 채용·금융·의료·안전 등 고영향 가능성 | Human Review 및 강화 통제 필요 |
 | blocked | 금지 또는 부적절 사용 가능성 | MVP 후보 제외 |
 
-## 5. 필수 통제
+## 6. 필수 통제
 
-### 5.1 Prohibited-use screening
+### 6.1 Prohibited-use screening
 
 다음 유형의 후보는 PoC 후보에서 제외하거나 별도 법무 검토 없이는 진행하지 않는다.
 
@@ -59,7 +81,7 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 - 범죄 예측 또는 개인 위험도 평가
 - 사용자 기만 또는 조작 목적의 AI
 
-### 5.2 High-impact screening
+### 6.2 High-impact screening
 
 다음 영역은 기본적으로 `enhanced_review`로 분류한다.
 
@@ -70,7 +92,7 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 - 교육 평가·입학·성적
 - 법률·사법·공공서비스 접근
 
-### 5.3 Human oversight
+### 6.3 Human oversight
 
 모든 PoC 착수는 Human Review 이후 결정한다.
 
@@ -80,7 +102,7 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 - edited_payload
 - review_channel
 
-### 5.4 Transparency
+### 6.4 Transparency
 
 보고서에는 다음을 표시한다.
 
@@ -88,9 +110,10 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 - 사용한 근거 source와 citation label
 - report_writer mode
 - citation validation 결과
+- compliance assessment 결과
 - Human Review 기록
 
-### 5.5 Traceability
+### 6.5 Traceability
 
 다음 데이터는 저장되어야 한다.
 
@@ -101,7 +124,7 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 - discovery_metadata
 - compliance_assessment
 
-## 6. 구현 상태
+## 7. 구현 상태
 
 현재 구현된 항목:
 
@@ -109,13 +132,14 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 - `app/compliance/regulatory_policy.py`: regulatory control mapping
 - `app/compliance/assessment.py`: prohibited/high-impact/sensitive screening
 - `app/graph/compliance_node.py`: LangGraph compliance assessment node
-- `app/graph/workflow.py`: risk_governance 이후 compliance_assessment 실행
+- `app/graph/workflow.py`: 병렬 Supervisor Graph 및 compliance fan-in
+- `app/graph/state.py`: 병렬 실행용 dedupe reducer
 - `app/tools/score_calculator.py`: compliance 결과를 ranking status/reason에 반영
+- `app/tools/deterministic_report_data_builder.py`: compliance assessment 보고서 섹션 생성
 
 다음 구현 대상:
 
-- 병렬 graph 전환을 위한 state reducer 적용
-- compliance assessment 보고서 섹션 추가
 - API/UI에서 compliance 결과 표시
 - 고위험 카테고리별 추가 질문지 및 checklist
 - 문서별 접근권한/삭제/재처리 workflow
+- 법령 원문 기반 조항별 mapping 보강
