@@ -17,6 +17,7 @@ from app.ingestion.service import ingest_file
 from app.main import run_demo
 from app.rag.indexer import index_documents
 from app.rag.retriever import search_similar_chunks
+from app.security.access_control import AccessContext
 from app.tools.review_applier import apply_human_review_to_ranking
 
 app = FastAPI(title="AX Delivery Planner API", version="0.1.0")
@@ -57,7 +58,7 @@ def ui() -> str:
 @app.post("/companies/bootstrap")
 def bootstrap_company_endpoint(
     request: CompanyBootstrapRequest,
-    _: None = Depends(require_api_key),
+    access: AccessContext = Depends(require_api_key),
 ) -> dict[str, Any]:
     try:
         result = run_bootstrap_supervisor_graph(
@@ -71,14 +72,14 @@ def bootstrap_company_endpoint(
             reset_company_chunks=request.reset_company_chunks,
             thread_id=request.thread_id,
         )
-        return {"status": "ok", "result": result.to_dict()}
+        return {"status": "ok", "access": {"user_id": access.user_id, "role": access.role}, "result": result.to_dict()}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Company bootstrap failed: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/documents/ingest")
 def ingest_document(
-    _: None = Depends(require_api_key),
+    access: AccessContext = Depends(require_api_key),
     company_id: int = Form(...),
     file: UploadFile = File(...),
     process_id: int | None = Form(None),
@@ -86,10 +87,12 @@ def ingest_document(
     document_type: str | None = Form(None),
     department: str | None = Form(None),
     security_level: str = Form("internal"),
+    allowed_roles: str | None = Form(None),
     index: bool = Form(True),
 ) -> dict[str, Any]:
     suffix = Path(file.filename or "uploaded.txt").suffix or ".txt"
     temp_path: Path | None = None
+    parsed_allowed_roles = [item.strip() for item in allowed_roles.split(",") if item.strip()] if allowed_roles else None
 
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
@@ -106,10 +109,11 @@ def ingest_document(
                 document_type=document_type,
                 department=department,
                 security_level=security_level,
+                allowed_roles=parsed_allowed_roles,
                 index=index,
             )
 
-        return {"status": "ok", "result": result.to_dict()}
+        return {"status": "ok", "access": {"user_id": access.user_id, "role": access.role}, "result": result.to_dict()}
 
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Ingestion failed: {type(exc).__name__}: {exc}") from exc
@@ -128,7 +132,7 @@ def rag_search(
     company_id: int,
     process_id: int | None = None,
     top_k: int = 5,
-    _: None = Depends(require_api_key),
+    access: AccessContext = Depends(require_api_key),
 ) -> dict[str, Any]:
     try:
         with SessionLocal() as db:
@@ -138,6 +142,7 @@ def rag_search(
                 company_id=company_id,
                 process_id=process_id,
                 top_k=top_k,
+                user_role=access.role,
             )
 
         return {
@@ -145,6 +150,7 @@ def rag_search(
             "query": query,
             "company_id": company_id,
             "process_id": process_id,
+            "user_role": access.role,
             "count": len(results),
             "results": results,
         }
@@ -159,8 +165,11 @@ def reindex_rag(
     chunk_size: int = 800,
     chunk_overlap: int = 120,
     batch_size: int = 64,
-    _: None = Depends(require_api_key),
+    access: AccessContext = Depends(require_api_key),
 ) -> dict[str, Any]:
+    if access.role != "admin":
+        raise HTTPException(status_code=403, detail="Only admin role can reindex RAG documents.")
+
     try:
         inserted_count = index_documents(
             company_id=company_id,
@@ -180,7 +189,7 @@ def run_analysis(
     company_id: int | None = None,
     auto_approve: bool = True,
     thread_id: str = "ax-planner-api",
-    _: None = Depends(require_api_key),
+    access: AccessContext = Depends(require_api_key),
 ) -> dict[str, Any]:
     try:
         result = run_demo(
@@ -199,6 +208,7 @@ def run_analysis(
 
         return {
             "status": "ok",
+            "access": {"user_id": access.user_id, "role": access.role},
             "report_docx_path": result.get("report_docx_path"),
             "generation": result.get("report_data", {}).get("generation", {}),
             "citation_validation": result.get("report_data", {}).get("citation_validation", {}),
@@ -214,8 +224,11 @@ def run_analysis(
 @app.post("/reviews/apply-ranking")
 def apply_review_to_ranking(
     request: ReviewApplyRequest,
-    _: None = Depends(require_api_key),
+    access: AccessContext = Depends(require_api_key),
 ) -> dict[str, Any]:
+    if access.role not in {"manager", "admin"}:
+        raise HTTPException(status_code=403, detail="Only manager/admin role can apply human review decisions.")
+
     result = apply_human_review_to_ranking(
         priority_ranking=request.priority_ranking,
         human_review=request.human_review,
@@ -240,6 +253,15 @@ TEST_UI_HTML = """
 </head>
 <body>
   <h1>AX Delivery Planner Test UI</h1>
+
+  <section>
+    <h2>0. Local API Key</h2>
+    <label>APP_API_KEY(optional)</label>
+    <input id="apiKey" type="password" placeholder="local-test-key" style="width: 300px" />
+    <label>User Role</label>
+    <input id="userRole" type="text" value="admin" style="width: 120px" />
+    <button onclick="saveApiKey()">Save</button>
+  </section>
 
   <section>
     <h2>1. 회사명 기반 DB 생성</h2>
@@ -280,6 +302,12 @@ TEST_UI_HTML = """
   <pre id="output">ready</pre>
 
 <script>
+function saveApiKey() {
+  localStorage.setItem('AX_APP_API_KEY', document.getElementById('apiKey').value || '');
+  localStorage.setItem('AX_USER_ROLE', document.getElementById('userRole').value || 'analyst');
+  document.getElementById('output').textContent = 'saved';
+}
+
 async function show(promise) {
   const out = document.getElementById('output');
   out.textContent = 'loading...';
@@ -292,9 +320,13 @@ async function show(promise) {
   }
 }
 
-function authHeaders() {
+function authHeaders(json=true) {
   const key = localStorage.getItem('AX_APP_API_KEY') || '';
-  return key ? {'Content-Type':'application/json', 'X-API-Key': key} : {'Content-Type':'application/json'};
+  const role = localStorage.getItem('AX_USER_ROLE') || 'analyst';
+  const headers = json ? {'Content-Type':'application/json'} : {};
+  if (key) headers['X-API-Key'] = key;
+  if (role) headers['X-User-Role'] = role;
+  return headers;
 }
 
 function bootstrapCompany() {
@@ -319,17 +351,13 @@ function ingest() {
   const processId = document.getElementById('processId').value;
   if (processId) fd.append('process_id', processId);
   fd.append('file', document.getElementById('file').files[0]);
-  const key = localStorage.getItem('AX_APP_API_KEY') || '';
-  const headers = key ? {'X-API-Key': key} : {};
-  show(fetch('/documents/ingest', {method:'POST', headers, body: fd}));
+  show(fetch('/documents/ingest', {method:'POST', headers: authHeaders(false), body: fd}));
 }
 
 function ragSearch() {
   const q = encodeURIComponent(document.getElementById('ragQuery').value);
   const companyId = document.getElementById('companyId').value;
-  const key = localStorage.getItem('AX_APP_API_KEY') || '';
-  const headers = key ? {'X-API-Key': key} : {};
-  show(fetch(`/rag/search?query=${q}&company_id=${companyId}`, {headers}));
+  show(fetch(`/rag/search?query=${q}&company_id=${companyId}`, {headers: authHeaders(false)}));
 }
 
 function runAnalysis() {
@@ -338,9 +366,7 @@ function runAnalysis() {
   const params = new URLSearchParams({auto_approve: 'true'});
   if (projectId) params.append('project_id', projectId);
   if (companyId) params.append('company_id', companyId);
-  const key = localStorage.getItem('AX_APP_API_KEY') || '';
-  const headers = key ? {'X-API-Key': key} : {};
-  show(fetch(`/analysis/run?${params.toString()}`, {method:'POST', headers}));
+  show(fetch(`/analysis/run?${params.toString()}`, {method:'POST', headers: authHeaders(false)}));
 }
 </script>
 </body>
