@@ -8,14 +8,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.llm import get_embedding_model
+from app.core.llm import embed_query_with_retry
 from app.db.database import SessionLocal
 from app.db.models import DocumentChunk, ProcessDocument
+from app.security.access_control import DEFAULT_ROLE, allowed_security_levels
 
 
 def embed_query(query: str) -> list[float]:
-    embeddings = get_embedding_model()
-    return embeddings.embed_query(query)
+    return embed_query_with_retry(query)
 
 
 def search_similar_chunks(
@@ -25,8 +25,10 @@ def search_similar_chunks(
     top_k: int = 5,
     process_id: int | None = None,
     max_distance: float | None = None,
+    user_role: str | None = DEFAULT_ROLE,
 ) -> list[dict[str, Any]]:
     query_embedding = embed_query(query)
+    allowed_levels = allowed_security_levels(user_role)
 
     distance = DocumentChunk.embedding.cosine_distance(query_embedding).label("distance")
 
@@ -43,10 +45,12 @@ def search_similar_chunks(
             ProcessDocument.document_type,
             ProcessDocument.security_level,
             ProcessDocument.contains_sensitive_info,
+            ProcessDocument.allowed_roles,
             distance,
         )
         .join(ProcessDocument, ProcessDocument.id == DocumentChunk.document_id)
         .where(DocumentChunk.company_id == company_id)
+        .where(ProcessDocument.security_level.in_(allowed_levels))
     )
 
     if process_id is not None:
@@ -55,13 +59,17 @@ def search_similar_chunks(
     if max_distance is not None:
         stmt = stmt.where(distance <= max_distance)
 
-    stmt = stmt.order_by(distance).limit(top_k)
+    stmt = stmt.order_by(distance).limit(top_k * 3)
 
     rows = db.execute(stmt).all()
 
     results: list[dict[str, Any]] = []
 
     for row in rows:
+        allowed_roles = row.allowed_roles or []
+        if allowed_roles and user_role not in allowed_roles and user_role != "admin":
+            continue
+
         distance_value = float(row.distance)
         similarity = 1.0 - distance_value
 
@@ -82,6 +90,8 @@ def search_similar_chunks(
                 "similarity": round(similarity, 6),
             }
         )
+        if len(results) >= top_k:
+            break
 
     return results
 
@@ -116,14 +126,14 @@ def retrieve_contexts_for_processes(
     company_id: int,
     top_k: int = 3,
     include_company_wide: bool = True,
+    user_role: str | None = DEFAULT_ROLE,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     LangGraph node에서 쓰기 좋은 형태로 업무별 RAG context를 반환한다.
     key는 process_id 문자열로 둔다.
 
-    기존에는 process_id가 정확히 연결된 chunk만 검색했기 때문에,
-    사용자가 업로드했지만 특정 업무에 연결하지 않은 문서는 결과에서 빠질 수 있었다.
-    이제는 업무 연결 문서와 회사 전체 문서를 함께 검색해 업로드 문서가 분석 근거에 들어오도록 한다.
+    업무 연결 문서와 회사 전체 문서를 함께 검색하되, user_role이 접근할 수 있는
+    security_level/allowed_roles 문서만 반환한다.
     """
     contexts: dict[str, list[dict[str, Any]]] = {}
 
@@ -142,6 +152,7 @@ def retrieve_contexts_for_processes(
             company_id=company_id,
             process_id=process_id,
             top_k=top_k,
+            user_role=user_role,
         )
 
         if include_company_wide:
@@ -151,6 +162,7 @@ def retrieve_contexts_for_processes(
                 company_id=company_id,
                 process_id=None,
                 top_k=top_k,
+                user_role=user_role,
             )
             contexts[str(process_id)] = merge_chunk_results(
                 process_specific_results,
@@ -168,6 +180,7 @@ def demo_search(
     company_id: int,
     process_id: int | None,
     top_k: int,
+    user_role: str,
 ) -> None:
     with SessionLocal() as db:
         results = search_similar_chunks(
@@ -176,6 +189,7 @@ def demo_search(
             company_id=company_id,
             process_id=process_id,
             top_k=top_k,
+            user_role=user_role,
         )
 
     print(f"query: {query}")
@@ -196,6 +210,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--company-id", type=int, default=1)
     parser.add_argument("--process-id", type=int, default=None)
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--user-role", type=str, default=DEFAULT_ROLE)
     return parser.parse_args()
 
 
@@ -207,4 +222,5 @@ if __name__ == "__main__":
         company_id=args.company_id,
         process_id=args.process_id,
         top_k=args.top_k,
+        user_role=args.user_role,
     )
