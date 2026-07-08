@@ -51,6 +51,7 @@ def ingest_document(
     index: bool = Form(True),
 ) -> dict[str, Any]:
     suffix = Path(file.filename or "uploaded.txt").suffix or ".txt"
+    temp_path: Path | None = None
 
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
@@ -76,10 +77,11 @@ def ingest_document(
         raise HTTPException(status_code=400, detail=f"Ingestion failed: {type(exc).__name__}: {exc}") from exc
 
     finally:
-        try:
-            temp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 @app.post("/rag/reindex")
