@@ -24,6 +24,18 @@ WHERE source_url IS NULL
   AND document_type = 'official_url'
   AND content LIKE '공식 URL:%';
 
+-- Existing environments may already contain duplicate company names from pre-idempotency bootstrap runs.
+-- Do not delete companies because dependent rows may exist. Rename older duplicates except the first row.
+WITH ranked_companies AS (
+  SELECT id, name, ROW_NUMBER() OVER (PARTITION BY name ORDER BY id) AS rn
+  FROM companies
+)
+UPDATE companies c
+SET name = c.name || ' #' || c.id
+FROM ranked_companies r
+WHERE c.id = r.id
+  AND r.rn > 1;
+
 -- Remove exact duplicate rows before creating unique indexes.
 DELETE FROM departments a
 USING departments b
