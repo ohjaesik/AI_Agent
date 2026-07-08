@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.registry import get_agent_registry
-from app.compliance.regulatory_policy import get_regulatory_controls
+from app.compliance.regulatory_policy import get_korea_ai_basic_act_reference, get_regulatory_controls
 
 PROHIBITED_KEYWORDS = [
     "사회적 점수",
@@ -46,6 +46,29 @@ SENSITIVE_KEYWORDS = [
     "confidential",
 ]
 
+KOREA_AI_BASIC_ACT_REQUIREMENTS = {
+    "standard": [
+        "AI 보조 산출물 고지",
+        "근거 source 및 생성 방식 기록",
+        "사람 승인 전 최종 의사결정 사용 금지",
+    ],
+    "sensitive_review": [
+        "민감정보·기밀정보 포함 가능성 검토",
+        "접근권한 및 데이터 최소화 확인",
+        "Human Review 및 보안 owner 검토 필요",
+    ],
+    "enhanced_review": [
+        "고영향 AI 가능성 사전 검토",
+        "사람 감독 체계 및 책임자 지정",
+        "설명가능성·기록관리·데이터 품질 증빙 필요",
+        "법무·보안 owner 승인 전 PoC 착수 금지",
+    ],
+    "blocked": [
+        "부적절 또는 금지 가능성이 있는 활용으로 MVP 후보 제외",
+        "법무 검토 없이 추천·PoC 진행 금지",
+    ],
+}
+
 
 def normalize_text(*values: Any) -> str:
     return " ".join(str(value or "") for value in values).lower()
@@ -61,6 +84,10 @@ def classify_high_impact(text: str) -> list[str]:
         if find_keywords(text, keywords):
             categories.append(category)
     return categories
+
+
+def korea_ai_basic_act_requirements_for_level(level: str) -> list[str]:
+    return KOREA_AI_BASIC_ACT_REQUIREMENTS.get(level, KOREA_AI_BASIC_ACT_REQUIREMENTS["standard"])
 
 
 def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -85,6 +112,7 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
     required_controls = [
         "traceability_logging",
         "transparency_disclosure",
+        "explainability_notice",
         "assistive_use_boundary",
     ]
     blocked = False
@@ -95,15 +123,15 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
         blocked = True
         human_review_required = True
         compliance_level = "blocked"
-        required_controls.extend(["prohibited_use_screening", "human_oversight"])
+        required_controls.extend(["prohibited_use_screening", "human_oversight", "safety_reliability_management"])
     elif high_impact_categories:
         human_review_required = True
         compliance_level = "enhanced_review"
-        required_controls.extend(["high_impact_screening", "human_oversight", "data_quality_governance"])
+        required_controls.extend(["high_impact_screening", "human_oversight", "data_quality_governance", "safety_reliability_management"])
     elif sensitive_hits or risk_flags:
         human_review_required = True
         compliance_level = "sensitive_review"
-        required_controls.extend(["security_privacy_controls", "human_oversight"])
+        required_controls.extend(["security_privacy_controls", "human_oversight", "data_quality_governance"])
 
     # 중복 제거
     deduped_controls = []
@@ -123,6 +151,7 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
         "sensitive_hits": sorted(set(sensitive_hits)),
         "risk_flags": risk_flags,
         "required_controls": deduped_controls,
+        "korea_ai_basic_act_requirements": korea_ai_basic_act_requirements_for_level(compliance_level),
     }
 
 
@@ -174,8 +203,10 @@ def assess_ai_compliance(
         },
         "agent_registry": get_agent_registry(),
         "regulatory_controls": get_regulatory_controls(),
+        "korea_ai_basic_act_reference": get_korea_ai_basic_act_reference(),
         "disclaimer": (
             "This assessment is a technical compliance screening for AX planning. "
-            "It is not legal advice and should be reviewed by legal/security owners before production deployment."
+            "It is not legal advice and should be reviewed by legal/security owners before production deployment. "
+            "Korea AI Basic Act mapping is an operational control mapping and must be checked against official law, decree, and guidance before production use."
         ),
     }
