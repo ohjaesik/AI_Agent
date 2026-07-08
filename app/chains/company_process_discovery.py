@@ -8,7 +8,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.core.llm import get_chat_model
+from app.core.llm import get_chat_model, invoke_chat_with_retry
 
 ALLOWED_DEPARTMENTS = {
     "AX전략/기획",
@@ -193,11 +193,7 @@ def build_score_rationale(raw: dict[str, Any], evidence_labels: list[str]) -> di
     return result
 
 
-def validate_processes(
-    payload: dict[str, Any],
-    allowed_labels: list[str],
-    fallback_processes: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+def validate_processes(payload: dict[str, Any], allowed_labels: list[str], fallback_processes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     raw_processes = payload.get("processes")
 
     if not isinstance(raw_processes, list):
@@ -209,11 +205,7 @@ def validate_processes(
         if not isinstance(raw, dict):
             continue
 
-        evidence_labels = [
-            str(label)
-            for label in raw.get("evidence_labels", [])
-            if str(label) in allowed_labels
-        ]
+        evidence_labels = [str(label) for label in raw.get("evidence_labels", []) if str(label) in allowed_labels]
 
         if not evidence_labels and allowed_labels:
             evidence_labels = [allowed_labels[0]]
@@ -230,8 +222,7 @@ def validate_processes(
         problem = ensure_evidence_label(problem, evidence_labels)
         current_workflow = ensure_evidence_label(current_workflow or problem, evidence_labels)
         suitability_rationale = ensure_evidence_label(
-            suitability_rationale
-            or "공식자료에서 확인되는 업무 특성과 반복적 판단·문서 활용 가능성을 고려할 때 AX 전환 후보로 볼 수 있다.",
+            suitability_rationale or "공식자료에서 확인되는 업무 특성과 반복적 판단·문서 활용 가능성을 고려할 때 AX 전환 후보로 볼 수 있다.",
             evidence_labels,
         )
         score_rationale = build_score_rationale(raw, evidence_labels)
@@ -267,10 +258,7 @@ def validate_processes(
     return valid[:8]
 
 
-def add_fallback_metadata(
-    processes: list[dict[str, Any]],
-    reason: str,
-) -> list[dict[str, Any]]:
+def add_fallback_metadata(processes: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
     result = []
 
     for process in processes:
@@ -315,7 +303,7 @@ def discover_company_process_specs(
             allowed_labels="\n".join(allowed_labels),
             source_context=build_source_context(official_sources),
         )
-        response = llm.invoke(messages)
+        response = invoke_chat_with_retry(llm, messages)
         payload = extract_json_object(str(response.content))
         return validate_processes(
             payload=payload,
