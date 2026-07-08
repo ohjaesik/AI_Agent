@@ -14,6 +14,7 @@ STATUS_ORDER = {
     "low_roi": 2,
     "excluded": 1,
 }
+REVIEW_LEVELS = {"enhanced_review", "sensitive_review"}
 
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -24,24 +25,20 @@ def build_context_count_map(retrieved_contexts: dict[str, list[dict[str, Any]]])
     result: dict[int, int] = {}
     for key, chunks in (retrieved_contexts or {}).items():
         try:
-            process_id = int(key)
+            result[int(key)] = len(chunks or [])
         except (TypeError, ValueError):
             continue
-        result[process_id] = len(chunks or [])
     return result
 
 
 def build_evidence_count_map(evidence_items: list[dict[str, Any]]) -> dict[int, int]:
     result: dict[int, int] = {}
     for item in evidence_items or []:
-        process_id = item.get("process_id")
-        if process_id is None:
-            continue
         try:
-            parsed = int(process_id)
+            process_id = int(item.get("process_id"))
         except (TypeError, ValueError):
             continue
-        result[parsed] = result.get(parsed, 0) + 1
+        result[process_id] = result.get(process_id, 0) + 1
     return result
 
 
@@ -62,7 +59,6 @@ def compute_replan_evidence_lift(state: dict[str, Any]) -> float:
     public_results = ((source_collection.get("public_web_search") or {}).get("results") or [])
     same_domain = source_collection.get("same_domain_discovered") or []
     indexed_chunks = int(source_collection.get("indexed_chunks") or 0)
-
     public_lift = min(len(public_results), 3) * 0.025
     official_lift = min(len(same_domain), 3) * 0.02
     chunk_lift = min(indexed_chunks, 60) / 60 * 0.055
@@ -73,14 +69,7 @@ def score_rationale_coverage(candidate: dict[str, Any]) -> float:
     rationale = candidate.get("score_rationale") or {}
     if not isinstance(rationale, dict):
         return 0.0
-    required = [
-        "expected_effect",
-        "repeatability",
-        "document_dependency",
-        "data_accessibility",
-        "tech_feasibility",
-        "risk_score",
-    ]
+    required = ["expected_effect", "repeatability", "document_dependency", "data_accessibility", "tech_feasibility", "risk_score"]
     present = [key for key in required if str(rationale.get(key) or "").strip()]
     return clamp(len(present) / len(required))
 
@@ -105,17 +94,13 @@ def score_compliance_alignment(candidate: dict[str, Any]) -> tuple[float, list[s
     issues: list[str] = []
     compliance = candidate.get("compliance") or {}
     status = candidate.get("status")
-
     if compliance.get("blocked") and status != "excluded":
-        issues.append("blocked 후보가 excluded 상태가 아니다.")
+        issues.append("blocked candidate is not excluded")
     if compliance.get("human_review_required") and status == "recommended":
-        issues.append("Human Review 필요 후보가 recommended 상태다.")
-    if compliance.get("compliance_level") in {"enhanced_review", "sensitive_review"} and status == "recommended":
-        issues.append("강화 검토 후보가 recommended 상태다.")
-
-    if issues:
-        return 0.35, issues
-    return 1.0, []
+        issues.append("candidate requires human review")
+    if compliance.get("compliance_level") in REVIEW_LEVELS and status == "recommended":
+        issues.append("regulated candidate requires review")
+    return (0.35, issues) if issues else (1.0, [])
 
 
 def score_risk_uncertainty(candidate: dict[str, Any]) -> float:
@@ -133,12 +118,11 @@ def score_risk_uncertainty(candidate: dict[str, Any]) -> float:
 
 
 def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_count: int, replan_evidence_lift: float = 0.0) -> dict[str, Any]:
-    evidence_coverage = score_evidence_coverage(candidate, context_count=context_count, evidence_count=evidence_count, replan_evidence_lift=replan_evidence_lift)
-    data_confidence = score_data_confidence(candidate, context_count=context_count, replan_evidence_lift=replan_evidence_lift)
+    evidence_coverage = score_evidence_coverage(candidate, context_count, evidence_count, replan_evidence_lift)
+    data_confidence = score_data_confidence(candidate, context_count, replan_evidence_lift)
     rationale_coverage = score_rationale_coverage(candidate)
     compliance_alignment, issues = score_compliance_alignment(candidate)
     risk_uncertainty = score_risk_uncertainty(candidate)
-
     confidence_score = clamp(
         evidence_coverage * 0.36
         + data_confidence * 0.24
@@ -148,20 +132,18 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
     )
 
     if evidence_coverage < 0.45:
-        issues.append("근거 coverage가 낮아 추가 자료 수집이 필요하다.")
+        issues.append("low evidence coverage")
     if rationale_coverage < 0.50:
-        issues.append("점수 산정 근거가 부족하다.")
+        issues.append("low rationale coverage")
     if data_confidence < 0.50:
-        issues.append("데이터 접근성 또는 RAG context가 부족하다.")
+        issues.append("low data confidence")
 
     post_replan = replan_evidence_lift >= 0.08
     additional_evidence_threshold = 0.60 if not post_replan else 0.45
     confidence_threshold = 0.50 if not post_replan else 0.62
     human_review_threshold = 0.75 if not post_replan else 0.70
-
     zero_evidence_coverage = evidence_coverage <= 0.0
-    requires_additional_evidence = zero_evidence_coverage or evidence_coverage < additional_evidence_threshold or confidence_score < confidence_threshold
-    requires_human_review = confidence_score < human_review_threshold or bool(issues) or candidate.get("status") == "human_review_required"
+    very_weak_evidence_coverage = evidence_coverage < 0.20 or (evidence_coverage < 0.25 and data_confidence < 0.25)
 
     return {
         "process_id": candidate.get("process_id"),
@@ -177,8 +159,9 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
         "confidence_threshold": confidence_threshold,
         "human_review_threshold": human_review_threshold,
         "zero_evidence_coverage": zero_evidence_coverage,
-        "requires_additional_evidence": requires_additional_evidence,
-        "requires_human_review": requires_human_review,
+        "very_weak_evidence_coverage": very_weak_evidence_coverage,
+        "requires_additional_evidence": zero_evidence_coverage or evidence_coverage < additional_evidence_threshold or confidence_score < confidence_threshold,
+        "requires_human_review": confidence_score < human_review_threshold or bool(issues) or candidate.get("status") == "human_review_required",
         "issues": issues,
     }
 
@@ -193,17 +176,19 @@ def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_ite
         evaluation = evaluation_map.get(process_id)
         if evaluation:
             copied["agent_evaluation"] = evaluation
-            zero_evidence_coverage = bool(evaluation.get("zero_evidence_coverage"))
-            weak_evidence_coverage = float(evaluation.get("evidence_coverage") or 0.0) < 0.20
-            if copied.get("status") == "recommended" and (zero_evidence_coverage or weak_evidence_coverage or evaluation.get("confidence_score", 1.0) < 0.50):
-                copied["status"] = "evidence_insufficient"
-                copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 기준 근거 coverage가 부족해 추가 근거가 필요하다.".strip()
-            elif copied.get("status") == "recommended" and evaluation.get("requires_human_review"):
-                copied["status"] = "human_review_required"
-                copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 검증 결과 Human Review가 필요하다.".strip()
             compliance = copied.get("compliance") or {}
+            compliance_review_required = compliance.get("compliance_level") in REVIEW_LEVELS or bool(compliance.get("human_review_required"))
             if compliance.get("blocked"):
                 copied["status"] = "excluded"
+            elif copied.get("status") == "recommended" and compliance_review_required:
+                copied["status"] = "human_review_required"
+                copied["reason"] = f"{copied.get('reason', '')} Compliance review required.".strip()
+            elif copied.get("status") == "recommended" and (evaluation.get("zero_evidence_coverage") or evaluation.get("very_weak_evidence_coverage")):
+                copied["status"] = "evidence_insufficient"
+                copied["reason"] = f"{copied.get('reason', '')} Evidence coverage is insufficient.".strip()
+            elif copied.get("status") == "recommended" and evaluation.get("requires_human_review"):
+                copied["status"] = "human_review_required"
+                copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator requires Human Review.".strip()
         updated_items.append(copied)
 
     updated_items.sort(
@@ -221,7 +206,6 @@ def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_ite
     review_required = [item for item in updated_items if item.get("status") == "human_review_required"]
     evidence_insufficient = [item for item in updated_items if item.get("status") == "evidence_insufficient"]
     excluded = [item for item in updated_items if item.get("status") == "excluded"]
-
     updated = dict(priority_ranking)
     updated["items"] = updated_items
     updated["summary"] = {
@@ -246,7 +230,6 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
         or (state.get("risk_governance", {}) or {}).get("compliance_assessment")
     )
     replan_evidence_lift = compute_replan_evidence_lift(state)
-
     evaluation_items = []
     ranking_for_evaluation = {**ranking, "items": []}
     for candidate in ranking.get("items", []):
@@ -264,13 +247,11 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
             )
         )
 
-    updated_ranking = apply_evaluation_to_ranking(priority_ranking=ranking_for_evaluation, evaluation_items=evaluation_items)
-
+    updated_ranking = apply_evaluation_to_ranking(ranking_for_evaluation, evaluation_items)
     low_confidence_count = sum(1 for item in evaluation_items if item.get("confidence_score", 1) < 0.50)
     human_review_required_count = sum(1 for item in evaluation_items if item.get("requires_human_review"))
     additional_evidence_count = sum(1 for item in evaluation_items if item.get("requires_additional_evidence"))
     avg_confidence = round(sum(float(item.get("confidence_score") or 0.0) for item in evaluation_items) / len(evaluation_items), 3) if evaluation_items else 0.0
-
     return {
         "agent_registry": build_tool_permission_report(),
         "items": evaluation_items,
