@@ -10,7 +10,7 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.config import get_settings
-from app.core.llm import get_chat_model
+from app.core.llm import get_chat_model, invoke_chat_with_retry
 from app.tools.citation_validator import find_citation_labels, validate_report_citations
 from app.tools.deterministic_report_data_builder import build_report_data as build_deterministic_report_data
 
@@ -243,7 +243,7 @@ def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
             base_sections=compact_json(build_base_sections_payload(base_report_data), max_chars=12000),
         )
 
-        response = llm.invoke(messages)
+        response = invoke_chat_with_retry(llm, messages)
         llm_payload = extract_json_object(str(response.content))
         report_data = apply_llm_paragraphs(base_report_data, llm_payload)
         report_data["generation"]["model"] = settings.vllm_model
