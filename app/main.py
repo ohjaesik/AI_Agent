@@ -8,6 +8,8 @@ from typing import Any
 
 from langgraph.types import Command
 
+from app.db.crud import resolve_project_selection
+from app.db.database import SessionLocal
 from app.graph.workflow import build_ax_planner_graph
 
 
@@ -21,12 +23,31 @@ def print_interrupt(result: dict[str, Any]) -> None:
     pprint.pp(interrupts)
 
 
+def resolve_ids(
+    project_id: int | None,
+    company_id: int | None,
+) -> dict[str, int]:
+    with SessionLocal() as db:
+        return resolve_project_selection(
+            db=db,
+            project_id=project_id,
+            company_id=company_id,
+        )
+
+
 def run_demo(
-    project_id: int,
-    company_id: int,
+    project_id: int | None,
+    company_id: int | None,
     thread_id: str,
     auto_approve: bool,
+    report_title: str | None = None,
+    report_author: str | None = None,
+    report_date: str | None = None,
 ) -> dict[str, Any]:
+    resolved = resolve_ids(project_id=project_id, company_id=company_id)
+    resolved_project_id = resolved["project_id"]
+    resolved_company_id = resolved["company_id"]
+
     graph = build_ax_planner_graph()
 
     config = {
@@ -34,23 +55,27 @@ def run_demo(
             "thread_id": thread_id,
         }
     }
+
     initial_state = {
-        "project_id": project_id,
-        "company_id": company_id,
+        "project_id": resolved_project_id,
+        "company_id": resolved_company_id,
         "user_request": (
             "제조기업의 업무 프로세스와 내부 문서를 분석하여 "
             "AI Agent 도입 후보를 도출하고 PoC 우선순위 보고서를 생성한다."
         ),
         "report_requirements": {
-            "title": "제조기업 AX 전환 업무 프로세스 진단 및 AI Agent 도입 우선순위 추천 보고서",
-            "author": "오재식",
-            "date": "2026-07",
+            "title": report_title
+            or "제조기업 AX 전환 업무 프로세스 진단 및 AI Agent 도입 우선순위 추천 보고서",
+            "author": report_author or "",
+            "date": report_date or "",
         },
         "audit_logs": [],
         "errors": [],
     }
 
     print("=== AX Delivery Planner Graph Start ===")
+    print(f"project_id={resolved_project_id}, company_id={resolved_company_id}")
+
     result = graph.invoke(initial_state, config=config)
 
     if "__interrupt__" in result:
@@ -99,10 +124,23 @@ def run_demo(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project-id", type=int, default=4)
-    parser.add_argument("--company-id", type=int, default=4)
+    parser.add_argument(
+        "--project-id",
+        type=int,
+        default=None,
+        help="Analysis project ID. If omitted, the latest project is used.",
+    )
+    parser.add_argument(
+        "--company-id",
+        type=int,
+        default=None,
+        help="Company ID. If omitted, it is resolved from the selected project.",
+    )
     parser.add_argument("--thread-id", type=str, default="ax-planner-demo-001")
     parser.add_argument("--auto-approve", action="store_true")
+    parser.add_argument("--report-title", type=str, default=None)
+    parser.add_argument("--report-author", type=str, default=None)
+    parser.add_argument("--report-date", type=str, default=None)
     return parser.parse_args()
 
 
@@ -114,4 +152,7 @@ if __name__ == "__main__":
         company_id=args.company_id,
         thread_id=args.thread_id,
         auto_approve=args.auto_approve,
+        report_title=args.report_title,
+        report_author=args.report_author,
+        report_date=args.report_date,
     )
