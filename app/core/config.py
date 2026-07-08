@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     app_jwt_algorithm: str = Field(default="HS256", alias="APP_JWT_ALGORITHM")
     app_jwt_exp_minutes: int = Field(default=480, alias="APP_JWT_EXP_MINUTES")
 
+    # Original document storage. Use local for development, s3 for MinIO/S3.
+    storage_backend: str = Field(default="local", alias="STORAGE_BACKEND")
+    local_storage_dir: str = Field(default="storage", alias="LOCAL_STORAGE_DIR")
+    s3_endpoint_url: str | None = Field(default=None, alias="S3_ENDPOINT_URL")
+    s3_bucket: str | None = Field(default=None, alias="S3_BUCKET")
+    s3_access_key_id: str | None = Field(default=None, alias="S3_ACCESS_KEY_ID")
+    s3_secret_access_key: str | None = Field(default=None, alias="S3_SECRET_ACCESS_KEY")
+    s3_region_name: str = Field(default="ap-northeast-2", alias="S3_REGION_NAME")
+
     # App
     app_env: str = Field(default="local", alias="APP_ENV")
 
