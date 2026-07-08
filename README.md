@@ -4,11 +4,13 @@
 
 ## 주요 기능
 
-- 회사명 + 공식 출처 기반 DB 초안 생성
+- Bootstrap Supervisor Graph 기반 회사명 + 공식 출처 DB 생성
+- AX Analysis Supervisor Graph 기반 병렬 분석
 - 회사/부서/시스템/업무 프로세스/문서 DB 로드
 - 내부 문서 RAG 색인 및 검색
 - 업무 프로세스 분석
 - 데이터 준비도, 자동화 가능성, ROI, 보안·거버넌스 위험 분석
+- AI Governance 및 Compliance Assessment
 - AI Agent 후보 우선순위 추천
 - Human Review interrupt 및 자동 승인 실행
 - vLLM/Gemma 기반 보고서 문단 작성, 실패 시 deterministic fallback
@@ -44,14 +46,23 @@ VLLM_BASE_URL=http://localhost:8000/v1
 VLLM_API_KEY=EMPTY
 VLLM_MODEL=google/gemma-2-9b-it
 DART_API_KEY=OPTIONAL_OPEN_DART_KEY
+APP_API_KEY=OPTIONAL_LOCAL_API_KEY
 APP_ENV=local
 ```
+
+`DART_API_KEY`를 `.env`에 넣으면 CLI/API 요청에 키를 직접 넘기지 않아도 됩니다. `APP_API_KEY`를 설정하면 `/companies/bootstrap`, `/documents/ingest`, `/rag/search`, `/rag/reindex`, `/analysis/run`, `/reviews/apply-ranking`는 `X-API-Key` 헤더가 있어야 호출됩니다.
 
 ## 3. DB 초기화
 
 ```bash
 python -m app.db.init_pgvector
 python -m app.db.create_tables
+python -m app.db.migrate_discovery_metadata
+```
+
+seed 데이터가 필요하면 다음을 추가로 실행합니다.
+
+```bash
 python -m app.db.seed --reset
 ```
 
@@ -85,6 +96,14 @@ python -m app.main --project-id 4 --auto-approve --verbose
 
 ## 6. 회사명 기반 DB 생성
 
+Bootstrap은 다음 Supervisor Graph를 사용합니다.
+
+```text
+company_profile_agent
+→ source_ingestion_agent
+→ process_discovery_agent
+```
+
 공식 URL만으로 회사 DB, 부서, 시스템, 업무 후보, 분석 프로젝트, RAG 문서를 생성합니다.
 
 ```bash
@@ -93,16 +112,18 @@ python -m app.company_bootstrap.bootstrap \
   --official-url "https://www.samsung.com/sec/about-us/company-info/"
 ```
 
-OpenDART API 키가 있으면 기업개황도 함께 수집합니다.
+OpenDART API 키가 `.env`의 `DART_API_KEY`에 있으면 별도 인자로 넘기지 않아도 됩니다.
 
 ```bash
 python -m app.company_bootstrap.bootstrap \
   --company-name "삼성전자" \
-  --dart-api-key "$DART_API_KEY" \
-  --official-url "https://www.samsung.com/sec/about-us/company-info/"
+  --stock-code "005930" \
+  --official-url "https://www.samsung.com/sec/about-us/company-info/" \
+  --official-url "https://www.samsung.com/sec/about-us/business-area/" \
+  --official-url "https://www.samsung.com/sec/sustainability/overview/"
 ```
 
-종목코드로 회사를 좁힐 수도 있습니다.
+직접 키를 넘길 수도 있지만, 터미널 로그에 남을 수 있으므로 `.env` 사용을 권장합니다.
 
 ```bash
 python -m app.company_bootstrap.bootstrap \
@@ -111,7 +132,9 @@ python -m app.company_bootstrap.bootstrap \
   --dart-api-key "$DART_API_KEY"
 ```
 
-실행 결과로 `company_id`, `project_id`, `document_ids`, `process_ids`, `chunk_count`가 출력됩니다. 이후 바로 분석을 실행할 수 있습니다.
+Bootstrap은 서비스 레벨 idempotency를 적용합니다. 같은 회사명, 같은 공식 URL, 같은 업무 후보명으로 재실행하면 기존 회사·문서·업무 후보를 재사용/업데이트하고, 문서 chunk는 문서 단위로 재색인합니다. 실행 결과의 `agent_trace`와 `idempotency` 필드에서 생성/업데이트 여부를 확인할 수 있습니다.
+
+실행 결과로 `company_id`, `project_id`, `document_ids`, `process_ids`, `chunk_count`, `workflow_mode`, `agent_trace`가 출력됩니다. 이후 바로 분석을 실행할 수 있습니다.
 
 ```bash
 python -m app.main --project-id <project_id> --auto-approve --verbose
@@ -167,6 +190,12 @@ python -m uvicorn app.api.main:app --reload --port 8001
 http://localhost:8001/ui
 ```
 
+`APP_API_KEY`를 설정한 경우 API 호출에는 다음 헤더를 붙입니다.
+
+```bash
+-H "X-API-Key: $APP_API_KEY"
+```
+
 ## 9. API 사용 예시
 
 ### Health check
@@ -180,6 +209,7 @@ curl http://localhost:8001/health
 ```bash
 curl -X POST http://localhost:8001/companies/bootstrap \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $APP_API_KEY" \
   -d '{
     "company_name": "삼성전자",
     "official_urls": ["https://www.samsung.com/sec/about-us/company-info/"],
@@ -188,15 +218,15 @@ curl -X POST http://localhost:8001/companies/bootstrap \
   }'
 ```
 
-OpenDART 포함:
+OpenDART는 서버 `.env`의 `DART_API_KEY`를 우선 사용합니다.
 
 ```bash
 curl -X POST http://localhost:8001/companies/bootstrap \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $APP_API_KEY" \
   -d '{
     "company_name": "삼성전자",
     "stock_code": "005930",
-    "dart_api_key": "YOUR_DART_API_KEY",
     "official_urls": ["https://www.samsung.com/sec/about-us/company-info/"],
     "create_project": true,
     "index": true
@@ -207,6 +237,7 @@ curl -X POST http://localhost:8001/companies/bootstrap \
 
 ```bash
 curl -X POST http://localhost:8001/documents/ingest \
+  -H "X-API-Key: $APP_API_KEY" \
   -F "company_id=1" \
   -F "process_id=31" \
   -F "file=@./sample_docs/sop.docx" \
@@ -216,19 +247,22 @@ curl -X POST http://localhost:8001/documents/ingest \
 ### RAG 검색 확인
 
 ```bash
-curl "http://localhost:8001/rag/search?company_id=1&query=공식자료%20사업%20제품&top_k=10"
+curl -H "X-API-Key: $APP_API_KEY" \
+  "http://localhost:8001/rag/search?company_id=1&query=공식자료%20사업%20제품&top_k=10"
 ```
 
 ### RAG 재색인
 
 ```bash
-curl -X POST "http://localhost:8001/rag/reindex?company_id=1&reset=true"
+curl -X POST -H "X-API-Key: $APP_API_KEY" \
+  "http://localhost:8001/rag/reindex?company_id=1&reset=true"
 ```
 
 ### 분석 실행
 
 ```bash
-curl -X POST "http://localhost:8001/analysis/run?company_id=1&auto_approve=true"
+curl -X POST -H "X-API-Key: $APP_API_KEY" \
+  "http://localhost:8001/analysis/run?company_id=1&auto_approve=true"
 ```
 
 ### Human Review 결과를 ranking에 반영
@@ -236,6 +270,7 @@ curl -X POST "http://localhost:8001/analysis/run?company_id=1&auto_approve=true"
 ```bash
 curl -X POST http://localhost:8001/reviews/apply-ranking \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $APP_API_KEY" \
   -d '{
     "priority_ranking": {"items": []},
     "human_review": {
@@ -249,7 +284,15 @@ curl -X POST http://localhost:8001/reviews/apply-ranking \
   }'
 ```
 
-## 10. 추천 결과 평가
+## 10. 테스트
+
+```bash
+pytest
+```
+
+현재 포함된 테스트는 citation label 정규화와 선택적 API Key guard 중심입니다.
+
+## 11. 추천 결과 평가
 
 gold file 예시:
 
@@ -258,52 +301,3 @@ gold file 예시:
   "relevant_process_ids": [31, 36, 39]
 }
 ```
-
-DB에 저장된 최신 `priority_ranking` 결과를 기준으로 평가:
-
-```bash
-python -m app.eval.recommendation_eval \
-  --project-id 1 \
-  --gold-file ./eval_gold.json \
-  --k 5
-```
-
-prediction JSON 파일을 직접 평가:
-
-```bash
-python -m app.eval.recommendation_eval \
-  --prediction-file ./prediction.json \
-  --gold-file ./eval_gold.json \
-  --k 5
-```
-
-출력 지표:
-
-- Hit@K
-- Precision@K
-- Recall@K
-- MRR
-
-## 11. 현재 MVP 범위
-
-가능한 것:
-
-- 회사명 + 공식 URL/OpenDART 기반 DB 초안 생성
-- 실제 문서 업로드/색인
-- RAG 기반 분석
-- CLI/API 분석 실행
-- Human Review 기반 ranking 수정 유틸
-- DOCX 보고서 생성
-- 추천 결과 평가
-- 간단한 테스트 UI
-
-아직 운영 서비스 수준으로 보강할 것:
-
-- 사용자 인증/권한
-- 회사별 데이터 접근 제어
-- 공식 출처 자동 검색 API 연동
-- 문서 삭제/재처리 API
-- 비동기 작업 큐
-- 보고서 다운로드 API
-- 프론트엔드 정식 UI
-- 평가 데이터셋 확장
