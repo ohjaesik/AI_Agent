@@ -58,6 +58,7 @@ class AXPlannerState(TypedDict, total=False):
     used_sources: list[dict[str, Any]]
 
     # Agent / Tool 분석 결과
+    agent_registry: list[dict[str, Any]]
     process_analysis: dict[str, Any]
     data_readiness: dict[str, Any]
     automation_feasibility: dict[str, Any]
@@ -65,6 +66,7 @@ class AXPlannerState(TypedDict, total=False):
     risk_governance: dict[str, Any]
     compliance_assessment: dict[str, Any]
     priority_ranking: dict[str, Any]
+    agent_evaluation: dict[str, Any]
 
     # Human Review
     human_review: dict[str, Any]
