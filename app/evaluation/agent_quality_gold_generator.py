@@ -12,15 +12,8 @@ FULL_RATIONALE = {
     "tech_feasibility": "ok",
     "risk_score": "ok",
 }
-PARTIAL_RATIONALE_3 = {
-    "expected_effect": "ok",
-    "repeatability": "ok",
-    "document_dependency": "ok",
-}
-PARTIAL_RATIONALE_2 = {
-    "expected_effect": "ok",
-    "repeatability": "ok",
-}
+PARTIAL_RATIONALE_3 = {"expected_effect": "ok", "repeatability": "ok", "document_dependency": "ok"}
+PARTIAL_RATIONALE_2 = {"expected_effect": "ok", "repeatability": "ok"}
 
 
 def rationale(kind: str) -> dict[str, str]:
@@ -38,12 +31,7 @@ def labels(count: int) -> list[str]:
 
 
 def compliance(process_id: int, level: str, blocked: bool = False) -> dict[str, Any]:
-    return {
-        "process_id": process_id,
-        "compliance_level": level,
-        "human_review_required": True,
-        "blocked": blocked,
-    }
+    return {"process_id": process_id, "compliance_level": level, "human_review_required": True, "blocked": blocked}
 
 
 def make_case(
@@ -84,13 +72,7 @@ def make_case(
         case["compliance"] = compliance(process_id, compliance_level, blocked=blocked)
     if replan:
         case["replan_source_collection"] = {
-            "public_web_search": {
-                "results": [
-                    {"url": "https://example.com/source-a"},
-                    {"url": "https://example.com/source-b"},
-                    {"url": "https://example.com/source-c"},
-                ]
-            },
+            "public_web_search": {"results": [{"url": "https://example.com/source-a"}, {"url": "https://example.com/source-b"}, {"url": "https://example.com/source-c"}]},
             "same_domain_discovered": [],
             "indexed_chunks": 47,
         }
@@ -118,16 +100,7 @@ def build_additional_gold_cases() -> list[dict[str, Any]]:
         ("Legal Clause Review Agent", "enhanced_review", 4),
     ]
     for offset, (name, level, risk) in enumerate(compliance_cases, start=51):
-        cases.append(
-            make_case(
-                offset,
-                name,
-                risk_score=risk,
-                compliance_level=level,
-                expected_status="human_review_required",
-                expected_review=True,
-            )
-        )
+        cases.append(make_case(offset, name, risk_score=risk, compliance_level=level, expected_status="human_review_required", expected_review=True))
 
     evidence_gap_cases = [
         ("Low Evidence Agent", 0, 0, 0, 3, 3, "none"),
@@ -138,7 +111,6 @@ def build_additional_gold_cases() -> list[dict[str, Any]]:
         ("Unverified Claim Agent", 0, 1, 0, 3, 2, "partial3"),
         ("Dataset Missing Agent", 1, 0, 0, 1, 2, "full"),
         ("Evidence Gap Agent", 0, 0, 1, 2, 3, "partial2"),
-        ("Weakly Supported ROI Agent", 1, 1, 1, 2, 2, "partial2"),
         ("Source Missing Agent", 0, 2, 0, 2, 2, "partial3"),
         ("Thin Citation Agent", 1, 0, 1, 1, 4, "partial2"),
         ("Unknown Data Access Agent", 0, 1, 1, 1, 3, "none"),
@@ -165,6 +137,23 @@ def build_additional_gold_cases() -> list[dict[str, Any]]:
             )
         )
 
+    # Nonzero but weak evidence should be reviewed by a person rather than treated
+    # as completely insufficient.
+    cases.append(
+        make_case(
+            83,
+            "Weakly Supported ROI Agent",
+            evidence_label_count=1,
+            context_count=1,
+            evidence_count=1,
+            data_accessibility=2,
+            risk_score=2,
+            rationale_kind="partial2",
+            expected_status="human_review_required",
+            expected_review=True,
+        )
+    )
+
     blocked_cases = [
         "Blocked Agent",
         "Autonomous Execution Agent",
@@ -176,65 +165,12 @@ def build_additional_gold_cases() -> list[dict[str, Any]]:
         "Predictive Policing Agent",
     ]
     for offset, name in enumerate(blocked_cases, start=84):
-        cases.append(
-            make_case(
-                offset,
-                name,
-                evidence_label_count=1,
-                context_count=2,
-                evidence_count=1,
-                data_accessibility=3,
-                risk_score=5,
-                rationale_kind="partial3",
-                compliance_level="blocked",
-                blocked=True,
-                expected_status="excluded",
-                expected_review=True,
-            )
-        )
+        cases.append(make_case(offset, name, evidence_label_count=1, context_count=2, evidence_count=1, data_accessibility=3, risk_score=5, rationale_kind="partial3", compliance_level="blocked", blocked=True, expected_status="excluded", expected_review=True))
 
-    post_replan_cases = [
-        "Post Replan Product Advisor",
-        "Post Replan ESG Assistant",
-        "Post Replan Service Agent",
-        "Post Replan Knowledge Agent",
-    ]
-    for offset, name in enumerate(post_replan_cases, start=92):
-        cases.append(
-            make_case(
-                offset,
-                name,
-                evidence_label_count=2,
-                context_count=3,
-                evidence_count=1,
-                data_accessibility=4,
-                risk_score=1,
-                replan=True,
-                expected_status="recommended",
-                expected_review=False,
-            )
-        )
+    for offset, name in enumerate(["Post Replan Product Advisor", "Post Replan ESG Assistant", "Post Replan Service Agent", "Post Replan Knowledge Agent"], start=92):
+        cases.append(make_case(offset, name, evidence_label_count=2, context_count=3, evidence_count=1, data_accessibility=4, risk_score=1, replan=True, expected_status="recommended", expected_review=False))
 
-    recommended_cases = [
-        "Simple Search Agent",
-        "Catalog Summary Agent",
-        "Partner FAQ Agent",
-        "Training Quiz Agent",
-        "Operations Insight Agent",
-    ]
-    for offset, name in enumerate(recommended_cases, start=96):
-        cases.append(
-            make_case(
-                offset,
-                name,
-                evidence_label_count=2,
-                context_count=3,
-                evidence_count=2,
-                data_accessibility=4,
-                risk_score=1,
-                expected_status="recommended",
-                expected_review=False,
-            )
-        )
+    for offset, name in enumerate(["Simple Search Agent", "Catalog Summary Agent", "Partner FAQ Agent", "Training Quiz Agent", "Operations Insight Agent"], start=96):
+        cases.append(make_case(offset, name, evidence_label_count=2, context_count=3, evidence_count=2, data_accessibility=4, risk_score=1, expected_status="recommended", expected_review=False))
 
     return cases
