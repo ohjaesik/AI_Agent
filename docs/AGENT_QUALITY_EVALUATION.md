@@ -112,7 +112,24 @@ python -m app.evaluation.export_holdout_candidates \
 - `expected_status`
 - `expected_requires_human_review`
 
-4. 라벨링 완료 후 JSONL로 변환해 `tests/data/blind_holdout_gold.jsonl`에 추가한다.
+4. 라벨링 완료 후 CSV label을 JSONL gold로 병합한다.
+
+```bash
+python -m app.evaluation.finalize_labeled_holdout \
+  --unlabeled-jsonl outputs/unlabeled_holdout_candidates.jsonl \
+  --labeled-csv outputs/unlabeled_holdout_candidates.csv \
+  --output-jsonl outputs/labeled_holdout_gold.jsonl
+```
+
+5. 검토 후 holdout 파일에 추가한다.
+
+```bash
+python -m app.evaluation.finalize_labeled_holdout \
+  --unlabeled-jsonl outputs/unlabeled_holdout_candidates.jsonl \
+  --labeled-csv outputs/unlabeled_holdout_candidates.csv \
+  --output-jsonl outputs/labeled_holdout_gold.jsonl \
+  --append-to tests/data/blind_holdout_gold.jsonl
+```
 
 권장 추가 기준:
 
