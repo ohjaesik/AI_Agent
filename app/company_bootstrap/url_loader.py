@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -77,7 +79,7 @@ def normalize_text(text: str) -> str:
     return joined.strip()
 
 
-def fetch_url(url: str, timeout: int = 15) -> str:
+def fetch_url_once(url: str, timeout: int = 15) -> str:
     request = urllib.request.Request(
         url,
         headers={
@@ -93,6 +95,22 @@ def fetch_url(url: str, timeout: int = 15) -> str:
         return raw.decode(charset)
     except UnicodeDecodeError:
         return raw.decode("utf-8", errors="ignore")
+
+
+def fetch_url(url: str, timeout: int = 15, retries: int = 2, backoff_seconds: float = 1.0) -> str:
+    last_error: Exception | None = None
+
+    for attempt in range(retries + 1):
+        try:
+            return fetch_url_once(url=url, timeout=timeout)
+        except (TimeoutError, urllib.error.URLError, urllib.error.HTTPError) as exc:
+            last_error = exc
+            if attempt >= retries:
+                break
+            time.sleep(backoff_seconds * (2**attempt))
+
+    assert last_error is not None
+    raise last_error
 
 
 def fallback_title_from_url(url: str) -> str:
