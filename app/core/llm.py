@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.core.config import get_settings
+from app.core.retry import retry_call
 
 DEFAULT_VLLM_BASE_URL = "http://localhost:8000/v1"
 DEFAULT_VLLM_API_KEY = "EMPTY"
@@ -33,6 +36,16 @@ def get_embedding_model() -> OpenAIEmbeddings:
     )
 
 
+def embed_documents_with_retry(texts: list[str], retries: int = 2) -> list[list[float]]:
+    embeddings = get_embedding_model()
+    return retry_call(lambda: embeddings.embed_documents(texts), retries=retries, backoff_seconds=1.0)
+
+
+def embed_query_with_retry(query: str, retries: int = 2) -> list[float]:
+    embeddings = get_embedding_model()
+    return retry_call(lambda: embeddings.embed_query(query), retries=retries, backoff_seconds=1.0)
+
+
 def get_chat_model(temperature: float = 0.0) -> ChatOpenAI:
     settings = get_settings()
 
@@ -42,3 +55,7 @@ def get_chat_model(temperature: float = 0.0) -> ChatOpenAI:
         api_key=normalize_blank(settings.vllm_api_key, DEFAULT_VLLM_API_KEY),
         temperature=temperature,
     )
+
+
+def invoke_chat_with_retry(llm: ChatOpenAI, messages: list[Any], retries: int = 2) -> Any:
+    return retry_call(lambda: llm.invoke(messages), retries=retries, backoff_seconds=1.0)
