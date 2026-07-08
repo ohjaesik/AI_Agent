@@ -2,10 +2,38 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
-from app.company_bootstrap.service import BootstrapResult
 from app.company_bootstrap.workflow import build_bootstrap_supervisor_graph
+
+
+@dataclass(frozen=True)
+class BootstrapGraphResult:
+    company_id: int
+    project_id: int | None
+    document_ids: list[int]
+    process_ids: list[int]
+    chunk_count: int
+    source_count: int
+    warnings: list[str]
+    discovery_mode: str | None = None
+    workflow_mode: str = "bootstrap_supervisor_graph"
+    agent_trace: list[dict[str, Any]] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "company_id": self.company_id,
+            "project_id": self.project_id,
+            "document_ids": self.document_ids,
+            "process_ids": self.process_ids,
+            "chunk_count": self.chunk_count,
+            "source_count": self.source_count,
+            "warnings": self.warnings,
+            "discovery_mode": self.discovery_mode,
+            "workflow_mode": self.workflow_mode,
+            "agent_trace": self.agent_trace or [],
+        }
 
 
 def run_bootstrap_supervisor_graph(
@@ -18,7 +46,7 @@ def run_bootstrap_supervisor_graph(
     index: bool = True,
     reset_company_chunks: bool = False,
     thread_id: str = "bootstrap-supervisor-cli",
-) -> BootstrapResult:
+) -> BootstrapGraphResult:
     graph = build_bootstrap_supervisor_graph()
     initial_state = {
         "company_name": company_name,
@@ -43,7 +71,7 @@ def run_bootstrap_supervisor_graph(
     payload = result_state.get("result") or {}
     warnings = list(result_state.get("warnings", []))
 
-    return BootstrapResult(
+    return BootstrapGraphResult(
         company_id=int(payload.get("company_id")),
         project_id=payload.get("project_id"),
         document_ids=list(payload.get("document_ids", [])),
