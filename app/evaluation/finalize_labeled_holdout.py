@@ -11,6 +11,24 @@ from typing import Any
 ALLOWED_STATUSES = {"recommended", "human_review_required", "evidence_insufficient", "excluded"}
 TRUE_VALUES = {"true", "1", "yes", "y", "t"}
 FALSE_VALUES = {"false", "0", "no", "n", "f"}
+CSV_ENCODINGS = ("utf-8-sig", "utf-8", "cp949", "euc-kr")
+
+
+def normalize_text(value: Any) -> str:
+    return str(value or "").replace("\ufeff", "").replace("\u00a0", " ").strip()
+
+
+def open_text_with_fallback(path: str | Path) -> tuple[str, str]:
+    input_path = Path(path)
+    last_error: UnicodeDecodeError | None = None
+    for encoding in CSV_ENCODINGS:
+        try:
+            return input_path.read_text(encoding=encoding), encoding
+        except UnicodeDecodeError as error:
+            last_error = error
+    if last_error:
+        raise last_error
+    return input_path.read_text(encoding="utf-8"), "utf-8"
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -25,23 +43,28 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
 
 def load_labels_from_csv(path: str | Path) -> dict[str, dict[str, Any]]:
     labels: dict[str, dict[str, Any]] = {}
-    with Path(path).open("r", encoding="utf-8", newline="") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            case_id = str(row.get("case_id") or "").strip()
-            if not case_id:
-                continue
-            labels[case_id] = {
-                "expected_status": str(row.get("expected_status") or "").strip(),
-                "expected_requires_human_review": parse_bool(row.get("expected_requires_human_review")),
-            }
+    text, encoding = open_text_with_fallback(path)
+    reader = csv.DictReader(text.splitlines())
+    normalized_fieldnames = [normalize_text(name) for name in (reader.fieldnames or [])]
+    if "case_id" not in normalized_fieldnames:
+        raise ValueError(f"CSV must include case_id column. Detected encoding={encoding}, columns={normalized_fieldnames}")
+
+    for raw_row in reader:
+        row = {normalize_text(key): value for key, value in raw_row.items()}
+        case_id = normalize_text(row.get("case_id"))
+        if not case_id:
+            continue
+        labels[case_id] = {
+            "expected_status": normalize_text(row.get("expected_status")),
+            "expected_requires_human_review": parse_bool(row.get("expected_requires_human_review")),
+        }
     return labels
 
 
 def parse_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
-    normalized = str(value or "").strip().lower()
+    normalized = normalize_text(value).lower()
     if normalized in TRUE_VALUES:
         return True
     if normalized in FALSE_VALUES:
@@ -60,12 +83,12 @@ def merge_labels(unlabeled_rows: list[dict[str, Any]], labels: dict[str, dict[st
     merged: list[dict[str, Any]] = []
     missing: list[str] = []
     for row in unlabeled_rows:
-        case_id = str(row.get("case_id") or "").strip()
+        case_id = normalize_text(row.get("case_id"))
         label = labels.get(case_id)
         if not label:
             missing.append(case_id)
             continue
-        expected_status = str(label["expected_status"])
+        expected_status = normalize_text(label["expected_status"])
         expected_review = label["expected_requires_human_review"]
         validate_label(case_id, expected_status, expected_review)
         copied = dict(row)
