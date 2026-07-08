@@ -94,10 +94,11 @@ def build_candidate_rows(state: dict[str, Any]) -> list[list[Any]]:
                 item.get("rank"),
                 item.get("candidate_agent_name"),
                 item.get("target_user"),
+                item.get("base_score", "-"),
+                item.get("discovery_bonus", "-"),
                 item.get("final_score"),
-                item.get("status"),
                 percent(item.get("saving_rate")),
-                item.get("reason"),
+                item.get("status"),
             ]
         )
 
@@ -139,6 +140,60 @@ def build_risk_rows(state: dict[str, Any]) -> list[list[Any]]:
     return rows
 
 
+def build_top_candidate_details(state: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    details = []
+
+    for item in state.get("priority_ranking", {}).get("items", [])[:limit]:
+        details.append(
+            {
+                "rank": item.get("rank"),
+                "process_name": item.get("process_name"),
+                "candidate_agent_name": item.get("candidate_agent_name"),
+                "target_user": item.get("target_user"),
+                "status": item.get("status"),
+                "base_score": item.get("base_score"),
+                "discovery_bonus": item.get("discovery_bonus"),
+                "final_score": item.get("final_score"),
+                "saving_rate": percent(item.get("saving_rate")),
+                "monthly_saving": money(item.get("monthly_saving")),
+                "problem": item.get("problem"),
+                "reason": item.get("reason"),
+                "suitability_rationale": item.get("suitability_rationale"),
+                "score_rationale": item.get("score_rationale", {}),
+                "risk_flags": item.get("risk_flags", []),
+            }
+        )
+
+    return details
+
+
+def build_executive_summary(state: dict[str, Any]) -> dict[str, Any]:
+    company = state.get("company_profile", {})
+    ranking = state.get("priority_ranking", {})
+    roi_summary = state.get("roi_cost", {}).get("summary", {})
+    risk_summary = state.get("risk_governance", {}).get("summary", {})
+    top_candidate = ranking.get("summary", {}).get("top_candidate") or {}
+
+    return {
+        "company_name": company.get("name", ""),
+        "industry": company.get("industry", ""),
+        "process_count": len(state.get("business_processes", [])),
+        "document_count": len(state.get("documents", [])),
+        "evidence_count": len(state.get("evidence_items", [])),
+        "used_source_count": len(state.get("used_sources", [])),
+        "top_agent": top_candidate.get("candidate_agent_name", ""),
+        "top_process": top_candidate.get("process_name", ""),
+        "top_score": top_candidate.get("final_score", ""),
+        "top_saving_rate": percent(top_candidate.get("saving_rate")),
+        "top_monthly_saving": money(top_candidate.get("monthly_saving")),
+        "total_monthly_saving": money(roi_summary.get("total_saving")),
+        "total_saving_rate": percent(roi_summary.get("total_saving_rate")),
+        "recommended_count": ranking.get("summary", {}).get("recommended_count", 0),
+        "review_required_count": ranking.get("summary", {}).get("review_required_count", 0),
+        "high_risk_count": risk_summary.get("high_risk_count", 0),
+    }
+
+
 def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
     company = state.get("company_profile", {})
     evidence_items = state.get("evidence_items", [])
@@ -155,7 +210,7 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
 
     title = report_requirements.get(
         "title",
-        "제조기업 AX 전환 업무 프로세스 진단 및 AI Agent 도입 우선순위 추천 보고서",
+        "AX 전환 업무 프로세스 진단 및 AI Agent 도입 우선순위 보고서",
     )
 
     author = report_requirements.get("author", "")
@@ -167,6 +222,8 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         "date": date_value,
         "company_name": company.get("name", ""),
         "mvp_agent": top_candidate.get("candidate_agent_name") or "AX Delivery Planner",
+        "executive_summary": build_executive_summary(state),
+        "top_candidates": build_top_candidate_details(state, limit=5),
         "sections": [
             {
                 "heading": "1. 분석 목적 및 범위",
@@ -175,9 +232,9 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                         "type": "paragraph",
                         "text": (
                             f"본 보고서는 {company.get('name', '분석 대상 기업')}의 "
-                            f"업무 프로세스와 보유 문서를 기반으로 AI Agent 도입 후보를 분석하고 "
-                            f"PoC 우선순위를 제안하기 위해 작성되었다. "
-                            f"분석에는 내부 업무 프로세스 {len(state.get('business_processes', []))}개, "
+                            f"공식자료, 업무 후보, RAG 근거를 기반으로 AI Agent 도입 가능성이 높은 "
+                            f"업무를 선별하고 PoC 우선순위를 제안하기 위해 작성되었다. "
+                            f"분석에는 업무 프로세스 {len(state.get('business_processes', []))}개, "
                             f"문서 근거 {len(evidence_items)}개가 사용되었다. "
                             f"{citations(report_evidence)}"
                         ),
@@ -185,8 +242,8 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                     {
                         "type": "paragraph",
                         "text": (
-                            "본 보고서의 내용은 고정 템플릿이 아니라 DB에 등록된 업무 데이터, "
-                            "RAG 검색 결과, Agent 분석 결과를 바탕으로 생성된다."
+                            "본 보고서는 회사 공식 출처와 업로드 문서를 RAG로 연결하고, "
+                            "Discovery Agent가 생성한 적합성 근거와 Python 기반 점수 계산을 결합해 작성된다."
                         ),
                     },
                 ],
@@ -243,7 +300,7 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                         "text": (
                             "우선순위는 기대효과, 데이터 접근성, 반복성, 구현 용이성, "
                             "현업 수용성, 보안·거버넌스 위험, 구현 비용을 기준으로 계산하였다. "
-                            "점수 계산은 LLM이 아니라 Python Tool로 수행하여 재현성을 확보하였다."
+                            "여기에 Discovery Agent가 생성한 공식자료 기반 적합성 근거를 bonus로 반영하였다."
                         ),
                     },
                     {
@@ -252,10 +309,11 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                             "순위",
                             "후보 Agent",
                             "대상 사용자",
-                            "점수",
-                            "상태",
+                            "기본점수",
+                            "근거보정",
+                            "최종점수",
                             "절감률",
-                            "추천 사유",
+                            "상태",
                         ],
                         "rows": build_candidate_rows(state),
                         "font_size": 7,
