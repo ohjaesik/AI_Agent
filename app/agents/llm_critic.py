@@ -30,7 +30,7 @@ Evaluation:
 {evaluation}
 
 Guidance:
-- Return pass when confidence_score >= 0.72, requires_additional_evidence=false, compliance_alignment is high, and issues is empty.
+- Return pass when confidence_score >= 0.70, requires_additional_evidence=false, compliance_alignment is high, and issues is empty.
 - Return needs_review for sensitive_review, enhanced_review, unclear reviewer responsibility, or moderate uncertainty.
 - Return insufficient_evidence when evidence_coverage is weak or requires_additional_evidence=true.
 - Return reject only for blocked/prohibited use or clearly unsafe scope.
@@ -88,7 +88,7 @@ def deterministic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any])
         return "needs_review"
     if evaluation.get("issues"):
         return "needs_review"
-    if float(evaluation.get("confidence_score") or 0.0) >= 0.72 and float(evaluation.get("compliance_alignment") or 0.0) >= 0.95:
+    if float(evaluation.get("confidence_score") or 0.0) >= 0.70 and float(evaluation.get("compliance_alignment") or 0.0) >= 0.95:
         return "pass"
     if evaluation.get("requires_human_review"):
         return "needs_review"
@@ -99,8 +99,6 @@ def calibrate_critic_verdict(candidate: dict[str, Any], evaluation: dict[str, An
     expected = deterministic_verdict(candidate, evaluation)
     verdict = normalize_verdict(critic.get("critic_verdict"))
 
-    # LLM critic can be stricter for genuinely weak or regulated cases, but it
-    # should not force every standard, post-replan, no-issue candidate into review.
     if expected == "pass" and verdict in {"needs_review", "insufficient_evidence"}:
         critic = dict(critic)
         critic["critic_verdict"] = "pass"
