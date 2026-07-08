@@ -28,6 +28,8 @@ jobs:
       STORAGE_BACKEND: local
       LOCAL_STORAGE_DIR: storage
       AGENT_TOOL_SANDBOX_MODE: direct
+      GRAPH_NODE_EXECUTION_MODE: direct
+      EXTERNAL_WEB_DISCOVERY_ENABLED: 'false'
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -56,7 +58,24 @@ jobs:
         run: pytest
       - name: Run agent quality gate
         run: |
-          python -m app.evaluation.agent_quality_eval --strict --min-status-accuracy 0.80 --min-review-accuracy 0.90
+          mkdir -p outputs
+          python -m app.evaluation.agent_quality_eval \
+            --strict \
+            --min-status-accuracy 0.80 \
+            --min-review-accuracy 0.90 \
+            --min-status-macro-f1 0.75 \
+            --min-review-f1 0.90 \
+            --json \
+            --csv outputs/agent_quality_eval.csv \
+            --markdown outputs/agent_quality_eval.md
+      - name: Upload agent quality reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-quality-reports
+          path: |
+            outputs/agent_quality_eval.csv
+            outputs/agent_quality_eval.md
       - name: Run preflight smoke
         run: |
           python -m app.ops.preflight --json --skip-optional
