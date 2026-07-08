@@ -19,6 +19,8 @@ def compliance_assessment_node(state: AXPlannerState) -> dict[str, Any]:
             processes=state.get("business_processes", []),
             risk_governance=state.get("risk_governance"),
         )
+        risk_governance = dict(state.get("risk_governance") or {})
+        risk_governance["compliance_assessment"] = result
 
         with SessionLocal() as db:
             save_analysis_result(
@@ -37,6 +39,7 @@ def compliance_assessment_node(state: AXPlannerState) -> dict[str, Any]:
 
         return {
             "compliance_assessment": result,
+            "risk_governance": risk_governance,
             "audit_logs": append_audit(
                 state,
                 node_name,
