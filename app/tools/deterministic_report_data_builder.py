@@ -48,7 +48,6 @@ def clean_company_description(description: str | None) -> list[str]:
     if not description:
         return []
 
-    # 과거 버전에서 저장된 raw scraped text를 보고서에 노출하지 않기 위해 잘라낸다.
     description = description.split("공식자료 요약 단서:")[0]
     lines = []
     for line in description.splitlines():
@@ -119,14 +118,12 @@ def build_source_overview_rows(state: dict[str, Any]) -> list[list[Any]]:
         else:
             label = source_label_for_document(document, official_url_index + 1)
 
-        rows.append(
-            [
-                label,
-                document.get("title", "-"),
-                document.get("document_type", "-"),
-                infer_source_usage(document),
-            ]
-        )
+        rows.append([
+            label,
+            document.get("title", "-"),
+            document.get("document_type", "-"),
+            infer_source_usage(document),
+        ])
 
     return rows
 
@@ -140,13 +137,11 @@ def build_ax_interpretation_rows(state: dict[str, Any]) -> list[list[Any]]:
         if process_name in seen:
             continue
         seen.add(process_name)
-        rows.append(
-            [
-                process_name,
-                item.get("candidate_agent_name", "-"),
-                item.get("suitability_rationale") or item.get("reason") or "Discovery Agent 근거 기반 후보",
-            ]
-        )
+        rows.append([
+            process_name,
+            item.get("candidate_agent_name", "-"),
+            item.get("suitability_rationale") or item.get("reason") or "Discovery Agent 근거 기반 후보",
+        ])
 
     return rows
 
@@ -225,6 +220,54 @@ def build_risk_rows(state: dict[str, Any]) -> list[list[Any]]:
     return rows
 
 
+def build_compliance_summary_rows(state: dict[str, Any]) -> list[list[Any]]:
+    assessment = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
+    summary = assessment.get("summary", {}) or {}
+    return [
+        ["전체 상태", assessment.get("overall_status", "not_assessed")],
+        ["평가 업무 수", summary.get("total_processes", 0)],
+        ["MVP 제외 후보", summary.get("blocked_count", 0)],
+        ["고영향 검토 후보", summary.get("enhanced_review_count", 0)],
+        ["민감정보/기밀 검토 후보", summary.get("sensitive_review_count", 0)],
+        ["Human Review 필요 후보", summary.get("human_review_required_count", 0)],
+    ]
+
+
+def build_compliance_candidate_rows(state: dict[str, Any]) -> list[list[Any]]:
+    rows = []
+    assessment = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
+
+    for item in assessment.get("items", []):
+        rows.append([
+            item.get("process_name", "-"),
+            item.get("candidate_agent_name", "-"),
+            item.get("compliance_level", "standard"),
+            "Y" if item.get("human_review_required") else "N",
+            "Y" if item.get("blocked") else "N",
+            ", ".join(item.get("high_impact_categories", [])) or "-",
+            ", ".join(item.get("sensitive_hits", [])) or "-",
+            ", ".join(item.get("required_controls", [])) or "-",
+        ])
+
+    return rows
+
+
+def build_regulatory_control_rows(state: dict[str, Any]) -> list[list[Any]]:
+    assessment = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
+    controls = assessment.get("regulatory_controls", [])
+    rows = []
+
+    for control in controls:
+        rows.append([
+            control.get("id", "-"),
+            control.get("name", "-"),
+            ", ".join(control.get("source_frameworks", [])),
+            control.get("purpose", "-"),
+        ])
+
+    return rows
+
+
 def build_poc_milestone_rows(state: dict[str, Any]) -> list[list[Any]]:
     rows = []
     for item in state.get("poc_plan", {}).get("poc_plan", {}).get("milestones", []):
@@ -277,6 +320,7 @@ def build_top_candidate_details(state: dict[str, Any], limit: int = 5) -> list[d
             "score_rationale": item.get("score_rationale", {}),
             "risk_flags": item.get("risk_flags", []),
             "discovery_metadata": item.get("discovery_metadata", {}),
+            "compliance": item.get("compliance", {}),
         })
     return details
 
@@ -286,6 +330,7 @@ def build_executive_summary(state: dict[str, Any]) -> dict[str, Any]:
     ranking = state.get("priority_ranking", {})
     roi_summary = state.get("roi_cost", {}).get("summary", {})
     risk_summary = state.get("risk_governance", {}).get("summary", {})
+    compliance = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
     top_candidate = ranking.get("summary", {}).get("top_candidate") or {}
     review = state.get("human_review", {}) or {}
 
@@ -306,6 +351,7 @@ def build_executive_summary(state: dict[str, Any]) -> dict[str, Any]:
         "recommended_count": ranking.get("summary", {}).get("recommended_count", 0),
         "review_required_count": ranking.get("summary", {}).get("review_required_count", 0),
         "high_risk_count": risk_summary.get("high_risk_count", 0),
+        "compliance_status": compliance.get("overall_status", "not_assessed"),
         "human_decision": review.get("decision", "not_reviewed"),
         "reviewer_name": review.get("reviewer_name", "-"),
     }
@@ -319,6 +365,7 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
     ranking = state.get("priority_ranking", {})
     top_candidate = ranking.get("summary", {}).get("top_candidate") or {}
     poc_plan = state.get("poc_plan", {})
+    compliance = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
 
     process_evidence = evidence_for(evidence_items, "business_process_analysis")
     report_evidence = evidence_for(evidence_items, "report_generation", limit=10)
@@ -339,6 +386,7 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
         "executive_summary": build_executive_summary(state),
         "top_candidates": build_top_candidate_details(state, limit=5),
         "poc_delivery_plan": poc_plan,
+        "compliance_assessment": compliance,
         "sections": [
             {
                 "heading": "1. 분석 목적 및 범위",
@@ -352,10 +400,7 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                             f"{citations(report_evidence)}"
                         ),
                     },
-                    {
-                        "type": "paragraph",
-                        "text": "본 보고서는 회사 공식 출처와 업로드 문서를 RAG로 연결하고, Discovery Agent가 생성한 적합성 근거와 Python 기반 점수 계산을 결합해 작성된다.",
-                    },
+                    {"type": "paragraph", "text": "본 보고서는 회사 공식 출처와 업로드 문서를 RAG로 연결하고, Discovery Agent가 생성한 적합성 근거와 Python 기반 점수 계산을 결합해 작성된다."},
                 ],
             },
             {
@@ -369,131 +414,70 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
                             "본 장은 원문 웹페이지 내용을 그대로 요약하지 않고, AX 후보 도출에 필요한 기업 식별 정보와 공식 출처 활용 목적만 정리한다."
                         ),
                     },
-                    {
-                        "type": "table",
-                        "headers": ["항목", "내용"],
-                        "rows": build_company_fact_rows(state),
-                        "font_size": 8,
-                    },
-                    {
-                        "type": "paragraph",
-                        "text": (
-                            "공식자료는 기업의 세부 사업 내용을 장문으로 재현하기보다, AI Agent 후보를 도출하기 위한 분석 기준으로 사용하였다. "
-                            "특히 고객지원, ESG·환경관리, 지식자산 보호, AI 윤리·개인정보보호처럼 공식자료에서 반복적으로 확인되는 경영·운영 이슈를 AX 후보군과 연결하였다."
-                        ),
-                    },
-                    {
-                        "type": "table",
-                        "headers": ["출처", "문서명", "문서 유형", "보고서 활용 목적"],
-                        "rows": build_source_overview_rows(state),
-                        "font_size": 7,
-                    },
-                    {
-                        "type": "table",
-                        "headers": ["AX 해석 포인트", "후보 Agent", "연결 근거"],
-                        "rows": build_ax_interpretation_rows(state),
-                        "font_size": 7,
-                    },
+                    {"type": "table", "headers": ["항목", "내용"], "rows": build_company_fact_rows(state), "font_size": 8},
+                    {"type": "paragraph", "text": "공식자료는 기업의 세부 사업 내용을 장문으로 재현하기보다, AI Agent 후보를 도출하기 위한 분석 기준으로 사용하였다. 특히 고객지원, ESG·환경관리, 지식자산 보호, AI 윤리·개인정보보호처럼 공식자료에서 반복적으로 확인되는 경영·운영 이슈를 AX 후보군과 연결하였다."},
+                    {"type": "table", "headers": ["출처", "문서명", "문서 유형", "보고서 활용 목적"], "rows": build_source_overview_rows(state), "font_size": 7},
+                    {"type": "table", "headers": ["AX 해석 포인트", "후보 Agent", "연결 근거"], "rows": build_ax_interpretation_rows(state), "font_size": 7},
                 ],
             },
             {
                 "heading": "3. 업무 프로세스 및 데이터 현황",
                 "blocks": [
-                    {
-                        "type": "paragraph",
-                        "text": (
-                            "업무 프로세스 분석은 DB에 등록된 부서별 업무, 대상 사용자, 문제 정의, 현재 workflow, "
-                            f"데이터 접근성, 위험도 점수를 기반으로 수행되었다. {citations(process_evidence)}"
-                        ),
-                    },
-                    {
-                        "type": "table",
-                        "headers": ["업무명", "대상 사용자", "후보 Agent", "기대효과", "데이터 접근성", "위험도"],
-                        "rows": build_process_rows(state),
-                        "font_size": 7,
-                    },
+                    {"type": "paragraph", "text": f"업무 프로세스 분석은 DB에 등록된 부서별 업무, 대상 사용자, 문제 정의, 현재 workflow, 데이터 접근성, 위험도 점수를 기반으로 수행되었다. {citations(process_evidence)}"},
+                    {"type": "table", "headers": ["업무명", "대상 사용자", "후보 Agent", "기대효과", "데이터 접근성", "위험도"], "rows": build_process_rows(state), "font_size": 7},
                 ],
             },
             {
                 "heading": "4. AI Agent 후보 우선순위 분석",
                 "blocks": [
-                    {
-                        "type": "paragraph",
-                        "text": "우선순위는 기대효과, 데이터 접근성, 반복성, 구현 용이성, 현업 수용성, 보안·거버넌스 위험, 구현 비용을 기준으로 계산하였다. 여기에 Discovery Agent가 생성한 공식자료 기반 적합성 근거를 bonus로 반영하였다.",
-                    },
-                    {
-                        "type": "table",
-                        "headers": ["순위", "후보 Agent", "대상 사용자", "기본점수", "근거보정", "최종점수", "절감률", "상태"],
-                        "rows": build_candidate_rows(state),
-                        "font_size": 7,
-                    },
+                    {"type": "paragraph", "text": "우선순위는 기대효과, 데이터 접근성, 반복성, 구현 용이성, 현업 수용성, 보안·거버넌스 위험, 구현 비용을 기준으로 계산하였다. 여기에 Discovery Agent가 생성한 공식자료 기반 적합성 근거와 규제 스크리닝 결과를 함께 반영하였다."},
+                    {"type": "table", "headers": ["순위", "후보 Agent", "대상 사용자", "기본점수", "근거보정", "최종점수", "절감률", "상태"], "rows": build_candidate_rows(state), "font_size": 7},
                 ],
             },
             {
                 "heading": "5. ROI 및 비용 절감 분석",
                 "blocks": [
-                    {
-                        "type": "paragraph",
-                        "text": (
-                            f"분석 결과 월간 현재 비용은 {money(roi_summary.get('total_current_cost'))}, "
-                            f"Agent 보조 이후 예상 비용은 {money(roi_summary.get('total_expected_cost'))}, "
-                            f"예상 절감액은 {money(roi_summary.get('total_saving'))}, 절감률은 {percent(roi_summary.get('total_saving_rate'))}로 계산되었다."
-                        ),
-                    },
-                    {
-                        "type": "table",
-                        "headers": ["업무", "후보 Agent", "현재 비용", "예상 비용", "절감액", "절감률"],
-                        "rows": build_roi_rows(state),
-                        "font_size": 7,
-                    },
+                    {"type": "paragraph", "text": f"분석 결과 월간 현재 비용은 {money(roi_summary.get('total_current_cost'))}, Agent 보조 이후 예상 비용은 {money(roi_summary.get('total_expected_cost'))}, 예상 절감액은 {money(roi_summary.get('total_saving'))}, 절감률은 {percent(roi_summary.get('total_saving_rate'))}로 계산되었다."},
+                    {"type": "table", "headers": ["업무", "후보 Agent", "현재 비용", "예상 비용", "절감액", "절감률"], "rows": build_roi_rows(state), "font_size": 7},
                 ],
             },
             {
                 "heading": "6. 보안 및 Governance 위험 분석",
                 "blocks": [
                     {"type": "paragraph", "text": "위험 분석은 업무별 보안등급, 민감 키워드, 데이터 접근성, RAG로 검색된 문서의 민감정보 여부를 기준으로 수행되었다."},
-                    {
-                        "type": "table",
-                        "headers": ["업무", "후보 Agent", "위험점수", "위험등급", "위험 플래그"],
-                        "rows": build_risk_rows(state),
-                        "font_size": 7,
-                    },
+                    {"type": "table", "headers": ["업무", "후보 Agent", "위험점수", "위험등급", "위험 플래그"], "rows": build_risk_rows(state), "font_size": 7},
                 ],
             },
             {
-                "heading": "7. PoC 실행계획",
+                "heading": "7. AI Governance 및 Compliance Assessment",
                 "blocks": [
                     {
                         "type": "paragraph",
                         "text": (
-                            f"최상위 후보는 {top_candidate.get('candidate_agent_name', '확인 필요')}이며, 최종 점수는 {top_candidate.get('final_score', 'N/A')}이다. "
-                            f"선정 사유는 다음과 같다: {top_candidate.get('reason', '추가 분석 필요')}"
+                            "본 장은 AX 후보가 AI 관련 규제·표준의 기본 통제 원칙에 부합하는지 확인하기 위한 기술적 스크리닝 결과이다. "
+                            "평가 기준은 금지 사용 가능성, 고영향 AI 가능성, 개인정보·기밀정보 등 민감정보 신호, Human Review 필요 여부, 추적성과 투명성 통제 적용 여부로 구성하였다. "
+                            f"현재 전체 compliance 상태는 {compliance.get('overall_status', 'not_assessed')}이다."
                         ),
                     },
-                    {
-                        "type": "table",
-                        "headers": ["단계", "기간", "Owner", "주요 작업", "산출물"],
-                        "rows": build_poc_milestone_rows(state),
-                        "font_size": 7,
-                    },
-                    {
-                        "type": "table",
-                        "headers": ["KPI", "목표", "측정 방식"],
-                        "rows": build_poc_kpi_rows(state),
-                        "font_size": 7,
-                    },
+                    {"type": "table", "headers": ["항목", "결과"], "rows": build_compliance_summary_rows(state), "font_size": 8},
+                    {"type": "table", "headers": ["업무", "후보 Agent", "Compliance Level", "Human Review", "Blocked", "고영향 분류", "민감 신호", "필수 통제"], "rows": build_compliance_candidate_rows(state), "font_size": 6},
+                    {"type": "paragraph", "text": "본 스크리닝은 법률 자문이 아니라 PoC 기획 단계의 기술적 통제 점검이다. 실제 운영 전에는 법무·보안·개인정보보호 담당자의 검토와 조직 내부 승인 절차가 필요하다."},
+                    {"type": "table", "headers": ["Control ID", "통제명", "참고 기준", "목적"], "rows": build_regulatory_control_rows(state), "font_size": 6},
                 ],
             },
             {
-                "heading": "8. Human Review 및 의사결정 기록",
+                "heading": "8. PoC 실행계획",
+                "blocks": [
+                    {"type": "paragraph", "text": f"최상위 후보는 {top_candidate.get('candidate_agent_name', '확인 필요')}이며, 최종 점수는 {top_candidate.get('final_score', 'N/A')}이다. 선정 사유는 다음과 같다: {top_candidate.get('reason', '추가 분석 필요')}"},
+                    {"type": "table", "headers": ["단계", "기간", "Owner", "주요 작업", "산출물"], "rows": build_poc_milestone_rows(state), "font_size": 7},
+                    {"type": "table", "headers": ["KPI", "목표", "측정 방식"], "rows": build_poc_kpi_rows(state), "font_size": 7},
+                ],
+            },
+            {
+                "heading": "9. Human Review 및 의사결정 기록",
                 "blocks": [
                     {"type": "paragraph", "text": "PoC 착수 여부는 Agent 추천 결과만으로 확정하지 않고, Human Review 기록을 기준으로 최종 판단한다."},
-                    {
-                        "type": "table",
-                        "headers": ["항목", "내용"],
-                        "rows": build_review_rows(state),
-                        "font_size": 8,
-                    },
+                    {"type": "table", "headers": ["항목", "내용"], "rows": build_review_rows(state), "font_size": 8},
                 ],
             },
         ],
