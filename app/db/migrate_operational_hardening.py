@@ -17,6 +17,21 @@ ADD COLUMN IF NOT EXISTS source_url TEXT;
 ALTER TABLE IF EXISTS process_documents
 ADD COLUMN IF NOT EXISTS allowed_roles JSONB;
 
+ALTER TABLE IF EXISTS process_documents
+ADD COLUMN IF NOT EXISTS file_storage_uri TEXT;
+
+ALTER TABLE IF EXISTS process_documents
+ADD COLUMN IF NOT EXISTS original_filename VARCHAR(255);
+
+ALTER TABLE IF EXISTS process_documents
+ADD COLUMN IF NOT EXISTS file_size_bytes INTEGER;
+
+ALTER TABLE IF EXISTS process_documents
+ADD COLUMN IF NOT EXISTS file_checksum_sha256 VARCHAR(64);
+
+ALTER TABLE IF EXISTS process_documents
+ADD COLUMN IF NOT EXISTS uploaded_by_user_id VARCHAR(100);
+
 -- Backfill source_url for official URL documents created before the column existed.
 UPDATE process_documents
 SET source_url = substring(content from '공식 URL: ([^\n]+)')
