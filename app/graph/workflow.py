@@ -5,46 +5,30 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from app.graph.agent_evaluator_node import agent_evaluator_node
-from app.graph.compliance_node import compliance_assessment_node
-from app.graph.llm_critic_node import llm_critic_node
-from app.graph.nodes import (
-    automation_feasibility_node,
-    data_readiness_node,
-    docx_generator_node,
-    load_project_data_node,
-    priority_ranking_node,
-    process_analyzer_node,
-    report_writer_node,
-    retrieve_context_node,
-    risk_governance_node,
-    roi_cost_node,
-)
-from app.graph.poc_node import poc_delivery_planner_node
-from app.graph.replan_node import agent_replan_node, should_replan
-from app.graph.review_node import human_review_node
+from app.graph.node_worker import workerized_node
+from app.graph.replan_node import should_replan
 from app.graph.state import AXPlannerState
 
 
 def build_ax_planner_graph():
     builder = StateGraph(AXPlannerState)
 
-    builder.add_node("load_project_data", load_project_data_node)
-    builder.add_node("retrieve_context", retrieve_context_node)
-    builder.add_node("process_analyzer", process_analyzer_node)
-    builder.add_node("data_readiness", data_readiness_node)
-    builder.add_node("automation_feasibility", automation_feasibility_node)
-    builder.add_node("roi_cost", roi_cost_node)
-    builder.add_node("risk_governance", risk_governance_node)
-    builder.add_node("compliance_assessment", compliance_assessment_node)
-    builder.add_node("priority_ranking", priority_ranking_node)
-    builder.add_node("agent_evaluator", agent_evaluator_node)
-    builder.add_node("llm_critic", llm_critic_node)
-    builder.add_node("agent_replan", agent_replan_node)
-    builder.add_node("human_review", human_review_node)
-    builder.add_node("poc_delivery_planner", poc_delivery_planner_node)
-    builder.add_node("report_writer", report_writer_node)
-    builder.add_node("docx_generator", docx_generator_node)
+    builder.add_node("load_project_data", workerized_node("load_project_data"))
+    builder.add_node("retrieve_context", workerized_node("retrieve_context"))
+    builder.add_node("process_analyzer", workerized_node("process_analyzer"))
+    builder.add_node("data_readiness", workerized_node("data_readiness"))
+    builder.add_node("automation_feasibility", workerized_node("automation_feasibility"))
+    builder.add_node("roi_cost", workerized_node("roi_cost"))
+    builder.add_node("risk_governance", workerized_node("risk_governance"))
+    builder.add_node("compliance_assessment", workerized_node("compliance_assessment"))
+    builder.add_node("priority_ranking", workerized_node("priority_ranking"))
+    builder.add_node("agent_evaluator", workerized_node("agent_evaluator"))
+    builder.add_node("llm_critic", workerized_node("llm_critic"))
+    builder.add_node("agent_replan", workerized_node("agent_replan"))
+    builder.add_node("human_review", workerized_node("human_review"))
+    builder.add_node("poc_delivery_planner", workerized_node("poc_delivery_planner"))
+    builder.add_node("report_writer", workerized_node("report_writer"))
+    builder.add_node("docx_generator", workerized_node("docx_generator"))
 
     # 공통 입력 로드 단계
     builder.add_edge(START, "load_project_data")
