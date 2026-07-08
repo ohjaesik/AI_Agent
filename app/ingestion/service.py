@@ -15,6 +15,7 @@ from app.db.models import BusinessProcess, Company, DocumentChunk, ProcessDocume
 from app.ingestion.loaders import load_document_text
 from app.rag.chunker import chunk_text
 from app.rag.indexer import batched
+from app.storage.file_store import StoredFile, save_original_file
 
 SENSITIVE_PATTERNS = [
     r"주민등록번호",
@@ -41,6 +42,11 @@ class IngestResult:
     indexed: bool
     security_level: str
     allowed_roles: list[str] | None
+    file_storage_uri: str | None
+    original_filename: str | None
+    file_size_bytes: int | None
+    file_checksum_sha256: str | None
+    uploaded_by_user_id: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +60,11 @@ class IngestResult:
             "indexed": self.indexed,
             "security_level": self.security_level,
             "allowed_roles": self.allowed_roles,
+            "file_storage_uri": self.file_storage_uri,
+            "original_filename": self.original_filename,
+            "file_size_bytes": self.file_size_bytes,
+            "file_checksum_sha256": self.file_checksum_sha256,
+            "uploaded_by_user_id": self.uploaded_by_user_id,
         }
 
 
@@ -62,13 +73,8 @@ def detect_sensitive_info(text: str) -> bool:
     return any(re.search(pattern, lowered, re.IGNORECASE) for pattern in SENSITIVE_PATTERNS)
 
 
-def validate_company_and_process(
-    db: Session,
-    company_id: int,
-    process_id: int | None = None,
-) -> None:
+def validate_company_and_process(db: Session, company_id: int, process_id: int | None = None) -> None:
     company = db.get(Company, company_id)
-
     if company is None:
         raise ValueError(f"Company not found: {company_id}")
 
@@ -76,15 +82,10 @@ def validate_company_and_process(
         return
 
     process = db.get(BusinessProcess, process_id)
-
     if process is None:
         raise ValueError(f"BusinessProcess not found: {process_id}")
-
     if int(process.company_id) != int(company_id):
-        raise ValueError(
-            f"process_id={process_id} belongs to company_id={process.company_id}, "
-            f"but company_id={company_id} was provided."
-        )
+        raise ValueError(f"process_id={process_id} belongs to company_id={process.company_id}, but company_id={company_id} was provided.")
 
 
 def create_process_document(
@@ -99,6 +100,8 @@ def create_process_document(
     contains_sensitive_info: bool | None = None,
     source_url: str | None = None,
     allowed_roles: list[str] | None = None,
+    stored_file: StoredFile | None = None,
+    uploaded_by_user_id: str | None = None,
 ) -> ProcessDocument:
     validate_company_and_process(db, company_id=company_id, process_id=process_id)
 
@@ -116,12 +119,16 @@ def create_process_document(
         contains_sensitive_info=contains_sensitive_info,
         source_url=source_url,
         allowed_roles=allowed_roles,
+        file_storage_uri=stored_file.storage_uri if stored_file else None,
+        original_filename=stored_file.original_filename if stored_file else None,
+        file_size_bytes=stored_file.size_bytes if stored_file else None,
+        file_checksum_sha256=stored_file.checksum_sha256 if stored_file else None,
+        uploaded_by_user_id=uploaded_by_user_id,
     )
 
     db.add(document)
     db.commit()
     db.refresh(document)
-
     return document
 
 
@@ -154,6 +161,9 @@ def index_single_document(
             "contains_sensitive_info": document.contains_sensitive_info,
             "source_url": getattr(document, "source_url", None),
             "allowed_roles": getattr(document, "allowed_roles", None),
+            "file_storage_uri": getattr(document, "file_storage_uri", None),
+            "original_filename": getattr(document, "original_filename", None),
+            "uploaded_by_user_id": getattr(document, "uploaded_by_user_id", None),
         },
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -164,35 +174,30 @@ def index_single_document(
 
     texts = [chunk.content for chunk in chunks]
     vectors: list[list[float]] = []
-
     for text_batch in batched(texts, batch_size=batch_size):
         vectors.extend(embed_documents_with_retry(text_batch))
 
-    rows = []
-
-    for chunk, vector in zip(chunks, vectors, strict=True):
-        rows.append(
-            DocumentChunk(
-                document_id=document.id,
-                company_id=document.company_id,
-                process_id=document.process_id,
-                chunk_index=chunk.chunk_index,
-                content=chunk.content,
-                chunk_metadata=chunk.metadata,
-                embedding=vector,
-            )
+    rows = [
+        DocumentChunk(
+            document_id=document.id,
+            company_id=document.company_id,
+            process_id=document.process_id,
+            chunk_index=chunk.chunk_index,
+            content=chunk.content,
+            chunk_metadata=chunk.metadata,
+            embedding=vector,
         )
+        for chunk, vector in zip(chunks, vectors, strict=True)
+    ]
 
     db.add_all(rows)
     db.commit()
-
     return len(rows)
 
 
 def infer_document_type(path: Path, provided: str | None = None) -> str:
     if provided:
         return provided
-
     suffix = path.suffix.lower().lstrip(".")
     return suffix or "text"
 
@@ -209,6 +214,8 @@ def ingest_file(
     contains_sensitive_info: bool | None = None,
     source_url: str | None = None,
     allowed_roles: list[str] | None = None,
+    uploaded_by_user_id: str | None = None,
+    store_original: bool = True,
     index: bool = True,
     chunk_size: int = 800,
     chunk_overlap: int = 120,
@@ -216,10 +223,10 @@ def ingest_file(
 ) -> IngestResult:
     path = Path(file_path)
     content = load_document_text(path)
-
     if not content.strip():
         raise ValueError(f"No extractable text in file: {path}")
 
+    stored_file = save_original_file(path, company_id=company_id, original_filename=path.name) if store_original else None
     document = create_process_document(
         db=db,
         company_id=company_id,
@@ -232,18 +239,13 @@ def ingest_file(
         contains_sensitive_info=contains_sensitive_info,
         source_url=source_url,
         allowed_roles=allowed_roles,
+        stored_file=stored_file,
+        uploaded_by_user_id=uploaded_by_user_id,
     )
 
     chunk_count = 0
-
     if index:
-        chunk_count = index_single_document(
-            db=db,
-            document=document,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            batch_size=batch_size,
-        )
+        chunk_count = index_single_document(db=db, document=document, chunk_size=chunk_size, chunk_overlap=chunk_overlap, batch_size=batch_size)
 
     return IngestResult(
         document_id=document.id,
@@ -256,4 +258,9 @@ def ingest_file(
         indexed=index,
         security_level=document.security_level,
         allowed_roles=document.allowed_roles,
+        file_storage_uri=document.file_storage_uri,
+        original_filename=document.original_filename,
+        file_size_bytes=document.file_size_bytes,
+        file_checksum_sha256=document.file_checksum_sha256,
+        uploaded_by_user_id=document.uploaded_by_user_id,
     )
