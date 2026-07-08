@@ -112,10 +112,7 @@ class ProcessDocument(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
-    process_id: Mapped[int | None] = mapped_column(
-        ForeignKey("business_processes.id"),
-        nullable=True,
-    )
+    process_id: Mapped[int | None] = mapped_column(ForeignKey("business_processes.id"), nullable=True)
 
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     document_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -125,6 +122,11 @@ class ProcessDocument(Base):
     contains_sensitive_info: Mapped[bool] = mapped_column(Boolean, default=False)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     allowed_roles: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    file_storage_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    file_checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    uploaded_by_user_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -140,10 +142,7 @@ class DocumentChunk(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("process_documents.id"), nullable=False)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
-    process_id: Mapped[int | None] = mapped_column(
-        ForeignKey("business_processes.id"),
-        nullable=True,
-    )
+    process_id: Mapped[int | None] = mapped_column(ForeignKey("business_processes.id"), nullable=True)
 
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
