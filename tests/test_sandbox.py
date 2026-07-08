@@ -1,5 +1,8 @@
 import sys
 
+import pytest
+
+from app.agents.sandbox import AgentSandboxError, validate_command_safety
 from app.agents.tool_guard import run_allowed_command_tool
 
 
@@ -21,3 +24,13 @@ def test_allowed_command_tool_runs_in_direct_mode(monkeypatch):
 
     assert result.returncode == 0
     assert result.stdout.strip() == "ok"
+
+
+def test_sandbox_rejects_denied_executable():
+    with pytest.raises(AgentSandboxError):
+        validate_command_safety(["curl", "https://example.com"])
+
+
+def test_sandbox_rejects_unknown_executable():
+    with pytest.raises(AgentSandboxError):
+        validate_command_safety(["unknown-tool", "--version"])
