@@ -17,6 +17,32 @@ def collect_allowed_citation_labels(evidence_items: list[dict[str, Any]]) -> set
     }
 
 
+def normalize_citation_label(label: str) -> list[str]:
+    """Split labels like '[공식URL-1, 공식URL-2]' into valid individual labels."""
+    raw = str(label or "").strip()
+    if not raw.startswith("[") or not raw.endswith("]"):
+        return []
+
+    inner = raw[1:-1].strip()
+    if not inner:
+        return []
+
+    parts = [part.strip() for part in re.split(r"[,，]", inner) if part.strip()]
+    if len(parts) <= 1:
+        return [raw]
+
+    return [f"[{part}]" for part in parts]
+
+
+def normalize_citation_labels(labels: list[str]) -> list[str]:
+    result: list[str] = []
+    for label in labels:
+        for normalized in normalize_citation_label(label):
+            if normalized not in result:
+                result.append(normalized)
+    return result
+
+
 def collect_official_discovery_labels(report_data: dict[str, Any]) -> set[str]:
     labels: set[str] = set()
 
@@ -30,12 +56,12 @@ def collect_official_discovery_labels(report_data: dict[str, Any]) -> set[str]:
             candidate.get("reason"),
             candidate.get("suitability_rationale"),
         ]:
-            for label in find_citation_labels(str(text or "")):
+            for label in normalize_citation_labels(find_citation_labels(str(text or ""))):
                 if OFFICIAL_DISCOVERY_PATTERN.match(label):
                     labels.add(label)
 
         for text in (candidate.get("score_rationale") or {}).values():
-            for label in find_citation_labels(str(text or "")):
+            for label in normalize_citation_labels(find_citation_labels(str(text or ""))):
                 if OFFICIAL_DISCOVERY_PATTERN.match(label):
                     labels.add(label)
 
@@ -75,7 +101,8 @@ def validate_report_citations(
     paragraphs_without_citation = 0
 
     for text in collect_texts_from_report_data(report_data):
-        labels = find_citation_labels(text)
+        raw_labels = find_citation_labels(text)
+        labels = normalize_citation_labels(raw_labels)
 
         if not labels:
             paragraphs_without_citation += 1
