@@ -21,11 +21,11 @@ Agent Evaluator의 상태 분류와 Human Review gate 품질을 점검하기 위
 
 일반화 점검용 독립 평가셋이다. threshold 튜닝에 직접 사용하지 않는 것을 원칙으로 한다.
 
-구성:
+현재 구성:
 
 - `tests/data/blind_holdout_gold.jsonl`: holdout v1, 수동 cases 40개
 
-holdout set은 regression보다 낮은 gate 기준을 사용한다. holdout v1도 synthetic 성격이 있으므로, 실제 graph 실행 결과에서 추출한 borderline case를 계속 추가한다.
+주의: holdout v1은 synthetic 성격이 있으므로 최종 일반화 성능으로 표현하지 않는다. 이후 holdout v2는 외부 공개 데이터 기반으로 새로 구성한다.
 
 ## 실행
 
@@ -79,65 +79,31 @@ Regression seed만 평가하려면:
 python -m app.evaluation.agent_quality_eval --dataset regression --no-generated
 ```
 
-## 실제 Graph 결과 기반 holdout 추가 절차
+## Holdout v2 외부 데이터 구성 방향
 
-현재 holdout v1은 유지하고, 실제 graph 실행 결과에서 새 unlabeled candidate를 뽑아 사람이 라벨링한다.
+수동 라벨링 CSV 방식은 사용하지 않는다. 대신 외부 공개 데이터셋에서 업무 도메인과 리스크 유형을 가져와 holdout v2를 구성한다.
 
-1. Graph state 저장:
+우선순위:
 
-```bash
-GRAPH_NODE_EXECUTION_MODE=subprocess python -m app.main \
-  --project-id 1 \
-  --auto-approve \
-  --reviewer-name "오재식" \
-  --review-comment "Holdout labeling 후보 추출용 실행." \
-  --report-status reviewed \
-  --verbose \
-  --state-json-output outputs/graph_state_for_labeling.json
-```
+1. Process mining event logs
+   - 업무 프로세스, 이벤트 로그, 처리 흐름 기반 케이스를 만들 수 있음
+   - `recommended`, `human_review_required`, `evidence_insufficient` 경계 케이스 구성에 적합
 
-2. Borderline candidate를 CSV/JSONL로 추출:
+2. Bank marketing / credit decision data
+   - 금융·마케팅 의사결정 도메인
+   - `human_review_required`, `excluded` 케이스 구성에 적합
 
-```bash
-python -m app.evaluation.export_holdout_candidates \
-  --state-json outputs/graph_state_for_labeling.json \
-  --borderline-only \
-  --case-id-prefix graph-holdout-v2 \
-  --csv outputs/unlabeled_holdout_candidates.csv \
-  --jsonl outputs/unlabeled_holdout_candidates.jsonl
-```
+3. Online retail transaction data
+   - 상품 추천, 수요예측, 고객 세분화, 재고/주문 프로세스
+   - 저위험 자동화와 개인정보 경계 케이스를 함께 만들 수 있음
 
-3. 사람이 CSV의 두 칸을 수동 라벨링한다.
+Holdout v2 생성 원칙:
 
-- `expected_status`
-- `expected_requires_human_review`
-
-4. 라벨링 완료 후 CSV label을 JSONL gold로 병합한다.
-
-```bash
-python -m app.evaluation.finalize_labeled_holdout \
-  --unlabeled-jsonl outputs/unlabeled_holdout_candidates.jsonl \
-  --labeled-csv outputs/unlabeled_holdout_candidates.csv \
-  --output-jsonl outputs/labeled_holdout_gold.jsonl
-```
-
-5. 검토 후 holdout 파일에 추가한다.
-
-```bash
-python -m app.evaluation.finalize_labeled_holdout \
-  --unlabeled-jsonl outputs/unlabeled_holdout_candidates.jsonl \
-  --labeled-csv outputs/unlabeled_holdout_candidates.csv \
-  --output-jsonl outputs/labeled_holdout_gold.jsonl \
-  --append-to tests/data/blind_holdout_gold.jsonl
-```
-
-권장 추가 기준:
-
-- confidence 0.55~0.78 사이
-- evidence coverage 0.20~0.55 사이
-- weak evidence but nonzero evidence
-- compliance와 evidence 판단이 충돌하는 후보
-- replan 후에도 애매한 후보
+- evaluator threshold를 보고 라벨을 맞추지 않는다.
+- 외부 데이터의 도메인 설명, feature 성격, 업무 영향도를 기준으로 라벨을 붙인다.
+- 같은 템플릿에서 여러 케이스를 찍어내지 않는다.
+- confidence/evidence 값이 너무 깨끗하게 분리되지 않도록 한다.
+- 최소 30개 이상을 추가하고, 가능하면 50개 이상으로 확장한다.
 
 ## 주요 지표
 
