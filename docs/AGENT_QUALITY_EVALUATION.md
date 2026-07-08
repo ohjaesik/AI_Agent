@@ -23,9 +23,9 @@ Agent Evaluator의 상태 분류와 Human Review gate 품질을 점검하기 위
 
 구성:
 
-- `tests/data/blind_holdout_gold.jsonl`: 수동 holdout cases 40개
+- `tests/data/blind_holdout_gold.jsonl`: holdout v1, 수동 cases 40개
 
-holdout set은 regression보다 낮은 gate 기준을 사용한다.
+holdout set은 regression보다 낮은 gate 기준을 사용한다. holdout v1도 synthetic 성격이 있으므로, 실제 graph 실행 결과에서 추출한 borderline case를 계속 추가한다.
 
 ## 실행
 
@@ -78,6 +78,49 @@ Regression seed만 평가하려면:
 ```bash
 python -m app.evaluation.agent_quality_eval --dataset regression --no-generated
 ```
+
+## 실제 Graph 결과 기반 holdout 추가 절차
+
+현재 holdout v1은 유지하고, 실제 graph 실행 결과에서 새 unlabeled candidate를 뽑아 사람이 라벨링한다.
+
+1. Graph state 저장:
+
+```bash
+GRAPH_NODE_EXECUTION_MODE=subprocess python -m app.main \
+  --project-id 1 \
+  --auto-approve \
+  --reviewer-name "오재식" \
+  --review-comment "Holdout labeling 후보 추출용 실행." \
+  --report-status reviewed \
+  --verbose \
+  --state-json-output outputs/graph_state_for_labeling.json
+```
+
+2. Borderline candidate를 CSV/JSONL로 추출:
+
+```bash
+python -m app.evaluation.export_holdout_candidates \
+  --state-json outputs/graph_state_for_labeling.json \
+  --borderline-only \
+  --case-id-prefix graph-holdout-v2 \
+  --csv outputs/unlabeled_holdout_candidates.csv \
+  --jsonl outputs/unlabeled_holdout_candidates.jsonl
+```
+
+3. 사람이 CSV의 두 칸을 수동 라벨링한다.
+
+- `expected_status`
+- `expected_requires_human_review`
+
+4. 라벨링 완료 후 JSONL로 변환해 `tests/data/blind_holdout_gold.jsonl`에 추가한다.
+
+권장 추가 기준:
+
+- confidence 0.55~0.78 사이
+- evidence coverage 0.20~0.55 사이
+- weak evidence but nonzero evidence
+- compliance와 evidence 판단이 충돌하는 후보
+- replan 후에도 애매한 후보
 
 ## 주요 지표
 
