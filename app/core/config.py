@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     vllm_api_key: str = Field(default="EMPTY", alias="VLLM_API_KEY")
     vllm_model: str = Field(default="google/gemma-2-9b-it", alias="VLLM_MODEL")
 
+    # External data source secrets
+    dart_api_key: str | None = Field(default=None, alias="DART_API_KEY")
+
+    # API protection. If unset, local/test mode remains open.
+    app_api_key: str | None = Field(default=None, alias="APP_API_KEY")
+
     # App
     app_env: str = Field(default="local", alias="APP_ENV")
 
