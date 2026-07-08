@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.chains.company_process_discovery import discover_company_process_specs
 from app.company_bootstrap.dart_client import DartCompany, load_dart_company
 from app.company_bootstrap.url_loader import OfficialUrlDocument, load_official_url
+from app.db.migrate_discovery_metadata import ensure_discovery_metadata_column
 from app.db.models import AnalysisProject, BusinessProcess, Company, Department, EnterpriseSystem, ProcessDocument
 from app.ingestion.service import index_single_document
 from app.rag.indexer import delete_existing_chunks
@@ -349,12 +350,24 @@ def build_official_source_payloads(
     return sources
 
 
+def build_discovery_metadata(spec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "discovery_mode": spec.get("discovery_mode"),
+        "discovery_warning": spec.get("discovery_warning"),
+        "evidence_labels": spec.get("evidence_labels", []),
+        "suitability_rationale": spec.get("suitability_rationale"),
+        "score_rationale": spec.get("score_rationale", {}),
+        "source": "company_process_discovery_agent",
+    }
+
+
 def create_business_processes(
     db: Session,
     company_id: int,
     departments: dict[str, Department],
     process_specs: list[dict[str, Any]],
 ) -> list[BusinessProcess]:
+    ensure_discovery_metadata_column()
     rows: list[BusinessProcess] = []
 
     for spec in process_specs:
@@ -387,6 +400,7 @@ def create_business_processes(
             implementation_cost_score=spec["implementation_cost_score"],
             security_level="internal",
             candidate_agent_name=spec["candidate_agent_name"],
+            discovery_metadata=build_discovery_metadata(spec),
         )
         db.add(row)
         rows.append(row)
