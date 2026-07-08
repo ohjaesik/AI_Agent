@@ -68,7 +68,7 @@ class EnterpriseSystem(Base):
     api_available: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    company: Mapped["Company"] = relationship(back_populates="company")
+    company: Mapped["Company"] = relationship(back_populates="systems")
 
 
 class BusinessProcess(Base):
