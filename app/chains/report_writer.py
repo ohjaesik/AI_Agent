@@ -11,7 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.config import get_settings
 from app.core.llm import get_chat_model
-from app.tools.citation_validator import validate_report_citations
+from app.tools.citation_validator import find_citation_labels, validate_report_citations
 from app.tools.deterministic_report_data_builder import build_report_data as build_deterministic_report_data
 
 
@@ -62,16 +62,11 @@ base_sections:
 
 def compact_json(value: Any, max_chars: int = 12000) -> str:
     text = json.dumps(value, ensure_ascii=False, default=str)
-
-    if len(text) <= max_chars:
-        return text
-
-    return text[:max_chars] + "..."
+    return text if len(text) <= max_chars else text[:max_chars] + "..."
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
     cleaned = text.strip()
-
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
         cleaned = re.sub(r"```$", "", cleaned).strip()
@@ -84,25 +79,41 @@ def extract_json_object(text: str) -> dict[str, Any]:
     match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if not match:
         raise ValueError("LLM response does not contain a JSON object.")
-
     return json.loads(match.group(0))
 
 
-def build_allowed_citation_labels(evidence_items: list[dict[str, Any]]) -> list[str]:
+def append_unique(labels: list[str], label: str | None) -> None:
+    if label and label not in labels:
+        labels.append(str(label))
+
+
+def build_allowed_citation_labels(
+    evidence_items: list[dict[str, Any]],
+    state: dict[str, Any] | None = None,
+) -> list[str]:
     labels: list[str] = []
 
     for item in evidence_items:
-        label = item.get("citation_label")
-        if label and label not in labels:
-            labels.append(str(label))
+        append_unique(labels, item.get("citation_label"))
+
+    state = state or {}
+    for candidate in state.get("priority_ranking", {}).get("items", []):
+        metadata = candidate.get("discovery_metadata") or {}
+        for label in metadata.get("evidence_labels", []):
+            append_unique(labels, str(label))
+
+        for text in [candidate.get("problem"), candidate.get("reason"), candidate.get("suitability_rationale")]:
+            for label in find_citation_labels(str(text or "")):
+                append_unique(labels, label)
+
+        for text in (candidate.get("score_rationale") or {}).values():
+            for label in find_citation_labels(str(text or "")):
+                append_unique(labels, label)
 
     return labels
 
 
-def build_evidence_context(
-    evidence_items: list[dict[str, Any]],
-    limit: int = 12,
-) -> list[dict[str, Any]]:
+def build_evidence_context(evidence_items: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
     sorted_items = sorted(
         evidence_items,
         key=lambda item: float(item.get("confidence") or 0.0),
@@ -110,7 +121,6 @@ def build_evidence_context(
     )
 
     context = []
-
     for item in sorted_items[:limit]:
         context.append(
             {
@@ -123,36 +133,20 @@ def build_evidence_context(
                 "confidence": item.get("confidence"),
             }
         )
-
     return context
 
 
 def build_base_sections_payload(report_data: dict[str, Any]) -> list[dict[str, Any]]:
     payload = []
-
     for section in report_data.get("sections", []):
         paragraphs = []
         table_summaries = []
-
         for block in section.get("blocks", []):
             if block.get("type") == "paragraph":
                 paragraphs.append(block.get("text", ""))
             elif block.get("type") == "table":
-                table_summaries.append(
-                    {
-                        "headers": block.get("headers", []),
-                        "row_count": len(block.get("rows", [])),
-                    }
-                )
-
-        payload.append(
-            {
-                "heading": section.get("heading"),
-                "paragraphs": paragraphs,
-                "tables": table_summaries,
-            }
-        )
-
+                table_summaries.append({"headers": block.get("headers", []), "row_count": len(block.get("rows", []))})
+        payload.append({"heading": section.get("heading"), "paragraphs": paragraphs, "tables": table_summaries})
     return payload
 
 
@@ -169,75 +163,45 @@ def build_analysis_summary(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def apply_llm_paragraphs(
-    base_report_data: dict[str, Any],
-    llm_payload: dict[str, Any],
-) -> dict[str, Any]:
+def apply_llm_paragraphs(base_report_data: dict[str, Any], llm_payload: dict[str, Any]) -> dict[str, Any]:
     report_data = deepcopy(base_report_data)
     llm_sections = llm_payload.get("sections", [])
-    section_map = {
-        item.get("heading"): item.get("paragraphs", [])
-        for item in llm_sections
-        if item.get("heading")
-    }
+    section_map = {item.get("heading"): item.get("paragraphs", []) for item in llm_sections if item.get("heading")}
 
     for section in report_data.get("sections", []):
         heading = section.get("heading")
         rewritten_paragraphs = section_map.get(heading)
-
         if not rewritten_paragraphs:
             continue
 
         paragraph_index = 0
-
         for block in section.get("blocks", []):
             if block.get("type") != "paragraph":
                 continue
-
             if paragraph_index >= len(rewritten_paragraphs):
                 break
-
             block["text"] = rewritten_paragraphs[paragraph_index]
             paragraph_index += 1
 
-    report_data["generation"] = {
-        "mode": "vllm_report_writer",
-        "warnings": llm_payload.get("warnings", []),
-    }
-
+    report_data["generation"] = {"mode": "vllm_report_writer", "warnings": llm_payload.get("warnings", [])}
     return report_data
 
 
-def build_fallback_report_data(
-    state: dict[str, Any],
-    reason: str,
-) -> dict[str, Any]:
+def build_fallback_report_data(state: dict[str, Any], reason: str) -> dict[str, Any]:
     report_data = build_deterministic_report_data(state)
-    report_data["generation"] = {
-        "mode": "deterministic_fallback",
-        "reason": reason,
-    }
+    report_data["generation"] = {"mode": "deterministic_fallback", "reason": reason}
     return report_data
 
 
 def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
     base_report_data = build_deterministic_report_data(state)
     evidence_items = state.get("evidence_items", [])
-    allowed_citation_labels = build_allowed_citation_labels(evidence_items)
+    allowed_citation_labels = build_allowed_citation_labels(evidence_items, state=state)
 
     if not evidence_items or not allowed_citation_labels:
-        return build_fallback_report_data(
-            state,
-            reason="No evidence items or citation labels are available.",
-        )
+        return build_fallback_report_data(state, reason="No evidence items or citation labels are available.")
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", SYSTEM_PROMPT),
-            ("human", USER_PROMPT),
-        ]
-    )
-
+    prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", USER_PROMPT)])
     settings = get_settings()
 
     try:
@@ -255,22 +219,13 @@ def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
         report_data = apply_llm_paragraphs(base_report_data, llm_payload)
         report_data["generation"]["model"] = settings.vllm_model
 
-        validation = validate_report_citations(
-            report_data=report_data,
-            evidence_items=evidence_items,
-        )
+        validation = validate_report_citations(report_data=report_data, evidence_items=evidence_items)
         report_data["citation_validation"] = validation
 
         if not validation.get("valid"):
-            return build_fallback_report_data(
-                state,
-                reason=f"Invalid citation labels from LLM: {validation.get('invalid_labels')}",
-            )
+            return build_fallback_report_data(state, reason=f"Invalid citation labels from LLM: {validation.get('invalid_labels')}")
 
         return report_data
 
     except Exception as exc:
-        return build_fallback_report_data(
-            state,
-            reason=f"LLM report writer failed: {type(exc).__name__}: {exc}",
-        )
+        return build_fallback_report_data(state, reason=f"LLM report writer failed: {type(exc).__name__}: {exc}")
