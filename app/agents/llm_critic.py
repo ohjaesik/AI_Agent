@@ -11,9 +11,13 @@ from langchain_core.prompts import ChatPromptTemplate
 from app.core.llm import get_chat_model, invoke_chat_with_retry
 
 SYSTEM_PROMPT = """
-You are a conservative AX Agent Critic.
+You are a calibrated AX Agent Critic.
 You review candidate AI Agent recommendations using only the provided JSON.
 Do not add external facts. Return JSON only.
+
+Be conservative for blocked, sensitive, high-impact, or weak-evidence candidates.
+Do not mark every candidate as needs_review. If the deterministic evaluation is strong,
+there are no compliance issues, and confidence is adequate, return pass.
 """.strip()
 
 USER_PROMPT = """
@@ -24,6 +28,12 @@ Candidate:
 
 Evaluation:
 {evaluation}
+
+Guidance:
+- Return pass when confidence_score >= 0.72, requires_additional_evidence=false, compliance_alignment is high, and issues is empty.
+- Return needs_review for sensitive_review, enhanced_review, unclear reviewer responsibility, or moderate uncertainty.
+- Return insufficient_evidence when evidence_coverage is weak or requires_additional_evidence=true.
+- Return reject only for blocked/prohibited use or clearly unsafe scope.
 
 Return JSON:
 {{
@@ -68,25 +78,56 @@ def clamp_adjustment(value: Any) -> float:
     return round(max(-0.30, min(0.10, parsed)), 3)
 
 
-def fallback_critic(candidate: dict[str, Any], evaluation: dict[str, Any], reason: str) -> dict[str, Any]:
-    confidence = float(evaluation.get("confidence_score") or 0.0)
-    if confidence < 0.50:
-        verdict = "insufficient_evidence"
-        adjustment = -0.05
-    elif evaluation.get("requires_human_review"):
-        verdict = "needs_review"
-        adjustment = 0.0
-    else:
-        verdict = "pass"
-        adjustment = 0.0
+def deterministic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any]) -> str:
+    compliance = candidate.get("compliance") or {}
+    if compliance.get("blocked"):
+        return "reject"
+    if evaluation.get("requires_additional_evidence"):
+        return "insufficient_evidence"
+    if compliance.get("compliance_level") in {"sensitive_review", "enhanced_review"}:
+        return "needs_review"
+    if evaluation.get("issues"):
+        return "needs_review"
+    if float(evaluation.get("confidence_score") or 0.0) >= 0.72 and float(evaluation.get("compliance_alignment") or 0.0) >= 0.95:
+        return "pass"
+    if evaluation.get("requires_human_review"):
+        return "needs_review"
+    return "pass"
 
+
+def calibrate_critic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any], critic: dict[str, Any]) -> dict[str, Any]:
+    expected = deterministic_verdict(candidate, evaluation)
+    verdict = normalize_verdict(critic.get("critic_verdict"))
+
+    # LLM critic can be stricter for genuinely weak or regulated cases, but it
+    # should not force every standard, post-replan, no-issue candidate into review.
+    if expected == "pass" and verdict in {"needs_review", "insufficient_evidence"}:
+        critic = dict(critic)
+        critic["critic_verdict"] = "pass"
+        critic["critic_confidence_adjustment"] = max(0.0, float(critic.get("critic_confidence_adjustment") or 0.0))
+        critic["critic_reason"] = "정량 평가상 근거·정합성 기준을 충족하여 LLM Critic의 과도한 재검토 판정을 pass로 보정했다."
+        critic["missing_evidence"] = []
+        critic["review_questions"] = []
+        critic["critic_calibrated"] = True
+        return critic
+
+    critic = dict(critic)
+    critic["critic_verdict"] = verdict
+    critic["critic_calibrated"] = False
+    return critic
+
+
+def fallback_critic(candidate: dict[str, Any], evaluation: dict[str, Any], reason: str) -> dict[str, Any]:
+    verdict = deterministic_verdict(candidate, evaluation)
+    adjustment = -0.05 if verdict == "insufficient_evidence" else 0.0
     return {
         "critic_verdict": verdict,
         "critic_confidence_adjustment": adjustment,
         "critic_reason": f"LLM Critic 사용 불가로 deterministic 평가 기준을 적용했다. {reason}",
-        "missing_evidence": evaluation.get("issues", []),
+        "missing_evidence": evaluation.get("issues", []) if verdict != "pass" else [],
         "review_questions": [],
         "critic_mode": "deterministic_fallback",
+        "critic_calibrated": False,
     }
 
 
@@ -100,7 +141,7 @@ def run_llm_critic(candidate: dict[str, Any], evaluation: dict[str, Any]) -> dic
         )
         response = invoke_chat_with_retry(llm, messages)
         payload = extract_json_object(str(response.content))
-        return {
+        critic = {
             "critic_verdict": normalize_verdict(payload.get("critic_verdict")),
             "critic_confidence_adjustment": clamp_adjustment(payload.get("critic_confidence_adjustment")),
             "critic_reason": str(payload.get("critic_reason") or "LLM Critic 검토 완료."),
@@ -108,6 +149,7 @@ def run_llm_critic(candidate: dict[str, Any], evaluation: dict[str, Any]) -> dic
             "review_questions": payload.get("review_questions") if isinstance(payload.get("review_questions"), list) else [],
             "critic_mode": "llm_critic",
         }
+        return calibrate_critic_verdict(candidate, evaluation, critic)
     except Exception as exc:
         return fallback_critic(candidate, evaluation, f"{type(exc).__name__}: {exc}")
 
@@ -157,6 +199,10 @@ def apply_llm_critic_to_evaluation(priority_ranking: dict[str, Any], agent_evalu
         "llm_critic_needs_review_count": sum(
             1 for item in evaluation_map.values()
             if (item.get("llm_critic") or {}).get("critic_verdict") in {"needs_review", "insufficient_evidence", "reject"}
+        ),
+        "llm_critic_calibrated_count": sum(
+            1 for item in evaluation_map.values()
+            if (item.get("llm_critic") or {}).get("critic_calibrated")
         ),
     }
     return {"priority_ranking": updated_ranking, "agent_evaluation": updated_evaluation}
