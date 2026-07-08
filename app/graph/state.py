@@ -68,6 +68,10 @@ class AXPlannerState(TypedDict, total=False):
     priority_ranking: dict[str, Any]
     agent_evaluation: dict[str, Any]
 
+    # Replan loop
+    replan_attempts: int
+    replan_request: dict[str, Any]
+
     # Human Review
     human_review: dict[str, Any]
 
