@@ -190,7 +190,7 @@ def summarize_regulatory_mappings(mappings: list[dict[str, Any]]) -> dict[str, A
         framework = str(mapping.get("framework") or "")
         risk_category = str(mapping.get("risk_category") or "")
         if framework and framework not in frameworks:
-            frameworks.append framework
+            frameworks.append(framework)
         if risk_category and risk_category not in risk_categories:
             risk_categories.append(risk_category)
         for control in mapping.get("required_controls", []) or []:
