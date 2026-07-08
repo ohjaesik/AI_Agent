@@ -119,11 +119,7 @@ def classification_report(expected_values: list[str], predicted_values: list[str
 
     return {
         "labels": per_label,
-        "macro_avg": {
-            "precision": macro_precision,
-            "recall": macro_recall,
-            "f1": macro_f1,
-        },
+        "macro_avg": {"precision": macro_precision, "recall": macro_recall, "f1": macro_f1},
         "weighted_avg": {
             "precision": safe_div(weighted_precision_sum, total),
             "recall": safe_div(weighted_recall_sum, total),
@@ -140,15 +136,7 @@ def binary_report(expected_values: list[bool], predicted_values: list[bool]) -> 
     precision = safe_div(tp, tp + fp)
     recall = safe_div(tp, tp + fn)
     f1 = safe_div(2 * precision * recall, precision + recall)
-    return {
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "tp": tp,
-        "fp": fp,
-        "fn": fn,
-        "tn": tn,
-    }
+    return {"precision": precision, "recall": recall, "f1": f1, "tp": tp, "fp": fp, "fn": fn, "tn": tn}
 
 
 def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
@@ -222,6 +210,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-generated", action="store_true", help="use only the JSONL file without generated extension cases")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--csv", type=str, default=None, help="optional path to save per-case results as CSV")
+    parser.add_argument("--markdown", type=str, default=None, help="optional path to save summary metrics as Markdown")
     parser.add_argument("--min-status-accuracy", type=float, default=0.80)
     parser.add_argument("--min-review-accuracy", type=float, default=0.90)
     parser.add_argument("--min-status-macro-f1", type=float, default=0.75)
@@ -279,6 +268,66 @@ def save_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow({key: row.get(key) for key in fieldnames})
 
 
+def format_bool(value: bool) -> str:
+    return "PASS" if value else "FAIL"
+
+
+def save_markdown(path: str | Path, metrics: dict[str, Any]) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    gate = metrics.get("quality_gate", {})
+    lines = [
+        "# Agent Quality Evaluation Report",
+        "",
+        "## Summary",
+        "",
+        f"- total_cases: {metrics.get('total_cases')}",
+        f"- quality_gate_passed: {gate.get('passed')}",
+        f"- status_accuracy: {metrics.get('status_accuracy')}",
+        f"- status_macro_f1: {metrics.get('status_macro_f1')}",
+        f"- status_weighted_f1: {metrics.get('status_weighted_f1')}",
+        f"- review_gate_accuracy: {metrics.get('review_gate_accuracy')}",
+        f"- review_gate_f1: {metrics.get('review_gate_f1')}",
+        f"- misclassified_count: {len(metrics.get('misclassified', []))}",
+        "",
+        "## Quality Gate",
+        "",
+        "| Check | Result |",
+        "|---|---:|",
+    ]
+    for check, passed in (gate.get("checks") or {}).items():
+        lines.append(f"| {check} | {format_bool(bool(passed))} |")
+
+    lines.extend(["", "## Status Report", "", "| Status | Precision | Recall | F1 | Support |", "|---|---:|---:|---:|---:|"])
+    for label, item in (metrics.get("status_report", {}).get("labels") or {}).items():
+        lines.append(f"| {label} | {item.get('precision')} | {item.get('recall')} | {item.get('f1')} | {item.get('support')} |")
+
+    review = metrics.get("review_gate_report", {})
+    lines.extend(
+        [
+            "",
+            "## Review Gate Report",
+            "",
+            "| Precision | Recall | F1 | TP | FP | FN | TN |",
+            "|---:|---:|---:|---:|---:|---:|---:|",
+            f"| {review.get('precision')} | {review.get('recall')} | {review.get('f1')} | {review.get('tp')} | {review.get('fp')} | {review.get('fn')} | {review.get('tn')} |",
+            "",
+            "## Misclassified Cases",
+            "",
+        ]
+    )
+    if metrics.get("misclassified"):
+        lines.extend(["| Case ID | Agent | Expected Status | Predicted Status | Review OK |", "|---|---|---|---|---:|"])
+        for item in metrics["misclassified"]:
+            lines.append(
+                f"| {item.get('case_id')} | {item.get('candidate_agent_name')} | {item.get('expected_status')} | {item.get('predicted_status')} | {item.get('review_ok')} |"
+            )
+    else:
+        lines.append("No misclassified cases.")
+
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
     metrics = evaluate_cases(load_gold_cases(args.gold_path, include_generated=not args.no_generated))
@@ -291,6 +340,8 @@ def main() -> None:
     )
     if args.csv:
         save_csv(args.csv, metrics["results"])
+    if args.markdown:
+        save_markdown(args.markdown, metrics)
     if args.json:
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
     else:
