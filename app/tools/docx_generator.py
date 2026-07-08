@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,28 @@ def report_status_label(report_data: dict[str, Any]) -> str:
 
 def report_status_note(report_data: dict[str, Any]) -> str:
     return STATUS_NOTES[report_status(report_data)]
+
+
+def section_title_without_number(heading: str) -> str:
+    return re.sub(r"^\s*\d+\.\s*", "", str(heading or "제목 없음")).strip()
+
+
+def toc_display_items(sections: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = [
+        ("A", "Executive Dashboard"),
+        ("B", "Top Candidate Detail"),
+    ]
+
+    for section in sections:
+        heading = str(section.get("heading", "제목 없음"))
+        match = re.match(r"^\s*(\d+)\.\s*(.+)$", heading)
+        if match:
+            items.append((match.group(1), match.group(2).strip()))
+        else:
+            items.append((str(len(items) - 1), heading.strip()))
+
+    items.append(("R", "References"))
+    return items
 
 
 def set_cell_text(
@@ -308,14 +331,14 @@ def add_executive_dashboard(doc: Document, report_data: dict[str, Any]) -> None:
         ("최우선 Agent", summary.get("top_agent")),
         ("최종 점수", summary.get("top_score")),
         ("월 예상 절감액", summary.get("top_monthly_saving")),
-        ("Human Review", summary.get("human_decision")),
+        ("Compliance", summary.get("compliance_status") or summary.get("human_decision")),
     ]
 
     metric_table = doc.add_table(rows=2, cols=4)
     metric_table.style = "Table Grid"
     metric_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     for idx, (label, value) in enumerate(metrics):
-        fill = COLOR_GREEN if label in {"월 예상 절감액", "Human Review"} else COLOR_LIGHT_BLUE
+        fill = COLOR_GREEN if label in {"월 예상 절감액", "Compliance"} else COLOR_LIGHT_BLUE
         add_metric_card(metric_table, idx // 4, idx % 4, label, value, fill=fill)
 
     doc.add_paragraph()
@@ -328,12 +351,11 @@ def add_executive_dashboard(doc: Document, report_data: dict[str, Any]) -> None:
 
 def add_table_of_contents(doc: Document, sections: list[dict[str, Any]]) -> None:
     doc.add_heading("Table of Contents", level=1)
-    toc_items = ["Executive Dashboard", "Top Candidate Detail"] + [section.get("heading", "제목 없음") for section in sections] + ["References"]
-    for idx, heading in enumerate(toc_items, start=1):
+    for label, heading in toc_display_items(sections):
         paragraph = doc.add_paragraph()
         paragraph.paragraph_format.line_spacing = 1.25
         paragraph.paragraph_format.space_after = Pt(3)
-        run = paragraph.add_run(f"{idx}. {heading}")
+        run = paragraph.add_run(f"{label}. {heading}")
         set_run_font(run, size=9.5, color=COLOR_NAVY)
     doc.add_page_break()
 
