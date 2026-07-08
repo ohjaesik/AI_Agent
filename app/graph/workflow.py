@@ -12,7 +12,6 @@ from app.graph.nodes import (
     data_readiness_node,
     docx_generator_node,
     load_project_data_node,
-    poc_delivery_planner_node,
     priority_ranking_node,
     process_analyzer_node,
     report_writer_node,
@@ -20,6 +19,7 @@ from app.graph.nodes import (
     risk_governance_node,
     roi_cost_node,
 )
+from app.graph.poc_node import poc_delivery_planner_node
 from app.graph.review_node import human_review_node
 from app.graph.state import AXPlannerState
 
