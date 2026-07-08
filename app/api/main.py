@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.api.security import create_access_token, require_api_key, validate_api_key
@@ -15,12 +15,14 @@ from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
 from app.main import run_demo
+from app.monitoring.metrics import RequestMetricsMiddleware, metrics
 from app.rag.indexer import index_documents
 from app.rag.retriever import search_similar_chunks
 from app.security.access_control import AccessContext
 from app.tools.review_applier import apply_human_review_to_ranking
 
 app = FastAPI(title="AX Delivery Planner API", version="0.1.0")
+app.add_middleware(RequestMetricsMiddleware)
 
 
 class CompanyBootstrapRequest(BaseModel):
@@ -49,6 +51,11 @@ class TokenRequest(BaseModel):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def prometheus_metrics() -> str:
+    return metrics.render_prometheus()
 
 
 @app.get("/", response_class=HTMLResponse)
