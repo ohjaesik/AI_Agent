@@ -20,28 +20,45 @@ EXTERNAL_WEB_DISCOVERY_ENABLED=false
 
 ## 2. Agent Quality Gate
 
-100개 평가셋 기준 strict gate:
+평가셋은 regression과 blind holdout으로 분리한다.
+
+Regression set은 정책 회귀 테스트다.
 
 ```bash
 python -m app.evaluation.agent_quality_eval \
+  --dataset regression \
   --strict \
-  --min-status-accuracy 0.80 \
-  --min-review-accuracy 0.90 \
-  --min-status-macro-f1 0.75 \
-  --min-review-f1 0.90 \
+  --min-status-accuracy 0.95 \
+  --min-review-accuracy 0.95 \
+  --min-status-macro-f1 0.95 \
+  --min-review-f1 0.95 \
   --json \
-  --csv outputs/agent_quality_eval.csv \
-  --markdown outputs/agent_quality_eval.md
+  --csv outputs/agent_quality_regression.csv \
+  --markdown outputs/agent_quality_regression.md
+```
+
+Blind holdout set은 독립 검증용이다.
+
+```bash
+python -m app.evaluation.agent_quality_eval \
+  --dataset holdout \
+  --strict \
+  --min-status-accuracy 0.85 \
+  --min-review-accuracy 0.85 \
+  --min-status-macro-f1 0.80 \
+  --min-review-f1 0.85 \
+  --json \
+  --csv outputs/agent_quality_holdout.csv \
+  --markdown outputs/agent_quality_holdout.md
 ```
 
 통과 기준:
 
-- `quality_gate.passed=true`
-- `status_accuracy >= 0.80`
-- `review_gate_accuracy >= 0.90`
-- `status_macro_f1 >= 0.75`
-- `review_gate_f1 >= 0.90`
+- regression gate 통과
+- holdout gate 통과
+- `evaluation_set`이 report에 명시됨
 - 가능하면 `misclassified=[]`
+- holdout 결과를 보고 즉시 threshold를 맞추지 않음
 
 ## 3. Graph Execution
 
@@ -115,8 +132,9 @@ open outputs/AX_Delivery_Planner_Report_1.docx
 GitHub Actions는 다음을 수행해야 한다.
 
 - `pytest`
-- 100개 Agent quality eval strict gate
-- CSV/Markdown quality report artifact 저장
+- regression quality gate
+- blind holdout quality gate
+- regression/holdout CSV·Markdown artifact 저장
 - `preflight --json --skip-optional`
 
 ## 7. UI 착수 가능 기준
@@ -124,7 +142,8 @@ GitHub Actions는 다음을 수행해야 한다.
 아래 조건을 만족하면 UI 구현으로 넘어간다.
 
 - Local tests 통과
-- Agent quality gate 통과
+- Regression quality gate 통과
+- Blind holdout quality gate 통과
 - Graph end-to-end 실행 성공
 - DOCX report 생성 성공
 - CI 통과
