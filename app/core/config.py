@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     # External data source secrets
     dart_api_key: str | None = Field(default=None, alias="DART_API_KEY")
 
+    # External public web discovery. Disabled by default; use only with an explicit provider/API key.
+    external_web_discovery_enabled: bool = Field(default=False, alias="EXTERNAL_WEB_DISCOVERY_ENABLED")
+    external_web_search_provider: str = Field(default="brave", alias="EXTERNAL_WEB_SEARCH_PROVIDER")
+    brave_search_api_key: str | None = Field(default=None, alias="BRAVE_SEARCH_API_KEY")
+    serpapi_api_key: str | None = Field(default=None, alias="SERPAPI_API_KEY")
+    external_web_max_results: int = Field(default=3, alias="EXTERNAL_WEB_MAX_RESULTS")
+
     # API protection. If APP_JWT_SECRET is set, Bearer JWT is supported.
     app_api_key: str | None = Field(default=None, alias="APP_API_KEY")
     app_jwt_secret: str | None = Field(default=None, alias="APP_JWT_SECRET")
@@ -49,6 +56,11 @@ class Settings(BaseSettings):
     agent_tool_sandbox_image: str = Field(default="python:3.12-slim", alias="AGENT_TOOL_SANDBOX_IMAGE")
     agent_tool_sandbox_timeout_seconds: int = Field(default=30, alias="AGENT_TOOL_SANDBOX_TIMEOUT_SECONDS")
     agent_tool_sandbox_network: str = Field(default="none", alias="AGENT_TOOL_SANDBOX_NETWORK")
+
+    # Monitoring
+    prometheus_scrape_interval: str = Field(default="15s", alias="PROMETHEUS_SCRAPE_INTERVAL")
+    grafana_admin_user: str = Field(default="admin", alias="GRAFANA_ADMIN_USER")
+    grafana_admin_password: str = Field(default="admin", alias="GRAFANA_ADMIN_PASSWORD")
 
     # App
     app_env: str = Field(default="local", alias="APP_ENV")
