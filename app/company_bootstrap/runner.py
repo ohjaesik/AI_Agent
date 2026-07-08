@@ -20,6 +20,7 @@ class BootstrapGraphResult:
     warnings: list[str]
     discovery_mode: str | None = None
     workflow_mode: str = "bootstrap_supervisor_graph"
+    idempotency: dict[str, Any] | None = None
     agent_trace: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,6 +34,7 @@ class BootstrapGraphResult:
             "warnings": self.warnings,
             "discovery_mode": self.discovery_mode,
             "workflow_mode": self.workflow_mode,
+            "idempotency": self.idempotency or {},
             "agent_trace": self.agent_trace or [],
         }
 
@@ -88,5 +90,6 @@ def run_bootstrap_supervisor_graph(
         warnings=warnings,
         discovery_mode=payload.get("discovery_mode"),
         workflow_mode="bootstrap_supervisor_graph",
+        idempotency=payload.get("idempotency", {}),
         agent_trace=list(result_state.get("audit_logs", [])),
     )
