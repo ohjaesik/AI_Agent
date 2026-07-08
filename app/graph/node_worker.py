@@ -9,12 +9,14 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from app.core.config import get_settings
 from app.graph.state import AXPlannerState
+from app.monitoring.metrics import record_agent_node
 
 NODE_TARGETS = {
     "load_project_data": "app.graph.nodes:load_project_data_node",
@@ -161,7 +163,17 @@ def run_node_via_worker(node_name: str, state: AXPlannerState) -> dict[str, Any]
 
 def workerized_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]]:
     def _node(state: AXPlannerState) -> dict[str, Any]:
-        return run_node_via_worker(node_name, state)
+        settings = get_settings()
+        mode = "direct" if node_name in NON_WORKERIZABLE_NODES else settings.graph_node_execution_mode.lower()
+        start = time.perf_counter()
+        status = "success"
+        try:
+            return run_node_via_worker(node_name, state)
+        except Exception:
+            status = "failed"
+            raise
+        finally:
+            record_agent_node(node_name=node_name, mode=mode, status=status, latency_seconds=time.perf_counter() - start)
 
     _node.__name__ = f"workerized_{node_name}"
     return _node
