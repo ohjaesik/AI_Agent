@@ -21,6 +21,8 @@ python -m app.ops.preflight --strict
 - production 환경의 APP_API_KEY / APP_JWT_SECRET 강도
 - local 또는 S3/MinIO 문서 저장소 설정
 - Agent sandbox 설정
+- Graph node worker mode 설정
+- Public web discovery provider/API key 설정
 - vLLM endpoint 접근 가능성
 
 ## 2. DB 초기화 및 migration
@@ -115,7 +117,28 @@ GRAPH_NODE_WORKER_TIMEOUT_SECONDS=300
 2. 격리 검증: `subprocess`
 3. 컨테이너 기반 운영 실험: `docker`
 
-주의: Docker worker mode는 DB, vLLM, 파일 저장소 접근을 위해 네트워크와 볼륨 설정이 필요하므로 운영 compose와 함께 검증해야 한다.
+`human_review`는 LangGraph interrupt/resume context가 필요하므로 parent graph process에서 실행된다. 나머지 node는 worker mode 적용 대상이다.
+
+Docker worker 환경 검증:
+
+```bash
+python -m app.ops.docker_worker_smoke --build-image --skip-vllm
+```
+
+vLLM까지 같이 확인하려면:
+
+```bash
+python -m app.ops.docker_worker_smoke --build-image --strict
+```
+
+이 smoke test는 다음을 확인한다.
+
+- Docker daemon 접근 가능 여부
+- `GRAPH_NODE_WORKER_IMAGE` 존재 또는 build 가능 여부
+- worker container 내부에서 DB `SELECT 1` 가능 여부
+- worker container 내부에서 vLLM endpoint socket 접근 가능 여부
+
+macOS Docker Desktop에서는 container에서 host DB/vLLM 접근 시 `.env`의 host를 `host.docker.internal`로 맞추는 편이 안전하다.
 
 ## 6. Bootstrap 실행
 
@@ -147,6 +170,18 @@ python -m app.main \
   --auto-approve \
   --reviewer-name "오재식" \
   --review-comment "Agent Evaluator, LLM Critic, Replan Loop 검증 결과를 확인한 뒤 1차 PoC 후보로 승인함." \
+  --report-status reviewed \
+  --verbose
+```
+
+Subprocess worker mode:
+
+```bash
+GRAPH_NODE_EXECUTION_MODE=subprocess python -m app.main \
+  --project-id <project_id> \
+  --auto-approve \
+  --reviewer-name "오재식" \
+  --review-comment "Subprocess worker mode 검증 후 승인" \
   --report-status reviewed \
   --verbose
 ```
@@ -199,7 +234,13 @@ SERPAPI_API_KEY=<SET_KEY>
 EXTERNAL_WEB_MAX_RESULTS=3
 ```
 
-Public web discovery는 Brave/SerPAPI 결과를 보조 출처로 사용한다. 소셜 도메인과 중복 URL은 제외하고, 결과 URL은 RAG에 색인되며 `replan_request.source_collection.public_web_search`에 기록된다.
+Public web discovery는 Brave/SerpAPI 결과를 보조 출처로 사용한다. 소셜 도메인과 중복 URL은 제외하고, 결과 URL은 RAG에 색인되며 `replan_request.source_collection.public_web_search`에 기록된다.
+
+API key 설정 여부는 preflight에서 검증된다.
+
+```bash
+python -m app.ops.preflight --json
+```
 
 한계:
 
@@ -255,10 +296,32 @@ Prometheus scrape 대상:
 api:8001/metrics
 ```
 
+HTTP 지표:
+
+- `ax_http_requests_total`
+- `ax_http_request_latency_seconds_sum`
+- `ax_http_request_latency_seconds_max`
+
+Agent node 지표:
+
+- `ax_agent_node_runs_total{node,mode,status}`
+- `ax_agent_node_latency_seconds_sum{node,mode,status}`
+- `ax_agent_node_latency_seconds_max{node,mode,status}`
+
+Grafana dashboard는 다음 panel을 포함한다.
+
+- HTTP request rate
+- HTTP average/max latency
+- Agent node runs
+- Agent node average/max latency
+- Agent node failures
+
 기본 alert rule:
 
 - 5분 동안 5xx error rate 5% 초과
-- 5분 평균 latency 10초 초과
+- 5분 평균 HTTP latency 10초 초과
+- 10분 동안 Agent node failure 1건 이상
+- Agent node max latency 60초 초과
 
 ## 11. 보고서 검토
 
@@ -295,6 +358,7 @@ CI가 실패하면 우선 테스트 로그에서 다음 순서로 본다.
 2. Agent quality gate 정확도 하락
 3. preflight DB/env 오류
 4. sandbox command allowlist 오류
+5. metrics/dashboard query 오류
 
 ## 13. 운영 전 남은 선택 과제
 
