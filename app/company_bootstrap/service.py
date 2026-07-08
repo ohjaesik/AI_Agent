@@ -91,7 +91,7 @@ def build_company_description(
     combined_text: str,
     dart_company: DartCompany | None = None,
 ) -> str:
-    parts = [f"{company_name} 공식자료 기반 AX 분석용 회사 프로필입니다."]
+    parts = [f"{company_name} 공식자료 기반 AX 분석용 회사 프로필"]
 
     if dart_company is not None:
         profile = dart_company.profile
@@ -101,10 +101,10 @@ def build_company_description(
             parts.append(f"홈페이지: {profile.get('hm_url')}")
         if profile.get("induty_code"):
             parts.append(f"업종코드: {profile.get('induty_code')}")
-
-    snippet = " ".join(combined_text.split())[:800]
-    if snippet:
-        parts.append(f"공식자료 요약 단서: {snippet}")
+        if profile.get("est_dt"):
+            parts.append(f"설립일: {profile.get('est_dt')}")
+        if profile.get("acc_mt"):
+            parts.append(f"결산월: {profile.get('acc_mt')}")
 
     return "\n".join(parts)
 
@@ -460,114 +460,3 @@ def create_source_documents(
 
 def create_analysis_project(db: Session, company_id: int, company_name: str) -> AnalysisProject:
     project = AnalysisProject(
-        company_id=company_id,
-        title=f"{company_name} 공식자료 기반 AX 전환 진단",
-        status="created",
-    )
-    db.add(project)
-    db.commit()
-    db.refresh(project)
-    return project
-
-
-def bootstrap_company(
-    db: Session,
-    company_name: str,
-    official_urls: list[str] | None = None,
-    dart_api_key: str | None = None,
-    corp_code: str | None = None,
-    stock_code: str | None = None,
-    create_project: bool = True,
-    index: bool = True,
-    reset_company_chunks: bool = False,
-) -> BootstrapResult:
-    warnings: list[str] = []
-    official_urls = official_urls or []
-
-    dart_company = None
-    if dart_api_key:
-        try:
-            dart_company = load_dart_company(
-                api_key=dart_api_key,
-                company_name=company_name,
-                corp_code=corp_code,
-                stock_code=stock_code,
-            )
-            if dart_company is None:
-                warnings.append("OpenDART에서 회사 고유번호를 찾지 못했습니다.")
-        except Exception as exc:
-            warnings.append(f"OpenDART 수집 실패: {type(exc).__name__}: {exc}")
-
-    official_docs: list[OfficialUrlDocument] = []
-    for url in official_urls:
-        try:
-            official_docs.append(load_official_url(url))
-        except Exception as exc:
-            warnings.append(f"공식 URL 수집 실패: {url} ({type(exc).__name__}: {exc})")
-
-    if dart_company is None and not official_docs:
-        raise ValueError("No official source was collected. Provide --official-url or --dart-api-key.")
-
-    combined_parts = []
-    if dart_company is not None:
-        combined_parts.append(dart_company.to_document_content())
-    combined_parts.extend(doc.content for doc in official_docs)
-    combined_text = "\n\n".join(combined_parts)
-
-    company = create_company(
-        db=db,
-        company_name=dart_company.corp_name if dart_company is not None else company_name,
-        combined_text=combined_text,
-        dart_company=dart_company,
-    )
-    departments = create_default_departments(db, company_id=company.id)
-    create_default_systems(db, company_id=company.id)
-
-    fallback_process_specs = build_process_specs(combined_text)
-    official_sources = build_official_source_payloads(
-        official_docs=official_docs,
-        dart_company=dart_company,
-    )
-    discovered_process_specs = discover_company_process_specs(
-        company_name=company.name,
-        official_sources=official_sources,
-        fallback_processes=fallback_process_specs,
-    )
-
-    discovery_mode = discovered_process_specs[0].get("discovery_mode") if discovered_process_specs else None
-    discovery_warning = discovered_process_specs[0].get("discovery_warning") if discovered_process_specs else None
-    if discovery_warning:
-        warnings.append(discovery_warning)
-
-    processes = create_business_processes(
-        db=db,
-        company_id=company.id,
-        departments=departments,
-        process_specs=discovered_process_specs,
-    )
-    documents = create_source_documents(
-        db=db,
-        company_id=company.id,
-        official_docs=official_docs,
-        dart_company=dart_company,
-    )
-
-    project = create_analysis_project(db, company_id=company.id, company_name=company.name) if create_project else None
-
-    chunk_count = 0
-    if index:
-        if reset_company_chunks:
-            delete_existing_chunks(db, company_id=company.id)
-        for document in documents:
-            chunk_count += index_single_document(db=db, document=document)
-
-    return BootstrapResult(
-        company_id=company.id,
-        project_id=project.id if project else None,
-        document_ids=[document.id for document in documents],
-        process_ids=[process.id for process in processes],
-        chunk_count=chunk_count,
-        source_count=len(documents),
-        warnings=warnings,
-        discovery_mode=discovery_mode,
-    )
