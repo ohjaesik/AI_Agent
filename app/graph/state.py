@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+import operator
+from typing import Annotated, Any, TypedDict
 
 
 class AXPlannerState(TypedDict, total=False):
@@ -44,6 +45,6 @@ class AXPlannerState(TypedDict, total=False):
     report_data: dict[str, Any]
     report_docx_path: str
 
-    # Logs
-    audit_logs: list[dict[str, Any]]
-    errors: list[str]
+    # Logs. Reducers are required because several analysis agents run in parallel.
+    audit_logs: Annotated[list[dict[str, Any]], operator.add]
+    errors: Annotated[list[str], operator.add]
