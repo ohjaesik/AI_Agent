@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import io
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from typing import Any
 from xml.etree import ElementTree
+
+from app.core.retry import retry_call
 
 DART_BASE_URL = "https://opendart.fss.or.kr/api"
 
@@ -42,7 +45,7 @@ class DartCompany:
         return "\n".join(line for line in lines if line.strip())
 
 
-def dart_get_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
+def dart_get_json_once(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
     query = urllib.parse.urlencode(params)
     url = f"{DART_BASE_URL}/{endpoint}?{query}"
     request = urllib.request.Request(
@@ -56,7 +59,16 @@ def dart_get_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
     return json.loads(raw)
 
 
-def download_corp_code_xml(api_key: str) -> bytes:
+def dart_get_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
+    return retry_call(
+        lambda: dart_get_json_once(endpoint, params),
+        retries=2,
+        backoff_seconds=1.0,
+        retry_exceptions=(TimeoutError, urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError),
+    )
+
+
+def download_corp_code_xml_once(api_key: str) -> bytes:
     query = urllib.parse.urlencode({"crtfc_key": api_key})
     url = f"{DART_BASE_URL}/corpCode.xml?{query}"
     request = urllib.request.Request(
@@ -72,6 +84,15 @@ def download_corp_code_xml(api_key: str) -> bytes:
         if not xml_names:
             raise ValueError("OpenDART corpCode response does not contain XML.")
         return archive.read(xml_names[0])
+
+
+def download_corp_code_xml(api_key: str) -> bytes:
+    return retry_call(
+        lambda: download_corp_code_xml_once(api_key),
+        retries=2,
+        backoff_seconds=1.0,
+        retry_exceptions=(TimeoutError, urllib.error.URLError, urllib.error.HTTPError, zipfile.BadZipFile),
+    )
 
 
 def parse_corp_codes(xml_bytes: bytes) -> list[dict[str, str]]:
