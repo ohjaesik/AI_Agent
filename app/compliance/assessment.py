@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.registry import get_agent_registry
-from app.compliance.regulatory_mapping import build_regulatory_mappings, summarize_regulatory_mappings
+from app.compliance.regulatory_mapping import (
+    build_regulatory_mappings,
+    get_regulatory_mapping_rules,
+    summarize_regulatory_mappings,
+)
 from app.compliance.regulatory_policy import (
     get_korea_ai_basic_act_reference,
     get_regulatory_controls,
@@ -261,6 +265,7 @@ def assess_ai_compliance(
         },
         "agent_registry": get_agent_registry(),
         "regulatory_controls": get_regulatory_controls(),
+        "regulatory_mapping_rules": get_regulatory_mapping_rules(),
         "korea_ai_basic_act_reference": get_korea_ai_basic_act_reference(),
         "disclaimer": (
             "This assessment is a technical compliance screening for AX planning. "
