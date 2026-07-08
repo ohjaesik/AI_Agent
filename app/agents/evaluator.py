@@ -45,6 +45,18 @@ def build_evidence_count_map(evidence_items: list[dict[str, Any]]) -> dict[int, 
     return result
 
 
+def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    result: dict[int, dict[str, Any]] = {}
+    for item in (compliance_assessment or {}).get("items", []):
+        try:
+            process_id = int(item.get("process_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if process_id:
+            result[process_id] = item
+    return result
+
+
 def score_rationale_coverage(candidate: dict[str, Any]) -> float:
     rationale = candidate.get("score_rationale") or {}
     if not isinstance(rationale, dict):
@@ -108,11 +120,7 @@ def score_risk_uncertainty(candidate: dict[str, Any]) -> float:
     return clamp(risk_part * 0.55 + compliance_part * 0.45)
 
 
-def evaluate_candidate(
-    candidate: dict[str, Any],
-    context_count: int,
-    evidence_count: int,
-) -> dict[str, Any]:
+def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_count: int) -> dict[str, Any]:
     evidence_coverage = score_evidence_coverage(candidate, context_count=context_count, evidence_count=evidence_count)
     data_confidence = score_data_confidence(candidate, context_count=context_count)
     rationale_coverage = score_rationale_coverage(candidate)
@@ -152,10 +160,7 @@ def evaluate_candidate(
     }
 
 
-def apply_evaluation_to_ranking(
-    priority_ranking: dict[str, Any],
-    evaluation_items: list[dict[str, Any]],
-) -> dict[str, Any]:
+def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_items: list[dict[str, Any]]) -> dict[str, Any]:
     evaluation_map = {int(item["process_id"]): item for item in evaluation_items if item.get("process_id") is not None}
     updated_items: list[dict[str, Any]] = []
 
@@ -165,12 +170,12 @@ def apply_evaluation_to_ranking(
         evaluation = evaluation_map.get(process_id)
         if evaluation:
             copied["agent_evaluation"] = evaluation
-            if copied.get("status") == "recommended" and evaluation.get("requires_human_review"):
-                copied["status"] = "human_review_required"
-                copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 검증 결과 Human Review가 필요하다.".strip()
             if copied.get("status") == "recommended" and evaluation.get("confidence_score", 1.0) < 0.50:
                 copied["status"] = "evidence_insufficient"
                 copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 기준 confidence가 낮아 추가 근거가 필요하다.".strip()
+            elif copied.get("status") == "recommended" and evaluation.get("requires_human_review"):
+                copied["status"] = "human_review_required"
+                copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 검증 결과 Human Review가 필요하다.".strip()
             compliance = copied.get("compliance") or {}
             if compliance.get("blocked"):
                 copied["status"] = "excluded"
@@ -211,20 +216,29 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
     ranking = state.get("priority_ranking", {}) or {}
     context_map = build_context_count_map(state.get("retrieved_contexts", {}) or {})
     evidence_map = build_evidence_count_map(state.get("evidence_items", []) or [])
+    compliance_map = build_compliance_map(
+        state.get("compliance_assessment")
+        or (state.get("risk_governance", {}) or {}).get("compliance_assessment")
+    )
 
     evaluation_items = []
+    ranking_for_evaluation = {**ranking, "items": []}
     for candidate in ranking.get("items", []):
         process_id = int(candidate.get("process_id") or 0)
+        enriched_candidate = dict(candidate)
+        if not enriched_candidate.get("compliance") and process_id in compliance_map:
+            enriched_candidate["compliance"] = compliance_map[process_id]
+        ranking_for_evaluation["items"].append(enriched_candidate)
         evaluation_items.append(
             evaluate_candidate(
-                candidate=candidate,
+                candidate=enriched_candidate,
                 context_count=context_map.get(process_id, 0),
                 evidence_count=evidence_map.get(process_id, 0),
             )
         )
 
     updated_ranking = apply_evaluation_to_ranking(
-        priority_ranking=ranking,
+        priority_ranking=ranking_for_evaluation,
         evaluation_items=evaluation_items,
     )
 
