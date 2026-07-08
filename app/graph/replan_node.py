@@ -6,8 +6,10 @@ from typing import Any
 
 from app.agents.tool_guard import assert_tools_allowed
 from app.company_bootstrap.idempotency import upsert_source_documents
+from app.company_bootstrap.public_web_search import discover_public_web_sources
 from app.company_bootstrap.source_discovery import discover_official_sources
 from app.company_bootstrap.url_loader import load_official_url
+from app.core.config import get_settings
 from app.db.crud import save_analysis_result, write_audit_log
 from app.db.database import SessionLocal
 from app.ingestion.service import index_single_document
@@ -34,6 +36,7 @@ def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
                 "issues": evaluation.get("issues", []),
                 "suggested_actions": [
                     "관련 공식 URL 자동 탐색 및 수집",
+                    "옵션 활성화 시 public web search 기반 보조 출처 탐색",
                     "업무 매뉴얼 또는 내부 규정 문서 업로드",
                     "해당 업무 owner 인터뷰 메모 추가",
                     "RAG 재색인 후 재평가",
@@ -77,20 +80,60 @@ def official_seed_urls(state: AXPlannerState) -> tuple[list[str], set[str]]:
     return deduped, existing_urls
 
 
-def collect_discovered_sources(state: AXPlannerState, max_total: int = 3) -> dict[str, Any]:
-    company_id = int(state["company_id"])
-    seed_urls, existing_urls = official_seed_urls(state)
-    if not seed_urls:
-        return {"discovered": [], "loaded": [], "created_documents": 0, "updated_documents": 0, "indexed_chunks": 0, "warnings": ["No official seed URL available for discovery."]}
+def replan_query_terms(state: AXPlannerState, replan_items: list[dict[str, Any]]) -> list[str]:
+    terms: list[str] = []
+    for item in replan_items:
+        for key in ("process_name", "candidate_agent_name"):
+            value = item.get(key)
+            if value:
+                terms.append(str(value))
+        terms.extend(str(value) for value in item.get("requery_terms", []) if value)
+    company = state.get("company_profile", {}) or {}
+    if company.get("name"):
+        terms.append(str(company["name"]))
+    seen = set()
+    deduped = []
+    for term in terms:
+        normalized = term.strip()
+        if not normalized or normalized.lower() in seen:
+            continue
+        seen.add(normalized.lower())
+        deduped.append(normalized)
+    return deduped[:12]
 
-    discovered = discover_official_sources(seed_urls=seed_urls, existing_urls=existing_urls, max_total=max_total)
-    loaded_docs = []
+
+def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[str, Any]], max_total: int = 3) -> dict[str, Any]:
+    settings = get_settings()
+    company_id = int(state["company_id"])
+    company_name = str((state.get("company_profile", {}) or {}).get("name") or "")
+    seed_urls, existing_urls = official_seed_urls(state)
     warnings: list[str] = []
-    for item in discovered:
+
+    official_discovered = []
+    if seed_urls:
+        official_discovered = discover_official_sources(seed_urls=seed_urls, existing_urls=existing_urls, max_total=max_total)
+    else:
+        warnings.append("No official seed URL available for same-domain discovery.")
+
+    public_search = discover_public_web_sources(
+        company_name=company_name,
+        query_terms=replan_query_terms(state, replan_items),
+        existing_urls=existing_urls,
+        max_results=settings.external_web_max_results,
+    )
+
+    urls_to_load: list[dict[str, str]] = []
+    for item in official_discovered:
+        urls_to_load.append({"url": item.url, "source_kind": "same_domain_official", "reason": item.reason})
+    for item in public_search.get("results", []):
+        urls_to_load.append({"url": str(item.get("url")), "source_kind": "external_public_web", "reason": str(item.get("provider", "public_web_search"))})
+
+    loaded_docs = []
+    for item in urls_to_load:
         try:
-            loaded_docs.append(load_official_url(item.url))
+            loaded_docs.append(load_official_url(item["url"]))
         except Exception as exc:
-            warnings.append(f"공식 URL 자동 수집 실패: {item.url} ({type(exc).__name__}: {exc})")
+            warnings.append(f"URL 자동 수집 실패: {item['url']} ({type(exc).__name__}: {exc})")
 
     created_count = 0
     updated_count = 0
@@ -109,13 +152,14 @@ def collect_discovered_sources(state: AXPlannerState, max_total: int = 3) -> dic
                 indexed_chunks += index_single_document(db=db, document=document, reset_existing=True)
 
     return {
-        "discovered": [item.to_dict() for item in discovered],
+        "same_domain_discovered": [item.to_dict() for item in official_discovered],
+        "public_web_search": public_search,
         "loaded": [{"url": doc.url, "title": doc.title} for doc in loaded_docs],
         "document_ids": document_ids,
         "created_documents": created_count,
         "updated_documents": updated_count,
         "indexed_chunks": indexed_chunks,
-        "warnings": warnings,
+        "warnings": [*warnings, *public_search.get("warnings", [])],
     }
 
 
@@ -141,14 +185,14 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
         )
         attempts = int(state.get("replan_attempts", 0) or 0) + 1
         replan_items = build_replan_items(state)
-        source_collection = collect_discovered_sources(state, max_total=3)
+        source_collection = collect_discovered_sources(state, replan_items=replan_items, max_total=3)
         replan_request = {
             "attempt": attempts,
-            "mode": "official_url_discovery_plus_rag_requery",
+            "mode": "official_domain_plus_opt_in_public_web_discovery",
             "reason": "Agent Evaluator가 일부 후보의 근거 coverage 또는 confidence 부족을 감지했다.",
             "items": replan_items,
             "source_collection": source_collection,
-            "note": "현재 graph는 같은 공식 도메인의 sitemap/link 기반 추가 URL을 최대 3개 자동 수집하고 RAG에 색인한다. 내부 문서 업로드나 인터뷰 메모는 Human Review/API 입력이 필요하다.",
+            "note": "동일 공식 도메인의 sitemap/link 기반 URL을 자동 수집한다. EXTERNAL_WEB_DISCOVERY_ENABLED=true이면 Brave/SerpAPI 기반 public web search 결과도 보조 출처로 수집한다. 내부 문서 업로드나 인터뷰 메모는 Human Review/API 입력이 필요하다.",
         }
 
         with SessionLocal() as db:
@@ -166,7 +210,8 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                 payload={
                     "attempt": attempts,
                     "replan_item_count": len(replan_items),
-                    "discovered_url_count": len(source_collection.get("discovered", [])),
+                    "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
+                    "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
                     "indexed_chunks": source_collection.get("indexed_chunks", 0),
                 },
             )
@@ -181,7 +226,8 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                 payload={
                     "attempt": attempts,
                     "replan_item_count": len(replan_items),
-                    "discovered_url_count": len(source_collection.get("discovered", [])),
+                    "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
+                    "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
                     "indexed_chunks": source_collection.get("indexed_chunks", 0),
                 },
             ),
