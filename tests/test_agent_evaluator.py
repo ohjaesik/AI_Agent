@@ -33,6 +33,44 @@ def test_agent_evaluator_downgrades_low_evidence_recommended_candidate():
     assert updated["agent_evaluation"]["requires_additional_evidence"] is True
 
 
+def test_zero_evidence_coverage_is_evidence_insufficient_even_with_rationale():
+    state = {
+        "priority_ranking": {
+            "items": [
+                {
+                    "process_id": 3,
+                    "candidate_agent_name": "No Tool Output Agent",
+                    "status": "recommended",
+                    "final_score": 4.0,
+                    "saving_rate": 60.0,
+                    "risk_score": 1,
+                    "data_accessibility": 4,
+                    "discovery_metadata": {"evidence_labels": []},
+                    "score_rationale": {
+                        "expected_effect": "ok",
+                        "repeatability": "ok",
+                        "document_dependency": "ok",
+                        "data_accessibility": "ok",
+                        "tech_feasibility": "ok",
+                        "risk_score": "ok",
+                    },
+                    "compliance": {},
+                }
+            ],
+            "summary": {"total_candidates": 1},
+        },
+        "retrieved_contexts": {"3": []},
+        "evidence_items": [],
+    }
+
+    result = evaluate_agent_outputs(state)
+    updated = result["updated_priority_ranking"]["items"][0]
+
+    assert updated["status"] == "evidence_insufficient"
+    assert updated["agent_evaluation"]["zero_evidence_coverage"] is True
+    assert updated["agent_evaluation"]["requires_additional_evidence"] is True
+
+
 def test_agent_evaluator_respects_compliance_human_review_requirement():
     state = {
         "priority_ranking": {
