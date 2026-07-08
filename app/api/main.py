@@ -8,8 +8,9 @@ from typing import Any
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.company_bootstrap.service import bootstrap_company
 from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
 from app.main import run_demo
@@ -18,6 +19,16 @@ from app.rag.retriever import search_similar_chunks
 from app.tools.review_applier import apply_human_review_to_ranking
 
 app = FastAPI(title="AX Delivery Planner API", version="0.1.0")
+
+
+class CompanyBootstrapRequest(BaseModel):
+    company_name: str
+    official_urls: list[str] = Field(default_factory=list)
+    dart_api_key: str | None = None
+    corp_code: str | None = None
+    stock_code: str | None = None
+    create_project: bool = True
+    index: bool = True
 
 
 class ReviewApplyRequest(BaseModel):
@@ -38,6 +49,25 @@ def home() -> str:
 @app.get("/ui", response_class=HTMLResponse)
 def ui() -> str:
     return TEST_UI_HTML
+
+
+@app.post("/companies/bootstrap")
+def bootstrap_company_endpoint(request: CompanyBootstrapRequest) -> dict[str, Any]:
+    try:
+        with SessionLocal() as db:
+            result = bootstrap_company(
+                db=db,
+                company_name=request.company_name,
+                official_urls=request.official_urls,
+                dart_api_key=request.dart_api_key,
+                corp_code=request.corp_code,
+                stock_code=request.stock_code,
+                create_project=request.create_project,
+                index=request.index,
+            )
+        return {"status": "ok", "result": result.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Company bootstrap failed: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/documents/ingest")
@@ -198,7 +228,16 @@ TEST_UI_HTML = """
   <h1>AX Delivery Planner Test UI</h1>
 
   <section>
-    <h2>1. 문서 업로드 + RAG 색인</h2>
+    <h2>1. 회사명 기반 DB 생성</h2>
+    <label>Company Name</label>
+    <input id="bootstrapCompanyName" type="text" value="삼성전자" style="width: 300px" />
+    <label>Official URL</label>
+    <input id="officialUrl" type="text" placeholder="https://..." style="width: 640px" />
+    <button onclick="bootstrapCompany()">Bootstrap Company</button>
+  </section>
+
+  <section>
+    <h2>2. 문서 업로드 + RAG 색인</h2>
     <label>Company ID</label>
     <input id="companyId" type="number" value="1" />
     <label>Process ID(optional)</label>
@@ -209,14 +248,14 @@ TEST_UI_HTML = """
   </section>
 
   <section>
-    <h2>2. RAG 검색 확인</h2>
+    <h2>3. RAG 검색 확인</h2>
     <label>Query</label>
     <input id="ragQuery" type="text" value="SOP 검색 작업표준서" style="width: 420px" />
     <button onclick="ragSearch()">Search RAG</button>
   </section>
 
   <section>
-    <h2>3. 분석 실행</h2>
+    <h2>4. 분석 실행</h2>
     <label>Project ID(optional)</label>
     <input id="projectId" type="number" placeholder="optional" />
     <button onclick="runAnalysis()">Run Analysis</button>
@@ -230,6 +269,28 @@ TEST_UI_HTML = """
 <script>
 function show(data) {
   document.getElementById('output').textContent = JSON.stringify(data, null, 2);
+}
+
+async function bootstrapCompany() {
+  const companyName = document.getElementById('bootstrapCompanyName').value;
+  const officialUrl = document.getElementById('officialUrl').value;
+  const body = {
+    company_name: companyName,
+    official_urls: officialUrl ? [officialUrl] : [],
+    create_project: true,
+    index: true
+  };
+  const res = await fetch('/companies/bootstrap', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  show(data);
+  if (data.status === 'ok') {
+    document.getElementById('companyId').value = data.result.company_id;
+    if (data.result.project_id) document.getElementById('projectId').value = data.result.project_id;
+  }
 }
 
 async function ingest() {
