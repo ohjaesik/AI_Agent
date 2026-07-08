@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     s3_secret_access_key: str | None = Field(default=None, alias="S3_SECRET_ACCESS_KEY")
     s3_region_name: str = Field(default="ap-northeast-2", alias="S3_REGION_NAME")
 
+    # Agent tool isolation. direct=normal Python call, docker=run declared command tools in a restricted Docker container.
+    agent_tool_sandbox_mode: str = Field(default="direct", alias="AGENT_TOOL_SANDBOX_MODE")
+    agent_tool_sandbox_image: str = Field(default="python:3.12-slim", alias="AGENT_TOOL_SANDBOX_IMAGE")
+    agent_tool_sandbox_timeout_seconds: int = Field(default=30, alias="AGENT_TOOL_SANDBOX_TIMEOUT_SECONDS")
+    agent_tool_sandbox_network: str = Field(default="none", alias="AGENT_TOOL_SANDBOX_NETWORK")
+
     # App
     app_env: str = Field(default="local", alias="APP_ENV")
 
