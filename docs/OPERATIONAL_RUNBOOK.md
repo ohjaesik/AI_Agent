@@ -78,6 +78,12 @@ Docker mode는 다음 제한을 적용한다.
 - cap-drop ALL
 - no-new-privileges
 
+추가로 command allowlist/denylist를 적용한다.
+
+- 허용: python, python3, python3.10, python3.11, python3.12, pytest
+- 차단: bash, sh, curl, wget, ssh, scp, nc, docker, kubectl, rm, mv, chmod, chown, sudo
+- 차단 인자: --privileged, --network=host, --cap-add, --volume, -v, --mount
+
 주의: 모든 Python 함수형 node가 컨테이너에서 실행되는 것은 아니다. command-style tool은 sandbox를 거치며, 일반 node는 runtime tool permission guard를 통해 권한을 검사한다.
 
 ## 5. Bootstrap 실행
@@ -135,7 +141,7 @@ Replan Loop는 다음 조건에서 실행된다.
 - Agent Evaluator의 `additional_evidence_required_count > 0`
 - `replan_attempts < 1`
 
-수행 내용:
+기본 수행 내용:
 
 - 기존 공식 URL의 같은 도메인에서 sitemap/link 기반 후보 URL 탐색
 - ESG, governance, compliance, business, investor, report, policy 등 키워드 기반 URL 선별
@@ -144,11 +150,31 @@ Replan Loop는 다음 조건에서 실행된다.
 - RAG chunk 재색인
 - retrieve_context 재실행
 
+옵션으로 public web search를 켤 수 있다.
+
+```env
+EXTERNAL_WEB_DISCOVERY_ENABLED=true
+EXTERNAL_WEB_SEARCH_PROVIDER=brave
+BRAVE_SEARCH_API_KEY=<SET_KEY>
+EXTERNAL_WEB_MAX_RESULTS=3
+```
+
+또는:
+
+```env
+EXTERNAL_WEB_DISCOVERY_ENABLED=true
+EXTERNAL_WEB_SEARCH_PROVIDER=serpapi
+SERPAPI_API_KEY=<SET_KEY>
+EXTERNAL_WEB_MAX_RESULTS=3
+```
+
+Public web discovery는 Brave/SerpAPI 결과를 보조 출처로 사용한다. 소셜 도메인과 중복 URL은 제외하고, 결과 URL은 RAG에 색인되며 `replan_request.source_collection.public_web_search`에 기록된다.
+
 한계:
 
-- 검색엔진 기반 외부 탐색은 하지 않음
-- 다른 도메인으로 이동하지 않음
-- 내부 문서 업로드는 자동화하지 않음
+- 검색엔진 기반 결과는 opt-in이다
+- 검색 결과 품질은 provider/API 품질에 의존한다
+- 내부 문서 업로드는 자동화하지 않는다
 
 ## 8. LLM Critic 장애 대응
 
@@ -171,7 +197,39 @@ fallback이 반복되면 다음을 확인한다.
 curl http://localhost:8000/v1/models
 ```
 
-## 9. 보고서 검토
+## 9. Observability
+
+운영 compose에는 Prometheus와 Grafana가 포함된다.
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+접속:
+
+- API: `http://localhost:8001`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000`
+
+Grafana 기본 계정은 `.env`의 값을 사용한다.
+
+```env
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=admin
+```
+
+Prometheus scrape 대상:
+
+```text
+api:8001/metrics
+```
+
+기본 alert rule:
+
+- 5분 동안 5xx error rate 5% 초과
+- 5분 평균 latency 10초 초과
+
+## 10. 보고서 검토
 
 보고서에 포함되어야 하는 핵심 섹션:
 
@@ -192,7 +250,7 @@ Agent Evaluation 섹션에서 확인할 항목:
 - Human Review 여부
 - 추가 근거 필요 여부
 
-## 10. CI
+## 11. CI
 
 GitHub Actions는 다음을 수행한다.
 
@@ -207,11 +265,9 @@ CI가 실패하면 우선 테스트 로그에서 다음 순서로 본다.
 3. preflight DB/env 오류
 4. sandbox command allowlist 오류
 
-## 11. 운영 전 남은 선택 과제
+## 12. 운영 전 남은 선택 과제
 
-- 100개 이상 Agent 품질 평가셋 확대
+- 함수형 node까지 worker/container 기반으로 완전 분리
 - 운영용 React/Vue wizard UI
-- 검색엔진 기반 공용 웹 탐색을 별도 opt-in tool로 추가
-- 함수형 node까지 worker/container 기반으로 분리
-- Prometheus/Grafana dashboard와 alert rule
+- 100개 이상 Agent 품질 평가셋 확대
 - 한국 AI 기본법 조항별 법령 원문 mapping
