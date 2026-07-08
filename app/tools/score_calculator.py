@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 
+DISCOVERY_BONUS_MAX = 0.35
+
+
 def safe_int(value: Any, default: int = 3) -> int:
     if value is None:
         return default
@@ -61,6 +64,35 @@ def calculate_priority_score(
     return round(score, 2)
 
 
+def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> float:
+    if not discovery_metadata:
+        return 0.0
+
+    bonus = 0.0
+
+    if discovery_metadata.get("discovery_mode") == "llm_company_process_discovery":
+        bonus += 0.12
+
+    evidence_labels = discovery_metadata.get("evidence_labels") or []
+    if evidence_labels:
+        bonus += min(len(evidence_labels), 3) * 0.04
+
+    suitability_rationale = str(discovery_metadata.get("suitability_rationale") or "").strip()
+    if suitability_rationale:
+        bonus += 0.08
+
+    score_rationale = discovery_metadata.get("score_rationale") or {}
+    if isinstance(score_rationale, dict):
+        meaningful_rationales = [value for value in score_rationale.values() if str(value).strip()]
+        if len(meaningful_rationales) >= 3:
+            bonus += 0.07
+
+    if discovery_metadata.get("discovery_mode") == "template_fallback":
+        bonus -= 0.08
+
+    return round(max(0.0, min(bonus, DISCOVERY_BONUS_MAX)), 2)
+
+
 def determine_candidate_status(
     risk_score: int,
     data_accessibility: int,
@@ -93,25 +125,30 @@ def build_status_reason(
     data_accessibility: int,
     saving_rate: float,
     risk_flags: list[str] | None = None,
+    discovery_metadata: dict[str, Any] | None = None,
+    discovery_bonus: float = 0.0,
 ) -> str:
     risk_flags = risk_flags or []
+    discovery_metadata = discovery_metadata or {}
+    suitability_rationale = str(discovery_metadata.get("suitability_rationale") or "").strip()
 
     if status == "excluded":
-        return "위험도가 매우 높거나 MVP 범위에서 제외해야 하는 업무이다."
+        base_reason = "위험도가 매우 높거나 MVP 범위에서 제외해야 하는 업무이다."
+    elif status == "human_review_required":
+        base_reason = "위험도 4 이상 업무이므로 Human Review 후 PoC 착수 여부를 결정해야 한다."
+    elif status == "data_preparation_required":
+        base_reason = "데이터 접근성이 낮아 데이터 정비와 접근권한 확인을 선행해야 한다."
+    elif status == "low_roi":
+        base_reason = "예상 절감률이 낮아 우선순위에서 후순위로 배치한다."
+    elif risk_flags and risk_flags != ["standard_review"]:
+        base_reason = "추천 가능하지만 보안·거버넌스 통제 조건을 함께 적용해야 한다."
+    else:
+        base_reason = "기대효과, 데이터 접근성, 구현 가능성, 위험도를 종합했을 때 PoC 후보로 적합하다."
 
-    if status == "human_review_required":
-        return "위험도 4 이상 업무이므로 Human Review 후 PoC 착수 여부를 결정해야 한다."
+    if suitability_rationale:
+        return f"{base_reason} Discovery 근거: {suitability_rationale} Discovery bonus={discovery_bonus}."
 
-    if status == "data_preparation_required":
-        return "데이터 접근성이 낮아 데이터 정비와 접근권한 확인을 선행해야 한다."
-
-    if status == "low_roi":
-        return "예상 절감률이 낮아 우선순위에서 후순위로 배치한다."
-
-    if risk_flags and risk_flags != ["standard_review"]:
-        return "추천 가능하지만 보안·거버넌스 통제 조건을 함께 적용해야 한다."
-
-    return "기대효과, 데이터 접근성, 구현 가능성, 위험도를 종합했을 때 PoC 후보로 적합하다."
+    return base_reason
 
 
 def build_roi_map(roi_cost: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
@@ -162,8 +199,9 @@ def rank_agent_candidates(
         user_acceptance = safe_int(process.get("user_acceptance"), 3)
         risk_score = safe_int(process.get("risk_score"), 3)
         implementation_cost_score = safe_int(process.get("implementation_cost_score"), 3)
+        discovery_metadata = process.get("discovery_metadata") or {}
 
-        final_score = calculate_priority_score(
+        base_score = calculate_priority_score(
             expected_effect=expected_effect,
             data_accessibility=data_accessibility,
             repeatability=repeatability,
@@ -172,6 +210,8 @@ def rank_agent_candidates(
             risk_score=risk_score,
             implementation_cost_score=implementation_cost_score,
         )
+        discovery_bonus = calculate_discovery_bonus(discovery_metadata)
+        final_score = round(base_score + discovery_bonus, 2)
 
         roi_item = roi_map.get(process_id, {})
         risk_item = risk_map.get(process_id, {})
@@ -192,6 +232,8 @@ def rank_agent_candidates(
             data_accessibility=data_accessibility,
             saving_rate=saving_rate,
             risk_flags=risk_flags,
+            discovery_metadata=discovery_metadata,
+            discovery_bonus=discovery_bonus,
         )
 
         candidates.append(
@@ -208,12 +250,17 @@ def rank_agent_candidates(
                 "user_acceptance": user_acceptance,
                 "risk_score": risk_score,
                 "implementation_cost_score": implementation_cost_score,
+                "base_score": base_score,
+                "discovery_bonus": discovery_bonus,
                 "final_score": final_score,
                 "saving_rate": saving_rate,
                 "monthly_saving": safe_int(roi_item.get("monthly_saving"), 0),
                 "risk_flags": risk_flags,
                 "status": status,
                 "reason": reason,
+                "discovery_metadata": discovery_metadata,
+                "score_rationale": discovery_metadata.get("score_rationale", {}) if isinstance(discovery_metadata, dict) else {},
+                "suitability_rationale": discovery_metadata.get("suitability_rationale") if isinstance(discovery_metadata, dict) else None,
             }
         )
 
