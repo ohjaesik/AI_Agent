@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from app.core.llm import get_embedding_model
+from app.core.llm import embed_documents_with_retry
 from app.db.models import BusinessProcess, Company, DocumentChunk, ProcessDocument
 from app.ingestion.loaders import load_document_text
 from app.rag.chunker import chunk_text
@@ -39,6 +39,8 @@ class IngestResult:
     text_length: int
     chunk_count: int
     indexed: bool
+    security_level: str
+    allowed_roles: list[str] | None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +52,8 @@ class IngestResult:
             "text_length": self.text_length,
             "chunk_count": self.chunk_count,
             "indexed": self.indexed,
+            "security_level": self.security_level,
+            "allowed_roles": self.allowed_roles,
         }
 
 
@@ -93,6 +97,8 @@ def create_process_document(
     department: str | None = None,
     security_level: str = "internal",
     contains_sensitive_info: bool | None = None,
+    source_url: str | None = None,
+    allowed_roles: list[str] | None = None,
 ) -> ProcessDocument:
     validate_company_and_process(db, company_id=company_id, process_id=process_id)
 
@@ -108,6 +114,8 @@ def create_process_document(
         department=department,
         security_level=security_level,
         contains_sensitive_info=contains_sensitive_info,
+        source_url=source_url,
+        allowed_roles=allowed_roles,
     )
 
     db.add(document)
@@ -144,6 +152,8 @@ def index_single_document(
             "department": document.department,
             "security_level": document.security_level,
             "contains_sensitive_info": document.contains_sensitive_info,
+            "source_url": getattr(document, "source_url", None),
+            "allowed_roles": getattr(document, "allowed_roles", None),
         },
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -152,12 +162,11 @@ def index_single_document(
     if not chunks:
         return 0
 
-    embeddings = get_embedding_model()
     texts = [chunk.content for chunk in chunks]
     vectors: list[list[float]] = []
 
     for text_batch in batched(texts, batch_size=batch_size):
-        vectors.extend(embeddings.embed_documents(text_batch))
+        vectors.extend(embed_documents_with_retry(text_batch))
 
     rows = []
 
@@ -198,6 +207,8 @@ def ingest_file(
     department: str | None = None,
     security_level: str = "internal",
     contains_sensitive_info: bool | None = None,
+    source_url: str | None = None,
+    allowed_roles: list[str] | None = None,
     index: bool = True,
     chunk_size: int = 800,
     chunk_overlap: int = 120,
@@ -219,6 +230,8 @@ def ingest_file(
         department=department,
         security_level=security_level,
         contains_sensitive_info=contains_sensitive_info,
+        source_url=source_url,
+        allowed_roles=allowed_roles,
     )
 
     chunk_count = 0
@@ -230,7 +243,6 @@ def ingest_file(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             batch_size=batch_size,
-            reset_existing=True,
         )
 
     return IngestResult(
@@ -242,4 +254,6 @@ def ingest_file(
         text_length=len(content),
         chunk_count=chunk_count,
         indexed=index,
+        security_level=document.security_level,
+        allowed_roles=document.allowed_roles,
     )
