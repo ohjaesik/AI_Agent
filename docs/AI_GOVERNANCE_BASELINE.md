@@ -37,6 +37,8 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 | Risk & Governance Agent | 위험·고영향·민감정보 평가 | prohibited-use screening, high-impact screening |
 | Priority & Delivery Agent | 우선순위·Human Review·PoC·보고서 | Human Review gate, transparency disclosure, citation validation |
 
+추가로 `Agent Evaluator / Critic`은 별도 10번째 실행 노드로 두되, 9개 업무 Agent 체계에 대한 검증·통제 layer로 취급한다. 이 노드는 후보를 새로 생성하지 않고 기존 Agent 출력의 근거 coverage, confidence, compliance alignment를 재검증한다.
+
 ## 4. Supervisor Graph 실행 구조
 
 현재 시스템은 두 개의 Supervisor Graph로 분리된다.
@@ -79,6 +81,7 @@ START
   ├─ automation_feasibility → roi_cost
   └─ risk_governance → compliance_assessment
 → priority_ranking
+→ agent_evaluator
 → human_review
 → poc_delivery_planner
 → report_writer
@@ -87,6 +90,26 @@ START
 ```
 
 병렬 branch가 동시에 `audit_logs`, `errors`를 갱신하므로 `AXPlannerState`에는 dedupe reducer를 적용한다.
+
+### 4.3 Agent Evaluator 기준
+
+Agent Evaluator는 다음 지표를 계산한다.
+
+| 지표 | 의미 | 활용 |
+|---|---|---|
+| confidence_score | 근거, 데이터, 점수 근거, compliance 정합성을 합산한 신뢰도 | 낮으면 Human Review 또는 추가 근거 수집 |
+| evidence_coverage | discovery evidence label, RAG context, evidence item coverage | 낮으면 evidence_insufficient |
+| data_confidence | 데이터 접근성 및 context 확보 수준 | 낮으면 데이터 준비 필요 |
+| rationale_coverage | 점수 산정 근거의 완성도 | 낮으면 Human Review 필요 |
+| compliance_alignment | compliance 상태와 ranking status의 정합성 | 충돌 시 Human Review 또는 excluded |
+| risk_uncertainty | 위험 점수와 규제 level 기반 불확실성 | confidence 감점 |
+
+정책은 다음과 같다.
+
+- `confidence_score < 0.50`: `evidence_insufficient`
+- `confidence_score < 0.75`: `human_review_required`
+- `blocked=True`: `excluded`
+- `sensitive_review` 또는 `enhanced_review`: recommended 유지 불가, Human Review 필요
 
 ## 5. Compliance levels
 
@@ -140,6 +163,7 @@ START
 - report_writer mode
 - citation validation 결과
 - compliance assessment 결과
+- Agent Evaluator confidence와 evidence coverage
 - Human Review 기록
 
 ### 6.5 Traceability
@@ -153,12 +177,15 @@ START
 - evidence_items
 - discovery_metadata
 - compliance_assessment
+- agent_evaluation
 
 ## 7. 구현 상태
 
 현재 구현된 항목:
 
 - `app/agents/registry.py`: 9개 Agent registry
+- `app/agents/evaluator.py`: Agent Evaluator / Critic confidence scoring
+- `app/graph/agent_evaluator_node.py`: LangGraph Agent Evaluator node
 - `app/company_bootstrap/state.py`: Bootstrap Supervisor Graph state
 - `app/company_bootstrap/nodes.py`: Company Profile, Source Ingestion, Process Discovery nodes
 - `app/company_bootstrap/workflow.py`: Bootstrap Supervisor Graph
@@ -166,14 +193,15 @@ START
 - `app/compliance/regulatory_policy.py`: regulatory control mapping
 - `app/compliance/assessment.py`: prohibited/high-impact/sensitive screening
 - `app/graph/compliance_node.py`: LangGraph compliance assessment node
-- `app/graph/workflow.py`: 병렬 AX Analysis Supervisor Graph 및 compliance fan-in
-- `app/graph/state.py`: 병렬 실행용 dedupe reducer
+- `app/graph/workflow.py`: 병렬 AX Analysis Supervisor Graph, compliance fan-in, agent_evaluator gate
+- `app/graph/state.py`: 병렬 실행용 dedupe reducer 및 agent_evaluation state
 - `app/tools/score_calculator.py`: compliance 결과를 ranking status/reason에 반영
+- `app/tools/report_data_builder.py`: Agent Evaluation 보고서 섹션 삽입
 - `app/tools/deterministic_report_data_builder.py`: compliance assessment 보고서 섹션 생성
 
 다음 구현 대상:
 
 - UI를 Test UI에서 실제 wizard형 화면으로 분리
 - 고위험 카테고리별 추가 질문지 및 checklist
-- 문서별 접근권한/삭제/재처리 workflow
+- Agent 품질 평가셋 확대
 - 법령 원문 기반 조항별 mapping 보강
