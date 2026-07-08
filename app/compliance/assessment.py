@@ -46,6 +46,28 @@ SENSITIVE_KEYWORDS = [
     "confidential",
 ]
 
+# 일반 검토 flag까지 sensitive_review로 끌어올리면 모든 후보가 과도하게 보수 분류된다.
+# sensitive_review는 실제 민감정보/기밀/보안 문맥 flag에만 적용한다.
+SENSITIVE_RISK_FLAGS = {
+    "contains_sensitive_keyword",
+    "sensitive_document_context",
+    "contains_personal_data",
+    "contains_confidential_data",
+    "contains_trade_secret",
+    "restricted_access_required",
+    "security_sensitive",
+}
+
+HIGH_IMPACT_RISK_FLAGS = {
+    "high_impact_ai_possible",
+    "safety_critical",
+    "legal_decision_support",
+    "employment_decision_support",
+    "financial_decision_support",
+    "medical_decision_support",
+    "critical_infrastructure",
+}
+
 KOREA_AI_BASIC_ACT_REQUIREMENTS = {
     "standard": [
         "AI 보조 산출물 고지",
@@ -105,9 +127,15 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
     sensitive_hits = find_keywords(text, SENSITIVE_KEYWORDS)
 
     risk_item = risk_item or {}
-    risk_flags = risk_item.get("flags", []) or []
-    if any(flag in risk_flags for flag in ["contains_sensitive_keyword", "sensitive_document_context"]):
-        sensitive_hits.append("risk_governance_sensitive_flag")
+    risk_flags = [str(flag) for flag in (risk_item.get("flags", []) or [])]
+    sensitive_risk_flags = sorted(set(flag for flag in risk_flags if flag in SENSITIVE_RISK_FLAGS))
+    high_impact_risk_flags = sorted(set(flag for flag in risk_flags if flag in HIGH_IMPACT_RISK_FLAGS))
+
+    for flag in sensitive_risk_flags:
+        sensitive_hits.append(flag)
+    for flag in high_impact_risk_flags:
+        if flag not in high_impact_categories:
+            high_impact_categories.append(flag)
 
     required_controls = [
         "traceability_logging",
@@ -128,12 +156,11 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
         human_review_required = True
         compliance_level = "enhanced_review"
         required_controls.extend(["high_impact_screening", "human_oversight", "data_quality_governance", "safety_reliability_management"])
-    elif sensitive_hits or risk_flags:
+    elif sensitive_hits or sensitive_risk_flags:
         human_review_required = True
         compliance_level = "sensitive_review"
         required_controls.extend(["security_privacy_controls", "human_oversight", "data_quality_governance"])
 
-    # 중복 제거
     deduped_controls = []
     for control in required_controls:
         if control not in deduped_controls:
@@ -147,9 +174,11 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
         "blocked": blocked,
         "human_review_required": human_review_required,
         "prohibited_hits": prohibited_hits,
-        "high_impact_categories": high_impact_categories,
+        "high_impact_categories": sorted(set(high_impact_categories)),
         "sensitive_hits": sorted(set(sensitive_hits)),
         "risk_flags": risk_flags,
+        "sensitive_risk_flags": sensitive_risk_flags,
+        "high_impact_risk_flags": high_impact_risk_flags,
         "required_controls": deduped_controls,
         "korea_ai_basic_act_requirements": korea_ai_basic_act_requirements_for_level(compliance_level),
     }
