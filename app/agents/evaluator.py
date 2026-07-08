@@ -159,7 +159,8 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
     confidence_threshold = 0.50 if not post_replan else 0.62
     human_review_threshold = 0.75 if not post_replan else 0.70
 
-    requires_additional_evidence = evidence_coverage < additional_evidence_threshold or confidence_score < confidence_threshold
+    zero_evidence_coverage = evidence_coverage <= 0.0
+    requires_additional_evidence = zero_evidence_coverage or evidence_coverage < additional_evidence_threshold or confidence_score < confidence_threshold
     requires_human_review = confidence_score < human_review_threshold or bool(issues) or candidate.get("status") == "human_review_required"
 
     return {
@@ -175,6 +176,7 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
         "additional_evidence_threshold": additional_evidence_threshold,
         "confidence_threshold": confidence_threshold,
         "human_review_threshold": human_review_threshold,
+        "zero_evidence_coverage": zero_evidence_coverage,
         "requires_additional_evidence": requires_additional_evidence,
         "requires_human_review": requires_human_review,
         "issues": issues,
@@ -191,9 +193,11 @@ def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_ite
         evaluation = evaluation_map.get(process_id)
         if evaluation:
             copied["agent_evaluation"] = evaluation
-            if copied.get("status") == "recommended" and evaluation.get("confidence_score", 1.0) < 0.50:
+            zero_evidence_coverage = bool(evaluation.get("zero_evidence_coverage"))
+            weak_evidence_coverage = float(evaluation.get("evidence_coverage") or 0.0) < 0.20
+            if copied.get("status") == "recommended" and (zero_evidence_coverage or weak_evidence_coverage or evaluation.get("confidence_score", 1.0) < 0.50):
                 copied["status"] = "evidence_insufficient"
-                copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 기준 confidence가 낮아 추가 근거가 필요하다.".strip()
+                copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 기준 근거 coverage가 부족해 추가 근거가 필요하다.".strip()
             elif copied.get("status") == "recommended" and evaluation.get("requires_human_review"):
                 copied["status"] = "human_review_required"
                 copied["reason"] = f"{copied.get('reason', '')} Agent Evaluator 검증 결과 Human Review가 필요하다.".strip()
