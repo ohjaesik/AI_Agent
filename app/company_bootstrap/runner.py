@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.company_bootstrap.workflow import build_bootstrap_supervisor_graph
+from app.core.config import get_settings
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,12 @@ class BootstrapGraphResult:
         }
 
 
+def resolve_dart_api_key(explicit_key: str | None) -> str | None:
+    if explicit_key:
+        return explicit_key
+    return get_settings().dart_api_key
+
+
 def run_bootstrap_supervisor_graph(
     company_name: str,
     official_urls: list[str] | None = None,
@@ -51,7 +58,7 @@ def run_bootstrap_supervisor_graph(
     initial_state = {
         "company_name": company_name,
         "official_urls": official_urls or [],
-        "dart_api_key": dart_api_key,
+        "dart_api_key": resolve_dart_api_key(dart_api_key),
         "corp_code": corp_code,
         "stock_code": stock_code,
         "create_project": create_project,
