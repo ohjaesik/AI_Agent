@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -72,6 +73,34 @@ def check_env() -> list[CheckResult]:
     return results
 
 
+def check_public_web_discovery() -> CheckResult:
+    settings = get_settings()
+    if not settings.external_web_discovery_enabled:
+        return warn("public_web_discovery", "disabled; replan uses same-domain discovery only")
+
+    provider = settings.external_web_search_provider.lower()
+    if provider == "brave":
+        return ok("public_web_discovery", "Brave Search configured") if settings.brave_search_api_key else fail("public_web_discovery", "BRAVE_SEARCH_API_KEY required when provider=brave")
+    if provider == "serpapi":
+        return ok("public_web_discovery", "SerpAPI configured") if settings.serpapi_api_key else fail("public_web_discovery", "SERPAPI_API_KEY required when provider=serpapi")
+    return fail("public_web_discovery", f"unsupported provider: {provider}")
+
+
+def check_graph_worker() -> CheckResult:
+    settings = get_settings()
+    mode = settings.graph_node_execution_mode.lower()
+    if mode == "direct":
+        return warn("graph_node_worker", "direct mode; nodes run in parent process")
+    if mode == "subprocess":
+        return ok("graph_node_worker", "subprocess mode configured")
+    if mode == "docker":
+        result = subprocess.run(["docker", "image", "inspect", settings.graph_node_worker_image], capture_output=True, text=True, timeout=10, check=False)
+        if result.returncode != 0:
+            return fail("graph_node_worker", f"docker image not found: {settings.graph_node_worker_image}. Run docker build -t {settings.graph_node_worker_image} .")
+        return ok("graph_node_worker", f"docker mode configured with image {settings.graph_node_worker_image}")
+    return fail("graph_node_worker", f"unsupported mode: {settings.graph_node_execution_mode}")
+
+
 def check_database() -> CheckResult:
     try:
         with engine.connect() as conn:
@@ -107,6 +136,8 @@ def run_preflight(include_optional: bool = True) -> dict[str, object]:
     checks.extend(check_env())
     checks.append(check_database())
     checks.append(check_sandbox())
+    checks.append(check_graph_worker())
+    checks.append(check_public_web_discovery())
     if include_optional:
         checks.append(check_vllm_endpoint())
 
