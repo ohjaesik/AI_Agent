@@ -1,6 +1,6 @@
 # AI Governance Baseline for AX Supervisor Graph
 
-본 문서는 AX Delivery Planner를 9개 Agent 기반 Supervisor Graph로 운영하기 위한 AI Governance 기준을 정리한다. 법률 자문 문서가 아니라, 개발·시연·PoC 단계에서 적용할 기술적 통제 기준이다.
+본 문서는 AX Delivery Planner를 Agent 기반 Supervisor Graph로 운영하기 위한 AI Governance 기준을 정리한다. 법률 자문 문서가 아니라, 개발·시연·PoC 단계에서 적용할 기술적 통제 기준이다.
 
 ## 1. 적용 기준
 
@@ -23,7 +23,7 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 
 따라서 기본 위험 수준은 `limited/standard`로 보되, 업무 후보에 따라 `sensitive_review`, `enhanced_review`, `blocked`로 상향한다.
 
-## 3. 9개 Agent와 통제 기준
+## 3. Agent와 통제 기준
 
 | Agent | 역할 | 주요 통제 |
 |---|---|---|
@@ -35,17 +35,15 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 | Automation Feasibility Agent | 적용 가능성·시간 절감률 판단 | assistive-only, no autonomous execution |
 | ROI & Cost Agent | ROI/비용 계산 | deterministic formula, no LLM financial guessing |
 | Risk & Governance Agent | 위험·고영향·민감정보 평가 | prohibited-use screening, high-impact screening |
+| Compliance Assessment Agent | 규제 검토 수준 산정 | blocked/sensitive/enhanced gating |
 | Priority & Delivery Agent | 우선순위·Human Review·PoC·보고서 | Human Review gate, transparency disclosure, citation validation |
+| Agent Evaluator / Critic | 후보별 confidence, evidence coverage, LLM second opinion 검증 | tool permission check, confidence gate, replan loop |
 
-추가로 `Agent Evaluator / Critic`은 별도 10번째 실행 노드로 두되, 9개 업무 Agent 체계에 대한 검증·통제 layer로 취급한다. 이 노드는 후보를 새로 생성하지 않고 기존 Agent 출력의 근거 coverage, confidence, compliance alignment를 재검증한다.
+Agent Evaluator / Critic은 후보를 새로 생성하지 않고 기존 Agent 출력의 근거 coverage, confidence, compliance alignment를 재검증한다.
 
 ## 4. Supervisor Graph 실행 구조
 
-현재 시스템은 두 개의 Supervisor Graph로 분리된다.
-
 ### 4.1 Bootstrap Supervisor Graph
-
-회사 공식자료를 수집하고 분석 DB를 만드는 준비 단계이다.
 
 ```text
 START
@@ -55,22 +53,7 @@ START
 → END
 ```
 
-각 Agent 역할은 다음과 같다.
-
-| Agent | 구현 노드 | 출력 |
-|---|---|---|
-| Company Profile Agent | `company_profile_agent` | company_id, company_profile, OpenDART 기업개황 |
-| Source Ingestion Agent | `source_ingestion_agent` | official_docs, process_documents, document_chunks, used official sources |
-| Process Discovery Agent | `process_discovery_agent` | business_processes, discovery_metadata, analysis_project |
-
-CLI와 API의 bootstrap 경로는 이 graph를 사용한다.
-
-- CLI: `python -m app.company_bootstrap.bootstrap ...`
-- API: `POST /companies/bootstrap`
-
 ### 4.2 AX Analysis Supervisor Graph
-
-Bootstrap 결과로 생성된 `project_id`, `company_id`를 기반으로 AX 후보를 분석하고 보고서를 생성한다.
 
 ```text
 START
@@ -82,7 +65,9 @@ START
   └─ risk_governance → compliance_assessment
 → priority_ranking
 → agent_evaluator
-→ human_review
+→ llm_critic
+  ├─ agent_replan → retrieve_context  # max 1회
+  └─ human_review
 → poc_delivery_planner
 → report_writer
 → docx_generator
@@ -91,9 +76,23 @@ START
 
 병렬 branch가 동시에 `audit_logs`, `errors`를 갱신하므로 `AXPlannerState`에는 dedupe reducer를 적용한다.
 
-### 4.3 Agent Evaluator 기준
+## 5. Runtime Tool Permission
 
-Agent Evaluator는 다음 지표를 계산한다.
+`app/agents/tool_guard.py`는 Agent Registry에 등록된 도구 목록과 실제 노드가 요청한 도구 목록을 비교한다.
+
+- 등록된 도구만 실행 가능
+- 등록되지 않은 도구 요청 시 `AgentToolPermissionError`
+- 현재는 sandbox가 아니라 runtime contract gate
+- 노드 실행 전 명시적 권한 확인을 통해 Agent별 권한 범위를 드러낸다
+
+예시:
+
+```text
+ROI & Cost Agent는 cost calculator/ROI formula 계열만 허용한다.
+ROI & Cost Agent가 official URL loader를 요청하면 차단한다.
+```
+
+## 6. Agent Evaluator 기준
 
 | 지표 | 의미 | 활용 |
 |---|---|---|
@@ -111,62 +110,36 @@ Agent Evaluator는 다음 지표를 계산한다.
 - `blocked=True`: `excluded`
 - `sensitive_review` 또는 `enhanced_review`: recommended 유지 불가, Human Review 필요
 
-## 5. Compliance levels
+## 7. LLM Critic
+
+LLM Critic은 Agent Evaluator 이후 second-opinion 검토를 수행한다.
+
+- 입력: candidate JSON, deterministic evaluation JSON
+- 출력: `pass`, `needs_review`, `insufficient_evidence`, `reject`
+- 외부 사실 추가 금지
+- LLM 호출 실패, JSON 파싱 실패, vLLM 미구동 시 deterministic fallback 적용
+- Critic 결과는 confidence를 제한적으로 보정하고 ranking status에 반영한다
+
+## 8. Replan Loop
+
+Replan Loop는 evidence coverage 또는 confidence가 부족한 후보가 있을 때 1회만 실행된다.
+
+- `additional_evidence_required_count > 0`이면 `agent_replan`으로 이동
+- `agent_replan`은 보완 필요 후보, 보완 action, requery terms를 생성
+- 이후 `retrieve_context`로 돌아가 기존 RAG 문서를 1회 재검색
+- 신규 공식 URL 수집이나 문서 업로드는 graph 내부 자동 실행이 아니라 Human Review/API 입력이 필요
+- 1회 재검색 후에도 부족하면 Human Review로 전환
+
+## 9. Compliance levels
 
 | Level | 의미 | 처리 |
 |---|---|---|
 | standard | 일반 AX 후보 | recommended 가능 |
 | sensitive_review | 개인정보·기밀·지식재산 등 민감 신호 | Human Review 필요 |
 | enhanced_review | 채용·금융·의료·안전 등 고영향 가능성 | Human Review 및 강화 통제 필요 |
-| blocked | 금지 또는 부적절 사용 가능성 | MVP 후보 제외 |
+| blocked | 부적절 사용 가능성 | MVP 후보 제외 |
 
-## 6. 필수 통제
-
-### 6.1 Prohibited-use screening
-
-다음 유형의 후보는 PoC 후보에서 제외하거나 별도 법무 검토 없이는 진행하지 않는다.
-
-- 사회적 점수화
-- 무차별 얼굴 인식 DB 구축
-- 취약성 악용
-- 감정 인식 기반 근로자/학생 평가
-- 범죄 예측 또는 개인 위험도 평가
-- 사용자 기만 또는 조작 목적의 AI
-
-### 6.2 High-impact screening
-
-다음 영역은 기본적으로 `enhanced_review`로 분류한다.
-
-- 채용·인사·근로자 관리
-- 금융·신용·대출·보험
-- 의료·진단·환자 관리
-- 교통·전력·수도·원전 등 핵심 인프라
-- 교육 평가·입학·성적
-- 법률·사법·공공서비스 접근
-
-### 6.3 Human oversight
-
-모든 PoC 착수는 Human Review 이후 결정한다.
-
-- reviewer_name
-- decision: approve/edit/reject
-- comment
-- edited_payload
-- review_channel
-
-### 6.4 Transparency
-
-보고서에는 다음을 표시한다.
-
-- AI 보조 산출물 상태: draft/reviewed/final
-- 사용한 근거 source와 citation label
-- report_writer mode
-- citation validation 결과
-- compliance assessment 결과
-- Agent Evaluator confidence와 evidence coverage
-- Human Review 기록
-
-### 6.5 Traceability
+## 10. Traceability
 
 다음 데이터는 저장되어야 한다.
 
@@ -178,30 +151,29 @@ Agent Evaluator는 다음 지표를 계산한다.
 - discovery_metadata
 - compliance_assessment
 - agent_evaluation
+- replan_request
+- llm_critic verdict
 
-## 7. 구현 상태
+## 11. 구현 상태
 
 현재 구현된 항목:
 
-- `app/agents/registry.py`: 9개 Agent registry
-- `app/agents/evaluator.py`: Agent Evaluator / Critic confidence scoring
+- `app/agents/registry.py`: Agent registry
+- `app/agents/tool_guard.py`: runtime tool permission guard
+- `app/agents/evaluator.py`: Agent Evaluator confidence scoring
+- `app/agents/llm_critic.py`: LLM Critic + deterministic fallback
 - `app/graph/agent_evaluator_node.py`: LangGraph Agent Evaluator node
-- `app/company_bootstrap/state.py`: Bootstrap Supervisor Graph state
-- `app/company_bootstrap/nodes.py`: Company Profile, Source Ingestion, Process Discovery nodes
+- `app/graph/llm_critic_node.py`: LangGraph LLM Critic node
+- `app/graph/replan_node.py`: 1회 RAG re-query 기반 Replan loop
+- `app/evaluation/agent_quality_eval.py`: gold set 기반 Agent 품질 평가 runner
+- `tests/data/agent_quality_gold.jsonl`: 20개 Agent 품질 평가셋
 - `app/company_bootstrap/workflow.py`: Bootstrap Supervisor Graph
-- `app/company_bootstrap/runner.py`: CLI/API용 bootstrap graph runner
-- `app/compliance/regulatory_policy.py`: regulatory control mapping
-- `app/compliance/assessment.py`: prohibited/high-impact/sensitive screening
-- `app/graph/compliance_node.py`: LangGraph compliance assessment node
-- `app/graph/workflow.py`: 병렬 AX Analysis Supervisor Graph, compliance fan-in, agent_evaluator gate
-- `app/graph/state.py`: 병렬 실행용 dedupe reducer 및 agent_evaluation state
-- `app/tools/score_calculator.py`: compliance 결과를 ranking status/reason에 반영
-- `app/tools/report_data_builder.py`: Agent Evaluation 보고서 섹션 삽입
-- `app/tools/deterministic_report_data_builder.py`: compliance assessment 보고서 섹션 생성
+- `app/graph/workflow.py`: 병렬 AX Analysis Supervisor Graph, compliance fan-in, evaluator/critic/replan gate
+- `app/tools/report_data_builder.py`: Agent Evaluation, LLM Critic, Replan 보고서 섹션 삽입
 
 다음 구현 대상:
 
 - UI를 Test UI에서 실제 wizard형 화면으로 분리
-- 고위험 카테고리별 추가 질문지 및 checklist
-- Agent 품질 평가셋 확대
+- 신규 공식 URL 자동 수집을 replan loop에 연결
+- Agent 품질 평가셋 50개 이상 확대
 - 법령 원문 기반 조항별 mapping 보강
