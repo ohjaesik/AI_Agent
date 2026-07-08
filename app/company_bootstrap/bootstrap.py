@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--init-db",
         action="store_true",
-        help="Initialize pgvector extension and create tables before bootstrapping.",
+        help="Initialize pgvector extension, create tables, and run lightweight migrations before bootstrapping.",
     )
     return parser.parse_args()
 
@@ -32,9 +32,11 @@ def parse_args() -> argparse.Namespace:
 def initialize_database() -> None:
     from app.db.create_tables import main as create_tables
     from app.db.init_pgvector import main as init_pgvector
+    from app.db.migrate_discovery_metadata import main as migrate_discovery_metadata
 
     init_pgvector()
     create_tables()
+    migrate_discovery_metadata()
 
 
 def main() -> None:
@@ -63,6 +65,7 @@ def main() -> None:
                 "Database tables are not initialized. Run:\n"
                 "  python -m app.db.init_pgvector\n"
                 "  python -m app.db.create_tables\n"
+                "  python -m app.db.migrate_discovery_metadata\n"
                 "or rerun this command with --init-db."
             ) from exc
         raise
