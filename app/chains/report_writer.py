@@ -26,11 +26,14 @@ SYSTEM_PROMPT = """
 3. 표는 생성하지 않는다. 표는 기존 deterministic report의 표를 그대로 사용한다.
 4. 반환은 JSON만 한다. markdown code fence를 쓰지 않는다.
 5. 각 heading의 paragraphs 개수는 입력된 base_sections와 동일하게 유지한다.
+6. 기업 및 산업 특성 분석 장에서는 웹페이지 원문, 메뉴명, 팝업, 제품 프로모션 문구, 검색창/장바구니/카테고리 텍스트를 절대 재현하지 않는다.
+7. 기업 및 산업 특성 분석 장은 기업 식별 정보, 산업 구분, AX 해석 포인트만 2~3문장으로 간결하게 쓴다.
 """
 
 USER_PROMPT = """
 아래 base_sections의 paragraph만 더 자연스러운 보고서 문체로 재작성하라.
 표, 순위, 수치, citation label은 제공된 근거와 tool output에 있는 것만 사용하라.
+특히 "2. 기업 및 산업 특성 분석"은 raw web text를 요약하지 말고 base section의 의도만 간결하게 유지하라.
 
 allowed_citation_labels:
 {allowed_citation_labels}
@@ -59,10 +62,42 @@ base_sections:
 }}
 """
 
+NOISE_PATTERNS = [
+    "본문 바로가기",
+    "일주일 그만보기",
+    "장바구니",
+    "검색창",
+    "검색결과",
+    "최근 본 제품",
+    "전체삭제",
+    "닫기",
+    "신청하기",
+    "카테고리",
+    "메뉴버튼",
+    "검색버튼",
+]
+
 
 def compact_json(value: Any, max_chars: int = 12000) -> str:
     text = json.dumps(value, ensure_ascii=False, default=str)
     return text if len(text) <= max_chars else text[:max_chars] + "..."
+
+
+def clean_evidence_summary(text: str, max_chars: int = 500) -> str:
+    cleaned_lines = []
+    for line in str(text or "").splitlines():
+        cleaned = " ".join(line.split()).strip()
+        if not cleaned:
+            continue
+        if any(pattern in cleaned for pattern in NOISE_PATTERNS):
+            continue
+        if len(cleaned) < 8:
+            continue
+        cleaned_lines.append(cleaned)
+        if len(" ".join(cleaned_lines)) >= max_chars:
+            break
+    result = " ".join(cleaned_lines)
+    return result[:max_chars]
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -87,10 +122,7 @@ def append_unique(labels: list[str], label: str | None) -> None:
         labels.append(str(label))
 
 
-def build_allowed_citation_labels(
-    evidence_items: list[dict[str, Any]],
-    state: dict[str, Any] | None = None,
-) -> list[str]:
+def build_allowed_citation_labels(evidence_items: list[dict[str, Any]], state: dict[str, Any] | None = None) -> list[str]:
     labels: list[str] = []
 
     for item in evidence_items:
@@ -114,20 +146,17 @@ def build_allowed_citation_labels(
 
 
 def build_evidence_context(evidence_items: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
-    sorted_items = sorted(
-        evidence_items,
-        key=lambda item: float(item.get("confidence") or 0.0),
-        reverse=True,
-    )
-
+    sorted_items = sorted(evidence_items, key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
     context = []
+
     for item in sorted_items[:limit]:
+        raw_summary = item.get("summary") or item.get("content", "")
         context.append(
             {
                 "citation_label": item.get("citation_label"),
                 "source_type": item.get("source_type"),
                 "title": item.get("title"),
-                "summary": item.get("summary") or str(item.get("content", ""))[:500],
+                "summary": clean_evidence_summary(str(raw_summary), max_chars=500),
                 "used_for": item.get("used_for", []),
                 "process_id": item.get("process_id"),
                 "confidence": item.get("confidence"),
@@ -208,9 +237,9 @@ def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
         llm = get_chat_model(temperature=0.2)
         messages = prompt.format_messages(
             allowed_citation_labels=compact_json(allowed_citation_labels, max_chars=3000),
-            company_profile=compact_json(state.get("company_profile", {}), max_chars=2000),
+            company_profile=compact_json(state.get("company_profile", {}), max_chars=1200),
             analysis_summary=compact_json(build_analysis_summary(state), max_chars=7000),
-            evidence_context=compact_json(build_evidence_context(evidence_items), max_chars=10000),
+            evidence_context=compact_json(build_evidence_context(evidence_items), max_chars=7000),
             base_sections=compact_json(build_base_sections_payload(base_report_data), max_chars=12000),
         )
 
