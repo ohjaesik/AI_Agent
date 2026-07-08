@@ -5,6 +5,7 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.graph.agent_evaluator_node import agent_evaluator_node
 from app.graph.compliance_node import compliance_assessment_node
 from app.graph.nodes import (
     automation_feasibility_node,
@@ -35,6 +36,7 @@ def build_ax_planner_graph():
     builder.add_node("risk_governance", risk_governance_node)
     builder.add_node("compliance_assessment", compliance_assessment_node)
     builder.add_node("priority_ranking", priority_ranking_node)
+    builder.add_node("agent_evaluator", agent_evaluator_node)
     builder.add_node("human_review", human_review_node)
     builder.add_node("poc_delivery_planner", poc_delivery_planner_node)
     builder.add_node("report_writer", report_writer_node)
@@ -65,8 +67,11 @@ def build_ax_planner_graph():
         "priority_ranking",
     )
 
+    # Agent Evaluator가 추천 결과의 근거 coverage, confidence, compliance alignment를 재검증한다.
+    builder.add_edge("priority_ranking", "agent_evaluator")
+
     # 의사결정 및 산출물 생성 단계
-    builder.add_edge("priority_ranking", "human_review")
+    builder.add_edge("agent_evaluator", "human_review")
     builder.add_edge("human_review", "poc_delivery_planner")
     builder.add_edge("poc_delivery_planner", "report_writer")
     builder.add_edge("report_writer", "docx_generator")
