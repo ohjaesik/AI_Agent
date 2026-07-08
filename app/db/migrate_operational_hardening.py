@@ -8,6 +8,18 @@ from app.db.database import engine
 
 
 DDL = """
+CREATE TABLE IF NOT EXISTS app_users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(100) NOT NULL,
+  password_hash TEXT NOT NULL,
+  role VARCHAR(50) NOT NULL DEFAULT 'analyst',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_app_users_username
+ON app_users (username);
+
 ALTER TABLE IF EXISTS business_processes
 ADD COLUMN IF NOT EXISTS discovery_metadata JSONB;
 
