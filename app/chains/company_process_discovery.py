@@ -65,6 +65,15 @@ Return this exact JSON shape:
       "user_acceptance": 4,
       "risk_score": 3,
       "implementation_cost_score": 3,
+      "suitability_rationale": "왜 이 업무가 AX/AI Agent 전환 후보로 적합한지 공식자료 근거와 연결해 설명 [EVIDENCE-LABEL]",
+      "score_rationale": {{
+        "expected_effect": "기대효과 점수 이유 [EVIDENCE-LABEL]",
+        "repeatability": "반복성 점수 이유 [EVIDENCE-LABEL]",
+        "document_dependency": "문서/지식 의존도 점수 이유 [EVIDENCE-LABEL]",
+        "data_accessibility": "데이터 접근성 점수 이유 [EVIDENCE-LABEL]",
+        "tech_feasibility": "구현 가능성 점수 이유 [EVIDENCE-LABEL]",
+        "risk_score": "위험도 점수 이유 [EVIDENCE-LABEL]"
+      }},
       "evidence_labels": ["[EVIDENCE-LABEL]"]
     }}
   ],
@@ -158,6 +167,32 @@ def ensure_evidence_label(text: str, labels: list[str]) -> str:
     return text
 
 
+def build_score_rationale(raw: dict[str, Any], evidence_labels: list[str]) -> dict[str, str]:
+    default_label = evidence_labels[0] if evidence_labels else ""
+    raw_rationale = raw.get("score_rationale") or {}
+    if not isinstance(raw_rationale, dict):
+        raw_rationale = {}
+
+    keys = [
+        "expected_effect",
+        "repeatability",
+        "document_dependency",
+        "data_accessibility",
+        "tech_feasibility",
+        "risk_score",
+    ]
+
+    result: dict[str, str] = {}
+
+    for key in keys:
+        text = str(raw_rationale.get(key) or "").strip()
+        if not text:
+            text = f"{key} 점수는 공식자료에서 확인되는 업무 특성과 AX 적용 가능성을 기준으로 산정했다."
+        result[key] = ensure_evidence_label(text, [default_label] if default_label else evidence_labels)
+
+    return result
+
+
 def validate_processes(
     payload: dict[str, Any],
     allowed_labels: list[str],
@@ -187,12 +222,19 @@ def validate_processes(
         candidate_agent_name = str(raw.get("candidate_agent_name") or "").strip()
         problem = str(raw.get("problem") or "").strip()
         current_workflow = str(raw.get("current_workflow") or "").strip()
+        suitability_rationale = str(raw.get("suitability_rationale") or "").strip()
 
         if not name or not candidate_agent_name or not problem:
             continue
 
         problem = ensure_evidence_label(problem, evidence_labels)
         current_workflow = ensure_evidence_label(current_workflow or problem, evidence_labels)
+        suitability_rationale = ensure_evidence_label(
+            suitability_rationale
+            or "공식자료에서 확인되는 업무 특성과 반복적 판단·문서 활용 가능성을 고려할 때 AX 전환 후보로 볼 수 있다.",
+            evidence_labels,
+        )
+        score_rationale = build_score_rationale(raw, evidence_labels)
 
         valid.append(
             {
@@ -213,6 +255,8 @@ def validate_processes(
                 "risk_score": clamp_int(raw.get("risk_score"), default=3),
                 "implementation_cost_score": clamp_int(raw.get("implementation_cost_score"), default=3),
                 "evidence_labels": evidence_labels,
+                "suitability_rationale": suitability_rationale,
+                "score_rationale": score_rationale,
                 "discovery_mode": "llm_company_process_discovery",
             }
         )
@@ -233,6 +277,15 @@ def add_fallback_metadata(
         copied = dict(process)
         copied["discovery_mode"] = "template_fallback"
         copied["discovery_warning"] = reason
+        copied["suitability_rationale"] = "공식자료 기반 Discovery Agent 실패로 template 후보를 사용했다."
+        copied["score_rationale"] = {
+            "expected_effect": "template 기본 점수 사용",
+            "repeatability": "template 기본 점수 사용",
+            "document_dependency": "template 기본 점수 사용",
+            "data_accessibility": "template 기본 점수 사용",
+            "tech_feasibility": "template 기본 점수 사용",
+            "risk_score": "template 기본 점수 사용",
+        }
         result.append(copied)
 
     return result
