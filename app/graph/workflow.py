@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.graph.agent_evaluator_node import agent_evaluator_node
 from app.graph.compliance_node import compliance_assessment_node
+from app.graph.llm_critic_node import llm_critic_node
 from app.graph.nodes import (
     automation_feasibility_node,
     data_readiness_node,
@@ -20,6 +21,7 @@ from app.graph.nodes import (
     roi_cost_node,
 )
 from app.graph.poc_node import poc_delivery_planner_node
+from app.graph.replan_node import agent_replan_node, should_replan
 from app.graph.review_node import human_review_node
 from app.graph.state import AXPlannerState
 
@@ -37,6 +39,8 @@ def build_ax_planner_graph():
     builder.add_node("compliance_assessment", compliance_assessment_node)
     builder.add_node("priority_ranking", priority_ranking_node)
     builder.add_node("agent_evaluator", agent_evaluator_node)
+    builder.add_node("llm_critic", llm_critic_node)
+    builder.add_node("agent_replan", agent_replan_node)
     builder.add_node("human_review", human_review_node)
     builder.add_node("poc_delivery_planner", poc_delivery_planner_node)
     builder.add_node("report_writer", report_writer_node)
@@ -67,11 +71,22 @@ def build_ax_planner_graph():
         "priority_ranking",
     )
 
-    # Agent Evaluator가 추천 결과의 근거 coverage, confidence, compliance alignment를 재검증한다.
+    # Agent Evaluator + LLM Critic이 추천 결과의 근거 coverage, confidence, compliance alignment를 재검증한다.
     builder.add_edge("priority_ranking", "agent_evaluator")
+    builder.add_edge("agent_evaluator", "llm_critic")
+
+    # 근거 부족 후보가 있으면 1회 RAG re-query loop를 수행하고, 그래도 부족하면 Human Review로 넘긴다.
+    builder.add_conditional_edges(
+        "llm_critic",
+        should_replan,
+        {
+            "agent_replan": "agent_replan",
+            "human_review": "human_review",
+        },
+    )
+    builder.add_edge("agent_replan", "retrieve_context")
 
     # 의사결정 및 산출물 생성 단계
-    builder.add_edge("agent_evaluator", "human_review")
     builder.add_edge("human_review", "poc_delivery_planner")
     builder.add_edge("poc_delivery_planner", "report_writer")
     builder.add_edge("report_writer", "docx_generator")
