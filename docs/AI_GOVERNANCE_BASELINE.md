@@ -39,7 +39,36 @@ AX Delivery Planner는 기본적으로 다음 성격의 시스템이다.
 
 ## 4. Supervisor Graph 실행 구조
 
-현재 Graph는 공통 입력을 로드한 뒤 독립 분석 Agent를 병렬로 실행한다.
+현재 시스템은 두 개의 Supervisor Graph로 분리된다.
+
+### 4.1 Bootstrap Supervisor Graph
+
+회사 공식자료를 수집하고 분석 DB를 만드는 준비 단계이다.
+
+```text
+START
+→ company_profile_agent
+→ source_ingestion_agent
+→ process_discovery_agent
+→ END
+```
+
+각 Agent 역할은 다음과 같다.
+
+| Agent | 구현 노드 | 출력 |
+|---|---|---|
+| Company Profile Agent | `company_profile_agent` | company_id, company_profile, OpenDART 기업개황 |
+| Source Ingestion Agent | `source_ingestion_agent` | official_docs, process_documents, document_chunks, used official sources |
+| Process Discovery Agent | `process_discovery_agent` | business_processes, discovery_metadata, analysis_project |
+
+CLI와 API의 bootstrap 경로는 이 graph를 사용한다.
+
+- CLI: `python -m app.company_bootstrap.bootstrap ...`
+- API: `POST /companies/bootstrap`
+
+### 4.2 AX Analysis Supervisor Graph
+
+Bootstrap 결과로 생성된 `project_id`, `company_id`를 기반으로 AX 후보를 분석하고 보고서를 생성한다.
 
 ```text
 START
@@ -117,8 +146,9 @@ START
 
 다음 데이터는 저장되어야 한다.
 
+- bootstrap `agent_trace`
+- analysis `audit_logs`
 - analysis_results
-- audit_logs
 - used_sources
 - evidence_items
 - discovery_metadata
@@ -129,17 +159,21 @@ START
 현재 구현된 항목:
 
 - `app/agents/registry.py`: 9개 Agent registry
+- `app/company_bootstrap/state.py`: Bootstrap Supervisor Graph state
+- `app/company_bootstrap/nodes.py`: Company Profile, Source Ingestion, Process Discovery nodes
+- `app/company_bootstrap/workflow.py`: Bootstrap Supervisor Graph
+- `app/company_bootstrap/runner.py`: CLI/API용 bootstrap graph runner
 - `app/compliance/regulatory_policy.py`: regulatory control mapping
 - `app/compliance/assessment.py`: prohibited/high-impact/sensitive screening
 - `app/graph/compliance_node.py`: LangGraph compliance assessment node
-- `app/graph/workflow.py`: 병렬 Supervisor Graph 및 compliance fan-in
+- `app/graph/workflow.py`: 병렬 AX Analysis Supervisor Graph 및 compliance fan-in
 - `app/graph/state.py`: 병렬 실행용 dedupe reducer
 - `app/tools/score_calculator.py`: compliance 결과를 ranking status/reason에 반영
 - `app/tools/deterministic_report_data_builder.py`: compliance assessment 보고서 섹션 생성
 
 다음 구현 대상:
 
-- API/UI에서 compliance 결과 표시
+- UI를 Test UI에서 실제 wizard형 화면으로 분리
 - 고위험 카테고리별 추가 질문지 및 checklist
 - 문서별 접근권한/삭제/재처리 workflow
 - 법령 원문 기반 조항별 mapping 보강
