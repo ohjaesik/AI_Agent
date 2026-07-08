@@ -13,6 +13,8 @@ from app.agents.evaluator import evaluate_agent_outputs
 from app.evaluation.agent_quality_gold_generator import build_additional_gold_cases
 
 DEFAULT_GOLD_PATH = Path("tests/data/agent_quality_gold.jsonl")
+REGRESSION_GOLD_PATH = DEFAULT_GOLD_PATH
+BLIND_HOLDOUT_GOLD_PATH = Path("tests/data/blind_holdout_gold.jsonl")
 STATUS_LABELS = ["recommended", "human_review_required", "evidence_insufficient", "excluded", "data_preparation_required", "low_roi"]
 
 
@@ -26,11 +28,28 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
     return rows
 
 
-def load_gold_cases(path: str | Path = DEFAULT_GOLD_PATH, include_generated: bool = True) -> list[dict[str, Any]]:
+def load_regression_cases(path: str | Path = REGRESSION_GOLD_PATH, include_generated: bool = True) -> list[dict[str, Any]]:
     cases = load_jsonl(path)
-    if include_generated and Path(path) == DEFAULT_GOLD_PATH:
+    if include_generated and Path(path) == REGRESSION_GOLD_PATH:
         cases.extend(build_additional_gold_cases())
     return cases
+
+
+def load_holdout_cases(path: str | Path = BLIND_HOLDOUT_GOLD_PATH) -> list[dict[str, Any]]:
+    return load_jsonl(path)
+
+
+def load_gold_cases(path: str | Path = DEFAULT_GOLD_PATH, include_generated: bool = True) -> list[dict[str, Any]]:
+    # Backward-compatible alias. This is the regression set.
+    return load_regression_cases(path, include_generated=include_generated)
+
+
+def load_dataset_cases(dataset: str, include_generated: bool = True) -> tuple[list[dict[str, Any]], str, str]:
+    if dataset == "holdout":
+        return load_holdout_cases(), "holdout", str(BLIND_HOLDOUT_GOLD_PATH)
+    if dataset == "regression":
+        return load_regression_cases(include_generated=include_generated), "regression", str(REGRESSION_GOLD_PATH)
+    raise ValueError(f"Unsupported dataset: {dataset}")
 
 
 def safe_div(numerator: float, denominator: float) -> float:
@@ -99,15 +118,7 @@ def classification_report(expected_values: list[str], predicted_values: list[str
         precision = safe_div(tp, tp + fp)
         recall = safe_div(tp, tp + fn)
         f1 = safe_div(2 * precision * recall, precision + recall)
-        per_label[label] = {
-            "precision": precision,
-            "recall": recall,
-            "f1": f1,
-            "support": support,
-            "tp": tp,
-            "fp": fp,
-            "fn": fn,
-        }
+        per_label[label] = {"precision": precision, "recall": recall, "f1": f1, "support": support, "tp": tp, "fp": fp, "fn": fn}
         weighted_precision_sum += precision * support
         weighted_recall_sum += recall * support
         weighted_f1_sum += f1 * support
@@ -139,7 +150,7 @@ def binary_report(expected_values: list[bool], predicted_values: list[bool]) -> 
     return {"precision": precision, "recall": recall, "f1": f1, "tp": tp, "fp": fp, "fn": fn, "tn": tn}
 
 
-def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
+def evaluate_cases(cases: list[dict[str, Any]], evaluation_set: str = "regression", case_source: str | None = None) -> dict[str, Any]:
     results = []
     expected_statuses: list[str] = []
     predicted_statuses: list[str] = []
@@ -165,6 +176,7 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
         review_ok = predicted_review == expected_review
         results.append(
             {
+                "evaluation_set": evaluation_set,
                 "case_id": case.get("case_id"),
                 "candidate_agent_name": case.get("candidate_agent_name"),
                 "predicted_status": predicted_status,
@@ -190,6 +202,8 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
     review_report = binary_report(expected_reviews, predicted_reviews)
 
     return {
+        "evaluation_set": evaluation_set,
+        "case_source": case_source,
         "total_cases": total,
         "status_accuracy": safe_div(status_correct, total),
         "review_gate_accuracy": safe_div(review_correct, total),
@@ -206,8 +220,9 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--gold-path", type=str, default=str(DEFAULT_GOLD_PATH))
-    parser.add_argument("--no-generated", action="store_true", help="use only the JSONL file without generated extension cases")
+    parser.add_argument("--dataset", choices=["regression", "holdout"], default="regression")
+    parser.add_argument("--gold-path", type=str, default=None, help="custom JSONL path; bypasses built-in regression/holdout selection")
+    parser.add_argument("--no-generated", action="store_true", help="for regression only: use only the seed JSONL file")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--csv", type=str, default=None, help="optional path to save per-case results as CSV")
     parser.add_argument("--markdown", type=str, default=None, help="optional path to save summary metrics as Markdown")
@@ -219,13 +234,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def quality_gate(
-    metrics: dict[str, Any],
-    min_status_accuracy: float,
-    min_review_accuracy: float,
-    min_status_macro_f1: float = 0.75,
-    min_review_f1: float = 0.90,
-) -> dict[str, Any]:
+def quality_gate(metrics: dict[str, Any], min_status_accuracy: float, min_review_accuracy: float, min_status_macro_f1: float = 0.75, min_review_f1: float = 0.90) -> dict[str, Any]:
     checks = {
         "status_accuracy": float(metrics.get("status_accuracy", 0.0)) >= min_status_accuracy,
         "review_gate_accuracy": float(metrics.get("review_gate_accuracy", 0.0)) >= min_review_accuracy,
@@ -246,6 +255,7 @@ def save_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
+        "evaluation_set",
         "case_id",
         "candidate_agent_name",
         "expected_status",
@@ -281,6 +291,8 @@ def save_markdown(path: str | Path, metrics: dict[str, Any]) -> None:
         "",
         "## Summary",
         "",
+        f"- evaluation_set: {metrics.get('evaluation_set')}",
+        f"- case_source: {metrics.get('case_source')}",
         f"- total_cases: {metrics.get('total_cases')}",
         f"- quality_gate_passed: {gate.get('passed')}",
         f"- status_accuracy: {metrics.get('status_accuracy')}",
@@ -319,18 +331,22 @@ def save_markdown(path: str | Path, metrics: dict[str, Any]) -> None:
     if metrics.get("misclassified"):
         lines.extend(["| Case ID | Agent | Expected Status | Predicted Status | Review OK |", "|---|---|---|---|---:|"])
         for item in metrics["misclassified"]:
-            lines.append(
-                f"| {item.get('case_id')} | {item.get('candidate_agent_name')} | {item.get('expected_status')} | {item.get('predicted_status')} | {item.get('review_ok')} |"
-            )
+            lines.append(f"| {item.get('case_id')} | {item.get('candidate_agent_name')} | {item.get('expected_status')} | {item.get('predicted_status')} | {item.get('review_ok')} |")
     else:
         lines.append("No misclassified cases.")
-
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def main() -> None:
     args = parse_args()
-    metrics = evaluate_cases(load_gold_cases(args.gold_path, include_generated=not args.no_generated))
+    if args.gold_path:
+        cases = load_jsonl(args.gold_path)
+        evaluation_set = "custom"
+        case_source = args.gold_path
+    else:
+        cases, evaluation_set, case_source = load_dataset_cases(args.dataset, include_generated=not args.no_generated)
+
+    metrics = evaluate_cases(cases, evaluation_set=evaluation_set, case_source=case_source)
     metrics["quality_gate"] = quality_gate(
         metrics,
         min_status_accuracy=args.min_status_accuracy,
@@ -345,6 +361,7 @@ def main() -> None:
     if args.json:
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
     else:
+        print(f"evaluation_set={metrics['evaluation_set']}")
         print(f"total_cases={metrics['total_cases']}")
         print(f"status_accuracy={metrics['status_accuracy']}")
         print(f"status_macro_f1={metrics['status_macro_f1']}")
@@ -353,7 +370,6 @@ def main() -> None:
         print(f"review_gate_f1={metrics['review_gate_f1']}")
         print(f"misclassified_count={len(metrics['misclassified'])}")
         print(f"quality_gate_passed={metrics['quality_gate']['passed']}")
-
     if args.strict and not metrics["quality_gate"]["passed"]:
         sys.exit(1)
 
