@@ -21,5 +21,6 @@ pandas
 python-docx
 pypdf
 tiktoken
+boto3
 
 pytest
