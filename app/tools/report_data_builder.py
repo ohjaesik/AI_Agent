@@ -47,13 +47,16 @@ def build_agent_registry_rows(state: dict[str, Any]) -> list[list[Any]]:
 def build_agent_evaluation_rows(state: dict[str, Any]) -> list[list[Any]]:
     rows = []
     for item in state.get("agent_evaluation", {}).get("items", []):
+        critic = item.get("llm_critic") or {}
         rows.append([
             item.get("candidate_agent_name", "-"),
             percent(item.get("confidence_score", 0)),
+            percent(item.get("critic_adjusted_confidence_score", item.get("confidence_score", 0))),
             percent(item.get("evidence_coverage", 0)),
             percent(item.get("data_confidence", 0)),
             percent(item.get("rationale_coverage", 0)),
             percent(item.get("risk_uncertainty", 0)),
+            critic.get("critic_verdict", "-"),
             "Y" if item.get("requires_human_review") else "N",
             "Y" if item.get("requires_additional_evidence") else "N",
         ])
@@ -62,51 +65,88 @@ def build_agent_evaluation_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 def build_agent_evaluation_summary_rows(state: dict[str, Any]) -> list[list[Any]]:
     summary = state.get("agent_evaluation", {}).get("summary", {})
-    return [
+    rows = [
         ["평가 후보 수", summary.get("evaluated_candidates", 0)],
         ["평균 confidence", percent(summary.get("average_confidence_score", 0))],
         ["낮은 confidence 후보", summary.get("low_confidence_count", 0)],
         ["Human Review 필요 후보", summary.get("human_review_required_count", 0)],
         ["추가 근거 필요 후보", summary.get("additional_evidence_required_count", 0)],
     ]
+    if summary.get("llm_critic_applied"):
+        rows.extend([
+            ["LLM Critic 적용", "Y"],
+            ["LLM Critic 검토 후보", summary.get("llm_critic_review_count", 0)],
+            ["LLM Critic 재검토 필요 후보", summary.get("llm_critic_needs_review_count", 0)],
+        ])
+    return rows
+
+
+def build_replan_rows(state: dict[str, Any]) -> list[list[Any]]:
+    rows = []
+    for item in state.get("replan_request", {}).get("items", []):
+        rows.append([
+            item.get("candidate_agent_name", "-"),
+            percent(item.get("confidence_score", 0)),
+            percent(item.get("evidence_coverage", 0)),
+            ", ".join(str(value) for value in item.get("suggested_actions", [])[:3]),
+        ])
+    return rows
 
 
 def build_agent_evaluation_section(state: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "heading": "8. Agent Evaluation 및 신뢰도 검증",
-        "blocks": [
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "paragraph",
+            "text": (
+                "Agent Evaluator는 우선순위 산정 이후 후보별 evidence coverage, data confidence, "
+                "점수 근거 coverage, compliance alignment, risk uncertainty를 재검증한다. "
+                "LLM Critic은 가능한 경우 second-opinion 검토를 수행하고, 실패 시 deterministic fallback을 사용한다. "
+                "confidence가 낮거나 규제·근거 정합성이 부족한 후보는 recommended 상태를 유지하지 않고 Human Review 또는 추가 근거 수집 대상으로 전환한다."
+            ),
+        },
+        {
+            "type": "table",
+            "headers": ["항목", "결과"],
+            "rows": build_agent_evaluation_summary_rows(state),
+            "font_size": 8,
+        },
+        {
+            "type": "table",
+            "headers": ["후보 Agent", "Confidence", "Critic Adjusted", "Evidence", "Data", "Rationale", "Risk Uncertainty", "Critic", "Human Review", "추가 근거"],
+            "rows": build_agent_evaluation_rows(state),
+            "font_size": 6,
+        },
+    ]
+
+    replan_rows = build_replan_rows(state)
+    if replan_rows:
+        blocks.extend([
             {
                 "type": "paragraph",
-                "text": (
-                    "Agent Evaluator는 우선순위 산정 이후 후보별 evidence coverage, data confidence, "
-                    "점수 근거 coverage, compliance alignment, risk uncertainty를 재검증한다. "
-                    "confidence가 낮거나 규제·근거 정합성이 부족한 후보는 recommended 상태를 유지하지 않고 Human Review 또는 추가 근거 수집 대상으로 전환한다."
-                ),
+                "text": "Agent Replan Loop는 evidence coverage가 낮은 후보에 대해 기존 RAG 문서를 1회 재검색하고, 추가 공식 URL·내부 문서·업무 owner 인터뷰 메모 등 보완 입력을 Human Review에 요청한다.",
             },
             {
                 "type": "table",
-                "headers": ["항목", "결과"],
-                "rows": build_agent_evaluation_summary_rows(state),
-                "font_size": 8,
-            },
-            {
-                "type": "table",
-                "headers": ["후보 Agent", "Confidence", "Evidence", "Data", "Rationale", "Risk Uncertainty", "Human Review", "추가 근거"],
-                "rows": build_agent_evaluation_rows(state),
+                "headers": ["후보 Agent", "Confidence", "Evidence", "보완 Action"],
+                "rows": replan_rows,
                 "font_size": 6,
             },
-            {
-                "type": "paragraph",
-                "text": "아래 표는 Supervisor Graph에 등록된 Agent별 역할, 허용 도구, 통제 조건을 요약한 것이다. 이를 통해 각 Agent의 목적과 권한 범위를 명시적으로 제한한다.",
-            },
-            {
-                "type": "table",
-                "headers": ["Agent", "구현 방식", "허용 도구", "통제 조건"],
-                "rows": build_agent_registry_rows(state),
-                "font_size": 6,
-            },
-        ],
-    }
+        ])
+
+    blocks.extend([
+        {
+            "type": "paragraph",
+            "text": "아래 표는 Supervisor Graph에 등록된 Agent별 역할, 허용 도구, 통제 조건을 요약한 것이다. 이를 통해 각 Agent의 목적과 권한 범위를 명시적으로 제한한다.",
+        },
+        {
+            "type": "table",
+            "headers": ["Agent", "구현 방식", "허용 도구", "통제 조건"],
+            "rows": build_agent_registry_rows(state),
+            "font_size": 6,
+        },
+    ])
+
+    return {"heading": "8. Agent Evaluation 및 신뢰도 검증", "blocks": blocks}
 
 
 def insert_agent_evaluation_section(report_data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -134,6 +174,7 @@ def insert_agent_evaluation_section(report_data: dict[str, Any], state: dict[str
     report_data["sections"] = renumber_sections(sections)
     report_data["agent_evaluation"] = state.get("agent_evaluation", {})
     report_data["agent_registry"] = state.get("agent_registry", [])
+    report_data["replan_request"] = state.get("replan_request", {})
     return report_data
 
 
