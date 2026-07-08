@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from app.company_bootstrap.service import bootstrap_company
+from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
 from app.main import run_demo
@@ -29,6 +29,8 @@ class CompanyBootstrapRequest(BaseModel):
     stock_code: str | None = None
     create_project: bool = True
     index: bool = True
+    reset_company_chunks: bool = False
+    thread_id: str = "bootstrap-supervisor-api"
 
 
 class ReviewApplyRequest(BaseModel):
@@ -54,17 +56,17 @@ def ui() -> str:
 @app.post("/companies/bootstrap")
 def bootstrap_company_endpoint(request: CompanyBootstrapRequest) -> dict[str, Any]:
     try:
-        with SessionLocal() as db:
-            result = bootstrap_company(
-                db=db,
-                company_name=request.company_name,
-                official_urls=request.official_urls,
-                dart_api_key=request.dart_api_key,
-                corp_code=request.corp_code,
-                stock_code=request.stock_code,
-                create_project=request.create_project,
-                index=request.index,
-            )
+        result = run_bootstrap_supervisor_graph(
+            company_name=request.company_name,
+            official_urls=request.official_urls,
+            dart_api_key=request.dart_api_key,
+            corp_code=request.corp_code,
+            stock_code=request.stock_code,
+            create_project=request.create_project,
+            index=request.index,
+            reset_company_chunks=request.reset_company_chunks,
+            thread_id=request.thread_id,
+        )
         return {"status": "ok", "result": result.to_dict()}
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Company bootstrap failed: {type(exc).__name__}: {exc}") from exc
@@ -193,6 +195,7 @@ def run_analysis(
             "generation": result.get("report_data", {}).get("generation", {}),
             "citation_validation": result.get("report_data", {}).get("citation_validation", {}),
             "top_candidates": result.get("priority_ranking", {}).get("items", [])[:5],
+            "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),
             "errors": result.get("errors", []),
         }
 
@@ -258,78 +261,64 @@ TEST_UI_HTML = """
     <h2>4. 분석 실행</h2>
     <label>Project ID(optional)</label>
     <input id="projectId" type="number" placeholder="optional" />
+    <label>Company ID(optional)</label>
+    <input id="analysisCompanyId" type="number" placeholder="optional" />
     <button onclick="runAnalysis()">Run Analysis</button>
   </section>
 
-  <section>
-    <h2>결과</h2>
-    <pre id="output"></pre>
-  </section>
+  <pre id="output">ready</pre>
 
 <script>
-function show(data) {
-  document.getElementById('output').textContent = JSON.stringify(data, null, 2);
-}
-
-async function bootstrapCompany() {
-  const companyName = document.getElementById('bootstrapCompanyName').value;
-  const officialUrl = document.getElementById('officialUrl').value;
-  const body = {
-    company_name: companyName,
-    official_urls: officialUrl ? [officialUrl] : [],
-    create_project: true,
-    index: true
-  };
-  const res = await fetch('/companies/bootstrap', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(body)
-  });
-  const data = await res.json();
-  show(data);
-  if (data.status === 'ok') {
-    document.getElementById('companyId').value = data.result.company_id;
-    if (data.result.project_id) document.getElementById('projectId').value = data.result.project_id;
+async function show(promise) {
+  const out = document.getElementById('output');
+  out.textContent = 'loading...';
+  try {
+    const res = await promise;
+    const data = await res.json();
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    out.textContent = String(e);
   }
 }
 
-async function ingest() {
-  const form = new FormData();
-  const companyId = document.getElementById('companyId').value;
-  const processId = document.getElementById('processId').value;
-  const file = document.getElementById('file').files[0];
-  form.append('company_id', companyId);
-  if (processId) form.append('process_id', processId);
-  if (!file) return show({error: 'file required'});
-  form.append('file', file);
-  form.append('index', 'true');
-
-  const res = await fetch('/documents/ingest', {method: 'POST', body: form});
-  show(await res.json());
+function bootstrapCompany() {
+  const companyName = document.getElementById('bootstrapCompanyName').value;
+  const officialUrl = document.getElementById('officialUrl').value;
+  show(fetch('/companies/bootstrap', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      company_name: companyName,
+      official_urls: officialUrl ? [officialUrl] : [],
+      create_project: true,
+      index: true,
+      thread_id: 'bootstrap-supervisor-ui'
+    })
+  }));
 }
 
-async function ragSearch() {
-  const companyId = document.getElementById('companyId').value;
+function ingest() {
+  const fd = new FormData();
+  fd.append('company_id', document.getElementById('companyId').value);
   const processId = document.getElementById('processId').value;
-  const query = document.getElementById('ragQuery').value;
-  const params = new URLSearchParams();
-  params.append('company_id', companyId);
-  params.append('query', query);
-  params.append('top_k', '10');
-  if (processId) params.append('process_id', processId);
-  const res = await fetch('/rag/search?' + params.toString());
-  show(await res.json());
+  if (processId) fd.append('process_id', processId);
+  fd.append('file', document.getElementById('file').files[0]);
+  show(fetch('/documents/ingest', {method:'POST', body: fd}));
 }
 
-async function runAnalysis() {
+function ragSearch() {
+  const q = encodeURIComponent(document.getElementById('ragQuery').value);
+  const companyId = document.getElementById('companyId').value;
+  show(fetch(`/rag/search?query=${q}&company_id=${companyId}`));
+}
+
+function runAnalysis() {
   const projectId = document.getElementById('projectId').value;
-  const companyId = document.getElementById('companyId').value;
-  const params = new URLSearchParams();
+  const companyId = document.getElementById('analysisCompanyId').value;
+  const params = new URLSearchParams({auto_approve: 'true'});
   if (projectId) params.append('project_id', projectId);
   if (companyId) params.append('company_id', companyId);
-  params.append('auto_approve', 'true');
-  const res = await fetch('/analysis/run?' + params.toString(), {method: 'POST'});
-  show(await res.json());
+  show(fetch(`/analysis/run?${params.toString()}`, {method:'POST'}));
 }
 </script>
 </body>
