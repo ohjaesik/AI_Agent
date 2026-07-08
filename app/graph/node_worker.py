@@ -35,6 +35,11 @@ NODE_TARGETS = {
     "docx_generator": "app.graph.nodes:docx_generator_node",
 }
 
+# LangGraph interrupt() requires runnable/checkpointer context. If this node is
+# executed in a subprocess or Docker worker, langgraph.config.get_config() is not
+# available and interrupt() fails. Keep it in the parent graph process.
+NON_WORKERIZABLE_NODES = {"human_review"}
+
 
 class NodeWorkerError(RuntimeError):
     pass
@@ -140,6 +145,9 @@ def run_node_docker(node_name: str, state: AXPlannerState, timeout_seconds: int)
 
 
 def run_node_via_worker(node_name: str, state: AXPlannerState) -> dict[str, Any]:
+    if node_name in NON_WORKERIZABLE_NODES:
+        return run_node_direct(node_name, state)
+
     settings = get_settings()
     mode = settings.graph_node_execution_mode.lower()
     if mode == "direct":
