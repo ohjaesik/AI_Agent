@@ -62,10 +62,7 @@ def ui() -> str:
 
 
 @app.post("/auth/token")
-def issue_token(
-    request: TokenRequest,
-    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> dict[str, Any]:
+def issue_token(request: TokenRequest, x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> dict[str, Any]:
     validate_api_key(x_api_key)
     token = create_access_token(user_id=request.user_id, role=request.role, expires_minutes=request.expires_minutes)
     return {"access_token": token, "token_type": "bearer", "role": request.role, "user_id": request.user_id}
@@ -123,6 +120,7 @@ def ingest_document(
                 department=department,
                 security_level=security_level,
                 allowed_roles=parsed_allowed_roles,
+                uploaded_by_user_id=access.user_id,
                 index=index,
             )
 
