@@ -4,20 +4,23 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-)
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
+
+
+class AppUser(Base):
+    __tablename__ = "app_users"
+    __table_args__ = (UniqueConstraint("username", name="uq_app_users_username"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(100), nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="analyst")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class Company(Base):
@@ -106,9 +109,7 @@ class BusinessProcess(Base):
 
 class ProcessDocument(Base):
     __tablename__ = "process_documents"
-    __table_args__ = (
-        UniqueConstraint("company_id", "document_type", "source_url", name="uq_documents_company_type_source_url"),
-    )
+    __table_args__ = (UniqueConstraint("company_id", "document_type", "source_url", name="uq_documents_company_type_source_url"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -146,11 +147,7 @@ class DocumentChunk(Base):
 
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-
-    # SQLAlchemy 내부 metadata 이름과 충돌을 피하려고 chunk_metadata로 사용한다.
     chunk_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-
-    # text-embedding-3-small 기본 차원은 1536
     embedding: Mapped[list[float]] = mapped_column(VECTOR(1536), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -164,7 +161,6 @@ class AnalysisProject(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
-
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -175,7 +171,6 @@ class AnalysisResult(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("analysis_projects.id"), nullable=False)
-
     node_name: Mapped[str] = mapped_column(String(100), nullable=False)
     result_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -186,7 +181,6 @@ class HumanReview(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("analysis_projects.id"), nullable=False)
-
     reviewer_name: Mapped[str] = mapped_column(String(100), nullable=False)
     decision: Mapped[str] = mapped_column(String(50), nullable=False)
     comment: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -199,7 +193,6 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("analysis_projects.id"), nullable=True)
-
     node_name: Mapped[str] = mapped_column(String(100), nullable=False)
     event_type: Mapped[str] = mapped_column(String(100), nullable=False)
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
