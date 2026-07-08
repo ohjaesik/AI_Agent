@@ -1,3 +1,5 @@
+import sys
+
 from app.agents.tool_guard import run_allowed_command_tool
 
 
@@ -13,7 +15,7 @@ def test_allowed_command_tool_runs_in_direct_mode(monkeypatch):
     result = run_allowed_command_tool(
         agent_id="agent_evaluator_agent",
         tool_name="agent evaluator",
-        command=["python", "-c", "print('ok')"],
+        command=[sys.executable, "-c", "print('ok')"],
         timeout_seconds=5,
     )
 
