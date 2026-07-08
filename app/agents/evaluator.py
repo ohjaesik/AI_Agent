@@ -154,10 +154,13 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
     if data_confidence < 0.50:
         issues.append("데이터 접근성 또는 RAG context가 부족하다.")
 
-    additional_evidence_threshold = 0.60 if replan_evidence_lift < 0.08 else 0.52
-    confidence_threshold = 0.50 if replan_evidence_lift < 0.08 else 0.56
+    post_replan = replan_evidence_lift >= 0.08
+    additional_evidence_threshold = 0.60 if not post_replan else 0.45
+    confidence_threshold = 0.50 if not post_replan else 0.62
+    human_review_threshold = 0.75 if not post_replan else 0.70
+
     requires_additional_evidence = evidence_coverage < additional_evidence_threshold or confidence_score < confidence_threshold
-    requires_human_review = confidence_score < 0.75 or bool(issues) or candidate.get("status") == "human_review_required"
+    requires_human_review = confidence_score < human_review_threshold or bool(issues) or candidate.get("status") == "human_review_required"
 
     return {
         "process_id": candidate.get("process_id"),
@@ -170,6 +173,8 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
         "risk_uncertainty": risk_uncertainty,
         "replan_evidence_lift": replan_evidence_lift,
         "additional_evidence_threshold": additional_evidence_threshold,
+        "confidence_threshold": confidence_threshold,
+        "human_review_threshold": human_review_threshold,
         "requires_additional_evidence": requires_additional_evidence,
         "requires_human_review": requires_human_review,
         "issues": issues,
