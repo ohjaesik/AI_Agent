@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: AX Delivery Planner
+    orgId: 1
+    folder: AX Delivery Planner
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
