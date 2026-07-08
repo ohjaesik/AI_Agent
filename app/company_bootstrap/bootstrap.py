@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 
+from sqlalchemy.exc import ProgrammingError
+
 from app.company_bootstrap.service import bootstrap_company
 from app.db.database import SessionLocal
 
@@ -19,24 +21,51 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-project", action="store_true")
     parser.add_argument("--no-index", action="store_true")
     parser.add_argument("--reset-company-chunks", action="store_true")
+    parser.add_argument(
+        "--init-db",
+        action="store_true",
+        help="Initialize pgvector extension and create tables before bootstrapping.",
+    )
     return parser.parse_args()
+
+
+def initialize_database() -> None:
+    from app.db.create_tables import main as create_tables
+    from app.db.init_pgvector import main as init_pgvector
+
+    init_pgvector()
+    create_tables()
 
 
 def main() -> None:
     args = parse_args()
 
-    with SessionLocal() as db:
-        result = bootstrap_company(
-            db=db,
-            company_name=args.company_name,
-            official_urls=args.official_url,
-            dart_api_key=args.dart_api_key,
-            corp_code=args.corp_code,
-            stock_code=args.stock_code,
-            create_project=not args.no_project,
-            index=not args.no_index,
-            reset_company_chunks=args.reset_company_chunks,
-        )
+    if args.init_db:
+        initialize_database()
+
+    try:
+        with SessionLocal() as db:
+            result = bootstrap_company(
+                db=db,
+                company_name=args.company_name,
+                official_urls=args.official_url,
+                dart_api_key=args.dart_api_key,
+                corp_code=args.corp_code,
+                stock_code=args.stock_code,
+                create_project=not args.no_project,
+                index=not args.no_index,
+                reset_company_chunks=args.reset_company_chunks,
+            )
+    except ProgrammingError as exc:
+        message = str(exc).lower()
+        if "undefinedtable" in message or "relation \"companies\" does not exist" in message:
+            raise RuntimeError(
+                "Database tables are not initialized. Run:\n"
+                "  python -m app.db.init_pgvector\n"
+                "  python -m app.db.create_tables\n"
+                "or rerun this command with --init-db."
+            ) from exc
+        raise
 
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
 
