@@ -12,14 +12,21 @@ from app.core.config import get_settings
 
 
 def run_command(command: list[str], timeout: int = 120) -> tuple[int, str, str]:
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
-    return completed.returncode, completed.stdout, completed.stderr
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+        return completed.returncode, completed.stdout, completed.stderr
+    except FileNotFoundError as exc:
+        return 127, "", f"command not found: {command[0]} ({exc})"
+    except Exception as exc:
+        return 1, "", f"{type(exc).__name__}: {exc}"
 
 
 def ensure_image(image: str, build: bool) -> dict[str, object]:
     code, stdout, stderr = run_command(["docker", "image", "inspect", image], timeout=30)
     if code == 0:
         return {"name": "docker_image", "ok": True, "message": f"image exists: {image}"}
+    if code == 127:
+        return {"name": "docker_image", "ok": False, "message": "docker CLI not found. Install Docker Desktop or use GRAPH_NODE_EXECUTION_MODE=subprocess."}
     if not build:
         return {"name": "docker_image", "ok": False, "message": f"image not found: {image}. Run with --build-image or docker build -t {image} ."}
 
