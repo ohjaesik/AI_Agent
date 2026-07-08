@@ -105,6 +105,77 @@ Holdout v2 생성 원칙:
 - confidence/evidence 값이 너무 깨끗하게 분리되지 않도록 한다.
 - 최소 30개 이상을 추가하고, 가능하면 50개 이상으로 확장한다.
 
+## External holdout builder
+
+외부 CSV를 평가용 JSONL case로 변환한다.
+
+지원 dataset type:
+
+- `online_retail`
+- `bank_marketing`
+- `credit_default`
+- `process_mining`
+
+예시:
+
+```bash
+python -m app.evaluation.external_holdout_builder \
+  --dataset-type online_retail \
+  --input data/external/online_retail.csv \
+  --case-id-prefix ext-retail \
+  --process-id-start 20000 \
+  --max-cases 30 \
+  --output-jsonl outputs/external_holdout_v2.jsonl
+```
+
+여러 데이터셋을 하나의 holdout v2로 합칠 때는 `--append`를 사용한다.
+
+```bash
+python -m app.evaluation.external_holdout_builder \
+  --dataset-type bank_marketing \
+  --input data/external/bank_marketing.csv \
+  --case-id-prefix ext-bank \
+  --process-id-start 21000 \
+  --max-cases 20 \
+  --output-jsonl outputs/external_holdout_v2.jsonl \
+  --append
+
+python -m app.evaluation.external_holdout_builder \
+  --dataset-type credit_default \
+  --input data/external/credit_default.csv \
+  --case-id-prefix ext-credit \
+  --process-id-start 22000 \
+  --max-cases 20 \
+  --output-jsonl outputs/external_holdout_v2.jsonl \
+  --append
+```
+
+생성한 외부 holdout은 custom gold path로 평가한다.
+
+```bash
+python -m app.evaluation.agent_quality_eval \
+  --gold-path outputs/external_holdout_v2.jsonl \
+  --strict \
+  --min-status-accuracy 0.85 \
+  --min-review-accuracy 0.85 \
+  --min-status-macro-f1 0.80 \
+  --min-review-f1 0.85 \
+  --json \
+  --csv outputs/agent_quality_external_holdout_v2.csv \
+  --markdown outputs/agent_quality_external_holdout_v2.md
+```
+
+Mapping summary:
+
+- Online retail 재고·주문 자동화: `recommended`
+- Online retail 고객 세분화: `human_review_required`
+- Bank marketing targeting: `human_review_required`
+- Credit risk triage: `human_review_required`
+- Automated credit rejection: `excluded`
+- 일반 process bottleneck 분석: `recommended`
+- 인사·성과·징계성 process monitoring: `human_review_required`
+- 필수 event/log/source 부족: `evidence_insufficient`
+
 ## 주요 지표
 
 - `evaluation_set`: `regression`, `holdout`, 또는 `custom`
