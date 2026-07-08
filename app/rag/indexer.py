@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.llm import get_embedding_model
+from app.core.llm import embed_documents_with_retry
 from app.db.database import SessionLocal
 from app.db.models import DocumentChunk, ProcessDocument
 from app.rag.chunker import chunk_text
@@ -64,6 +64,8 @@ def build_chunk_payloads(
                 "department": document.department,
                 "security_level": document.security_level,
                 "contains_sensitive_info": document.contains_sensitive_info,
+                "source_url": getattr(document, "source_url", None),
+                "allowed_roles": getattr(document, "allowed_roles", None),
             },
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
@@ -92,13 +94,11 @@ def embed_payloads(
         return []
 
     settings = get_settings()
-    embeddings = get_embedding_model()
-
     texts = [item["content"] for item in payloads]
     vectors: list[list[float]] = []
 
     for text_batch in batched(texts, batch_size):
-        vectors.extend(embeddings.embed_documents(text_batch))
+        vectors.extend(embed_documents_with_retry(text_batch))
 
     if len(vectors) != len(payloads):
         raise RuntimeError(
