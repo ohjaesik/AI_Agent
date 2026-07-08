@@ -5,6 +5,7 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.graph.compliance_node import compliance_assessment_node
 from app.graph.nodes import (
     automation_feasibility_node,
     data_readiness_node,
@@ -32,6 +33,7 @@ def build_ax_planner_graph():
     builder.add_node("automation_feasibility", automation_feasibility_node)
     builder.add_node("roi_cost", roi_cost_node)
     builder.add_node("risk_governance", risk_governance_node)
+    builder.add_node("compliance_assessment", compliance_assessment_node)
     builder.add_node("priority_ranking", priority_ranking_node)
     builder.add_node("human_review", human_review_node)
     builder.add_node("poc_delivery_planner", poc_delivery_planner_node)
@@ -45,7 +47,8 @@ def build_ax_planner_graph():
     builder.add_edge("data_readiness", "automation_feasibility")
     builder.add_edge("automation_feasibility", "roi_cost")
     builder.add_edge("roi_cost", "risk_governance")
-    builder.add_edge("risk_governance", "priority_ranking")
+    builder.add_edge("risk_governance", "compliance_assessment")
+    builder.add_edge("compliance_assessment", "priority_ranking")
     builder.add_edge("priority_ranking", "human_review")
     builder.add_edge("human_review", "poc_delivery_planner")
     builder.add_edge("poc_delivery_planner", "report_writer")
