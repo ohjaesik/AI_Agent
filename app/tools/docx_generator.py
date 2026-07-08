@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
-from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -20,8 +19,32 @@ COLOR_LIGHT_BLUE = "EFF6FF"
 COLOR_GRAY = "F3F4F6"
 COLOR_DARK_GRAY = "374151"
 COLOR_GREEN = "ECFDF5"
-COLOR_RED = "FEF2F2"
 COLOR_WHITE = "FFFFFF"
+
+STATUS_LABELS = {
+    "draft": "Draft for Review",
+    "reviewed": "Reviewed PoC Planning Report",
+    "final": "Final PoC Planning Report",
+}
+
+STATUS_NOTES = {
+    "draft": "본 문서는 공식 출처와 입력 데이터 기반의 검토용 자동 생성 보고서입니다.",
+    "reviewed": "본 문서는 Human Review 기록을 포함한 PoC 기획 검토 보고서입니다.",
+    "final": "본 문서는 승인된 검토 기록을 포함한 PoC 기획 최종 보고서입니다.",
+}
+
+
+def report_status(report_data: dict[str, Any]) -> str:
+    status = str(report_data.get("status") or "draft").lower()
+    return status if status in STATUS_LABELS else "draft"
+
+
+def report_status_label(report_data: dict[str, Any]) -> str:
+    return STATUS_LABELS[report_status(report_data)]
+
+
+def report_status_note(report_data: dict[str, Any]) -> str:
+    return STATUS_NOTES[report_status(report_data)]
 
 
 def set_cell_text(
@@ -34,13 +57,11 @@ def set_cell_text(
 ) -> None:
     cell.text = ""
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-
     paragraph = cell.paragraphs[0]
     paragraph.alignment = align
     paragraph.paragraph_format.space_before = Pt(1)
     paragraph.paragraph_format.space_after = Pt(1)
     paragraph.paragraph_format.line_spacing = 1.15
-
     run = paragraph.add_run("" if text is None else str(text))
     run.bold = bold
     run.font.size = Pt(font_size)
@@ -57,10 +78,8 @@ def set_cell_shading(cell, fill: str = COLOR_GRAY) -> None:
 
 
 def set_cell_border(cell, color: str = "D1D5DB", size: str = "4") -> None:
-    tc = cell._tc
-    tc_pr = tc.get_or_add_tcPr()
+    tc_pr = cell._tc.get_or_add_tcPr()
     borders = tc_pr.first_child_found_in("w:tcBorders")
-
     if borders is None:
         borders = OxmlElement("w:tcBorders")
         tc_pr.append(borders)
@@ -77,12 +96,7 @@ def set_cell_border(cell, color: str = "D1D5DB", size: str = "4") -> None:
         element.set(qn("w:color"), color)
 
 
-def set_run_font(
-    run,
-    size: int = 10,
-    bold: bool = False,
-    color: str = COLOR_NAVY,
-) -> None:
+def set_run_font(run, size: int = 10, bold: bool = False, color: str = COLOR_NAVY) -> None:
     run.font.name = FONT_NAME
     run._element.rPr.rFonts.set(qn("w:eastAsia"), FONT_NAME)
     run.font.size = Pt(size)
@@ -114,14 +128,12 @@ def configure_document_styles(doc: Document) -> None:
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), FONT_NAME)
     normal.font.size = Pt(9.5)
 
-    style_specs = [
+    for style_name, size, bold, color in [
         ("Title", 22, True, COLOR_NAVY),
         ("Heading 1", 15, True, COLOR_NAVY),
         ("Heading 2", 12, True, COLOR_DARK_GRAY),
         ("Heading 3", 10.5, True, COLOR_DARK_GRAY),
-    ]
-
-    for style_name, size, bold, color in style_specs:
+    ]:
         style = doc.styles[style_name]
         style.font.name = FONT_NAME
         style._element.rPr.rFonts.set(qn("w:eastAsia"), FONT_NAME)
@@ -132,18 +144,16 @@ def configure_document_styles(doc: Document) -> None:
 
 def add_header_footer(doc: Document, report_data: dict[str, Any]) -> None:
     company_name = report_data.get("company_name") or report_data.get("executive_summary", {}).get("company_name", "")
-
+    status_label = report_status_label(report_data)
     for section in doc.sections:
-        header = section.header
-        header_para = header.paragraphs[0]
+        header_para = section.header.paragraphs[0]
         header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         header_run = header_para.add_run(f"AX Delivery Planner | {company_name}")
         set_run_font(header_run, size=8, color="6B7280")
 
-        footer = section.footer
-        footer_para = footer.paragraphs[0]
+        footer_para = section.footer.paragraphs[0]
         footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        footer_run = footer_para.add_run("Confidential draft for AX PoC planning")
+        footer_run = footer_para.add_run(status_label)
         set_run_font(footer_run, size=8, color="9CA3AF")
 
 
@@ -157,36 +167,12 @@ def add_small_label(doc: Document, text: str) -> None:
 def add_paragraph_block(doc: Document, text: str, font_size: int = 9.5) -> None:
     if not text:
         return
-
     paragraph = doc.add_paragraph()
     paragraph.paragraph_format.line_spacing = 1.38
     paragraph.paragraph_format.space_after = Pt(7)
     paragraph.paragraph_format.first_line_indent = Cm(0.15)
-
     run = paragraph.add_run(text)
     set_run_font(run, size=font_size, color=COLOR_NAVY)
-
-
-def add_bullet(doc: Document, text: str, level: int = 0) -> None:
-    paragraph = doc.add_paragraph(style="List Bullet")
-    paragraph.paragraph_format.left_indent = Cm(0.5 + level * 0.3)
-    paragraph.paragraph_format.space_after = Pt(3)
-    run = paragraph.add_run(text)
-    set_run_font(run, size=9, color=COLOR_NAVY)
-
-
-def add_code_block(doc: Document, text: str) -> None:
-    if not text:
-        return
-
-    paragraph = doc.add_paragraph()
-    paragraph.paragraph_format.line_spacing = 1.1
-    paragraph.paragraph_format.space_after = Pt(6)
-
-    run = paragraph.add_run(text)
-    run.font.name = "Consolas"
-    run.font.size = Pt(8)
-    run.font.color.rgb = RGBColor(40, 40, 40)
 
 
 def add_table_block(
@@ -204,29 +190,20 @@ def add_table_block(
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = True
 
-    header_cells = table.rows[0].cells
-
     for idx, header in enumerate(headers):
-        set_cell_text(
-            header_cells[idx],
-            header,
-            font_size=font_size,
-            bold=True,
-            color=COLOR_WHITE,
-        )
-        set_cell_shading(header_cells[idx], header_fill)
-        set_cell_border(header_cells[idx], color=header_fill, size="6")
+        cell = table.rows[0].cells[idx]
+        set_cell_text(cell, header, font_size=font_size, bold=True, color=COLOR_WHITE)
+        set_cell_shading(cell, header_fill)
+        set_cell_border(cell, color=header_fill, size="6")
 
     for row_idx, row in enumerate(rows):
         cells = table.add_row().cells
         fill = COLOR_GRAY if row_idx % 2 == 0 else COLOR_WHITE
-
         for idx, value in enumerate(row[: len(headers)]):
             align = WD_ALIGN_PARAGRAPH.LEFT if idx in {1, 2, len(headers) - 1} else WD_ALIGN_PARAGRAPH.CENTER
             set_cell_text(cells[idx], value, font_size=font_size, align=align)
             set_cell_shading(cells[idx], fill)
             set_cell_border(cells[idx], color="E5E7EB", size="4")
-
     doc.add_paragraph()
 
 
@@ -239,6 +216,11 @@ def add_cover_page(doc: Document, report_data: dict[str, Any]) -> None:
     label_run = label.add_run("AX TRANSFORMATION ASSESSMENT")
     set_run_font(label_run, size=9, bold=True, color=COLOR_BLUE)
 
+    status = doc.add_paragraph()
+    status.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    status_run = status.add_run(report_status_label(report_data).upper())
+    set_run_font(status_run, size=8, bold=True, color="6B7280")
+
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.paragraph_format.space_before = Pt(18)
@@ -246,13 +228,9 @@ def add_cover_page(doc: Document, report_data: dict[str, Any]) -> None:
     title_run = title.add_run(report_data.get("title", "AX 전환 업무 프로세스 진단 보고서"))
     set_run_font(title_run, size=22, bold=True, color=COLOR_NAVY)
 
-    subtitle_text = report_data.get(
-        "subtitle",
-        "회사 공식자료·RAG·Agent 분석 기반 AI Agent PoC 우선순위 제안",
-    )
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    subtitle_run = subtitle.add_run(subtitle_text)
+    subtitle_run = subtitle.add_run(report_data.get("subtitle", "회사 공식자료·RAG·Agent 분석 기반 AI Agent PoC 우선순위 제안"))
     set_run_font(subtitle_run, size=11, color="4B5563")
 
     line = doc.add_paragraph()
@@ -266,33 +244,31 @@ def add_cover_page(doc: Document, report_data: dict[str, Any]) -> None:
         ("최우선 후보", report_data.get("mvp_agent", "")),
         ("작성자", report_data.get("author", "")),
         ("작성일", report_data.get("date", "")),
-        ("산출물 성격", "PoC 우선순위 진단 / Human Review 전제"),
+        ("문서 상태", report_status_label(report_data)),
+        ("산출물 성격", "AX PoC 우선순위 진단 / 실행계획 포함"),
     ]
     metadata = [(key, value) for key, value in metadata if value]
 
-    if metadata:
-        table = doc.add_table(rows=len(metadata), cols=2)
-        table.style = "Table Grid"
-        table.alignment = WD_TABLE_ALIGNMENT.CENTER
-
-        for row_idx, (key, value) in enumerate(metadata):
-            key_cell = table.rows[row_idx].cells[0]
-            value_cell = table.rows[row_idx].cells[1]
-            set_cell_text(key_cell, key, font_size=9, bold=True, color=COLOR_WHITE)
-            set_cell_shading(key_cell, COLOR_NAVY)
-            set_cell_border(key_cell, color=COLOR_NAVY, size="6")
-            set_cell_text(value_cell, value, font_size=9, align=WD_ALIGN_PARAGRAPH.LEFT)
-            set_cell_shading(value_cell, COLOR_LIGHT_BLUE if row_idx % 2 == 0 else COLOR_WHITE)
-            set_cell_border(value_cell, color="E5E7EB", size="4")
+    table = doc.add_table(rows=len(metadata), cols=2)
+    table.style = "Table Grid"
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for row_idx, (key, value) in enumerate(metadata):
+        key_cell = table.rows[row_idx].cells[0]
+        value_cell = table.rows[row_idx].cells[1]
+        set_cell_text(key_cell, key, font_size=9, bold=True, color=COLOR_WHITE)
+        set_cell_shading(key_cell, COLOR_NAVY)
+        set_cell_border(key_cell, color=COLOR_NAVY, size="6")
+        set_cell_text(value_cell, value, font_size=9, align=WD_ALIGN_PARAGRAPH.LEFT)
+        set_cell_shading(value_cell, COLOR_LIGHT_BLUE if row_idx % 2 == 0 else COLOR_WHITE)
+        set_cell_border(value_cell, color="E5E7EB", size="4")
 
     for _ in range(2):
         doc.add_paragraph()
 
     note = doc.add_paragraph()
     note.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    note_run = note.add_run("본 문서는 공식 출처와 내부 입력 데이터 기반의 자동 생성 초안입니다.")
+    note_run = note.add_run(report_status_note(report_data))
     set_run_font(note_run, size=8, color="6B7280")
-
     doc.add_page_break()
 
 
@@ -301,13 +277,11 @@ def add_metric_card(table, row: int, col: int, label: str, value: Any, fill: str
     set_cell_shading(cell, fill)
     set_cell_border(cell, color="BFDBFE", size="6")
     cell.text = ""
-
     p1 = cell.paragraphs[0]
     p1.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p1.paragraph_format.space_after = Pt(2)
     r1 = p1.add_run(label)
     set_run_font(r1, size=7, bold=True, color="6B7280")
-
     p2 = cell.add_paragraph()
     p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p2.paragraph_format.space_after = Pt(0)
@@ -318,15 +292,12 @@ def add_metric_card(table, row: int, col: int, label: str, value: Any, fill: str
 def add_executive_dashboard(doc: Document, report_data: dict[str, Any]) -> None:
     summary = report_data.get("executive_summary") or {}
     candidates = report_data.get("top_candidates") or []
-
     doc.add_heading("Executive Dashboard", level=1)
 
     intro = doc.add_paragraph()
     intro.paragraph_format.line_spacing = 1.3
     intro.paragraph_format.space_after = Pt(8)
-    intro_run = intro.add_run(
-        "분석 결과를 의사결정자가 빠르게 확인할 수 있도록 핵심 지표, 우선 후보, 근거 기반 점수 구조를 요약한다."
-    )
+    intro_run = intro.add_run("분석 결과를 의사결정자가 빠르게 확인할 수 있도록 핵심 지표, 우선 후보, 근거 기반 점수 구조를 요약한다.")
     set_run_font(intro_run, size=9.5, color=COLOR_DARK_GRAY)
 
     metrics = [
@@ -337,58 +308,33 @@ def add_executive_dashboard(doc: Document, report_data: dict[str, Any]) -> None:
         ("최우선 Agent", summary.get("top_agent")),
         ("최종 점수", summary.get("top_score")),
         ("월 예상 절감액", summary.get("top_monthly_saving")),
-        ("전체 절감률", summary.get("total_saving_rate")),
+        ("Human Review", summary.get("human_decision")),
     ]
 
     metric_table = doc.add_table(rows=2, cols=4)
     metric_table.style = "Table Grid"
     metric_table.alignment = WD_TABLE_ALIGNMENT.CENTER
-
     for idx, (label, value) in enumerate(metrics):
-        row = idx // 4
-        col = idx % 4
-        fill = COLOR_GREEN if label in {"월 예상 절감액", "전체 절감률"} else COLOR_LIGHT_BLUE
-        add_metric_card(metric_table, row, col, label, value, fill=fill)
+        fill = COLOR_GREEN if label in {"월 예상 절감액", "Human Review"} else COLOR_LIGHT_BLUE
+        add_metric_card(metric_table, idx // 4, idx % 4, label, value, fill=fill)
 
     doc.add_paragraph()
-
     if candidates:
         add_small_label(doc, "TOP 5 AI AGENT CANDIDATES")
-        rows = []
-        for item in candidates:
-            rows.append(
-                [
-                    item.get("rank"),
-                    item.get("candidate_agent_name"),
-                    item.get("final_score"),
-                    item.get("discovery_bonus"),
-                    item.get("saving_rate"),
-                    item.get("monthly_saving"),
-                    item.get("status"),
-                ]
-            )
-        add_table_block(
-            doc,
-            headers=["순위", "후보 Agent", "최종점수", "근거보정", "절감률", "월 절감액", "상태"],
-            rows=rows,
-            font_size=7,
-            header_fill=COLOR_BLUE,
-        )
-
+        rows = [[item.get("rank"), item.get("candidate_agent_name"), item.get("final_score"), item.get("discovery_bonus"), item.get("saving_rate"), item.get("monthly_saving"), item.get("status")] for item in candidates]
+        add_table_block(doc, ["순위", "후보 Agent", "최종점수", "근거보정", "절감률", "월 절감액", "상태"], rows, font_size=7, header_fill=COLOR_BLUE)
     doc.add_page_break()
 
 
 def add_table_of_contents(doc: Document, sections: list[dict[str, Any]]) -> None:
     doc.add_heading("Table of Contents", level=1)
     toc_items = ["Executive Dashboard", "Top Candidate Detail"] + [section.get("heading", "제목 없음") for section in sections] + ["References"]
-
     for idx, heading in enumerate(toc_items, start=1):
         paragraph = doc.add_paragraph()
         paragraph.paragraph_format.line_spacing = 1.25
         paragraph.paragraph_format.space_after = Pt(3)
         run = paragraph.add_run(f"{idx}. {heading}")
         set_run_font(run, size=9.5, color=COLOR_NAVY)
-
     doc.add_page_break()
 
 
@@ -396,7 +342,6 @@ def add_top_candidate_details(doc: Document, report_data: dict[str, Any]) -> Non
     candidates = report_data.get("top_candidates") or []
     if not candidates:
         return
-
     doc.add_heading("Top Candidate Detail", level=1)
 
     for item in candidates[:5]:
@@ -426,53 +371,28 @@ def add_top_candidate_details(doc: Document, report_data: dict[str, Any]) -> Non
         if item.get("problem"):
             add_small_label(doc, "문제 정의")
             add_paragraph_block(doc, item.get("problem", ""), font_size=9)
-
         if item.get("suitability_rationale"):
             add_small_label(doc, "AX 적합성 근거")
             add_paragraph_block(doc, item.get("suitability_rationale", ""), font_size=9)
-
         score_rationale = item.get("score_rationale") or {}
         if score_rationale:
             rows = [[key, value] for key, value in score_rationale.items()]
-            add_table_block(
-                doc,
-                headers=["평가 항목", "점수 근거"],
-                rows=rows,
-                font_size=7,
-                header_fill=COLOR_DARK_GRAY,
-            )
-
+            add_table_block(doc, ["평가 항목", "점수 근거"], rows, font_size=7, header_fill=COLOR_DARK_GRAY)
     doc.add_page_break()
 
 
 def add_section(doc: Document, section: dict[str, Any]) -> None:
-    heading = section.get("heading", "제목 없음")
-    doc.add_heading(heading, level=1)
-
+    doc.add_heading(section.get("heading", "제목 없음"), level=1)
     for block in section.get("blocks", []):
         block_type = block.get("type")
-
         if block_type == "paragraph":
             add_paragraph_block(doc, block.get("text", ""))
-
         elif block_type == "table":
-            add_table_block(
-                doc=doc,
-                headers=block.get("headers", []),
-                rows=block.get("rows", []),
-                font_size=block.get("font_size", 7),
-                header_fill=COLOR_NAVY,
-            )
-
+            add_table_block(doc, block.get("headers", []), block.get("rows", []), font_size=block.get("font_size", 7), header_fill=COLOR_NAVY)
         elif block_type == "code":
-            add_code_block(doc, block.get("text", ""))
-
+            add_paragraph_block(doc, block.get("text", ""), font_size=8)
         elif block_type == "page_break":
             doc.add_page_break()
-
-        elif block_type == "bullet":
-            add_bullet(doc, block.get("text", ""), level=int(block.get("level", 0)))
-
         else:
             add_paragraph_block(doc, str(block))
 
@@ -481,49 +401,30 @@ def format_reference(reference: Any, idx: int) -> str:
     if isinstance(reference, str):
         return f"[{idx}] {reference}"
 
-    source_name = reference.get("source_name") or "출처명 없음"
-    author_or_org = reference.get("author_or_org")
-    source_type = reference.get("source_type")
-    published_date = reference.get("published_date")
-    accessed_date = reference.get("accessed_date")
-    source_url = reference.get("source_url")
-    citation_label = reference.get("citation_label")
-
     parts = [f"[{idx}]"]
-
-    if citation_label:
-        parts.append(str(citation_label))
-
-    if author_or_org:
-        parts.append(str(author_or_org))
-
-    parts.append(str(source_name))
-
-    if source_type:
-        parts.append(f"({source_type})")
-
-    if published_date:
-        parts.append(f"Published: {published_date}")
-
-    if accessed_date:
-        parts.append(f"Accessed: {accessed_date}")
-
-    if source_url:
-        parts.append(str(source_url))
-
+    for key in ["citation_label", "author_or_org", "source_name"]:
+        value = reference.get(key)
+        if value:
+            parts.append(str(value))
+    if reference.get("source_type"):
+        parts.append(f"({reference.get('source_type')})")
+    if reference.get("published_date"):
+        parts.append(f"Published: {reference.get('published_date')}")
+    if reference.get("accessed_date"):
+        parts.append(f"Accessed: {reference.get('accessed_date')}")
+    if reference.get("source_url"):
+        parts.append(str(reference.get("source_url")))
     return " ".join(parts)
 
 
 def add_references(doc: Document, references: list[Any]) -> None:
     doc.add_page_break()
     doc.add_heading("References", level=1)
-
     if not references:
         paragraph = doc.add_paragraph()
         run = paragraph.add_run("사용된 참고자료가 없습니다.")
         set_run_font(run, size=9)
         return
-
     for idx, reference in enumerate(references, start=1):
         paragraph = doc.add_paragraph()
         paragraph.paragraph_format.left_indent = Cm(0.2)
@@ -532,19 +433,14 @@ def add_references(doc: Document, references: list[Any]) -> None:
         set_run_font(run, size=8.5, color=COLOR_DARK_GRAY)
 
 
-def generate_docx_report(
-    report_data: dict[str, Any],
-    output_path: str | Path,
-) -> str:
+def generate_docx_report(report_data: dict[str, Any], output_path: str | Path) -> str:
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     doc = Document()
     configure_document_styles(doc)
     add_header_footer(doc, report_data)
 
     sections = report_data.get("sections", [])
-
     add_cover_page(doc, report_data)
     add_executive_dashboard(doc, report_data)
     add_table_of_contents(doc, sections)
@@ -552,12 +448,9 @@ def generate_docx_report(
 
     for idx, section in enumerate(sections):
         add_section(doc, section)
-
         if idx < len(sections) - 1:
             doc.add_page_break()
 
     add_references(doc, report_data.get("references", []))
-
     doc.save(output_path)
-
     return str(output_path)
