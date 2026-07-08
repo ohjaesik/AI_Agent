@@ -2,8 +2,38 @@
 
 from __future__ import annotations
 
-import operator
+import json
 from typing import Annotated, Any, TypedDict
+
+
+def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in (left or []) + (right or []):
+        try:
+            key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+        except TypeError:
+            key = str(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+
+    return result
+
+
+def merge_unique_strings(left: list[str] | None, right: list[str] | None) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+
+    for item in (left or []) + (right or []):
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+
+    return result
 
 
 class AXPlannerState(TypedDict, total=False):
@@ -46,5 +76,5 @@ class AXPlannerState(TypedDict, total=False):
     report_docx_path: str
 
     # Logs. Reducers are required because several analysis agents run in parallel.
-    audit_logs: Annotated[list[dict[str, Any]], operator.add]
-    errors: Annotated[list[str], operator.add]
+    audit_logs: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    errors: Annotated[list[str], merge_unique_strings]
