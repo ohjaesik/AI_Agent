@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ax-planner-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-axplanner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-axplanner_password}
+      POSTGRES_DB: ${POSTGRES_DB:-axplanner}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ax_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-axplanner} -d ${POSTGRES_DB:-axplanner}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: ax-planner-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-axplanner}:${POSTGRES_PASSWORD:-axplanner_password}@postgres:5432/${POSTGRES_DB:-axplanner}
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./outputs:/app/outputs
+    command: ["python", "-m", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8001"]
+
+volumes:
+  ax_pgdata:
