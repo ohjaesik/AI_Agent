@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.agents.evaluator import evaluate_agent_outputs
+from app.evaluation.agent_quality_gold_generator import build_additional_gold_cases
 
 DEFAULT_GOLD_PATH = Path("tests/data/agent_quality_gold.jsonl")
 STATUS_LABELS = ["recommended", "human_review_required", "evidence_insufficient", "excluded", "data_preparation_required", "low_roi"]
@@ -23,6 +24,13 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
             if line:
                 rows.append(json.loads(line))
     return rows
+
+
+def load_gold_cases(path: str | Path = DEFAULT_GOLD_PATH, include_generated: bool = True) -> list[dict[str, Any]]:
+    cases = load_jsonl(path)
+    if include_generated and Path(path) == DEFAULT_GOLD_PATH:
+        cases.extend(build_additional_gold_cases())
+    return cases
 
 
 def safe_div(numerator: float, denominator: float) -> float:
@@ -211,6 +219,7 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--gold-path", type=str, default=str(DEFAULT_GOLD_PATH))
+    parser.add_argument("--no-generated", action="store_true", help="use only the JSONL file without generated extension cases")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--csv", type=str, default=None, help="optional path to save per-case results as CSV")
     parser.add_argument("--min-status-accuracy", type=float, default=0.80)
@@ -272,7 +281,7 @@ def save_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
 
 def main() -> None:
     args = parse_args()
-    metrics = evaluate_cases(load_jsonl(args.gold_path))
+    metrics = evaluate_cases(load_gold_cases(args.gold_path, include_generated=not args.no_generated))
     metrics["quality_gate"] = quality_gate(
         metrics,
         min_status_accuracy=args.min_status_accuracy,
