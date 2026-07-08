@@ -11,7 +11,6 @@ DISCOVERY_BONUS_MAX = 0.35
 def safe_int(value: Any, default: int = 3) -> int:
     if value is None:
         return default
-
     try:
         return int(value)
     except (TypeError, ValueError):
@@ -21,7 +20,6 @@ def safe_int(value: Any, default: int = 3) -> int:
 def safe_float(value: Any, default: float = 0.0) -> float:
     if value is None:
         return default
-
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -41,16 +39,6 @@ def calculate_priority_score(
     risk_score: int,
     implementation_cost_score: int,
 ) -> float:
-    """
-    최종 AX 우선순위 점수 =
-    (기대효과 × 0.35)
-    + (데이터 접근성 × 0.20)
-    + (반복성 × 0.15)
-    + (구현 용이성 × 0.15)
-    + (현업 수용성 × 0.10)
-    - (보안/거버넌스 위험 × 0.15)
-    - (추정 구현 비용 × 0.10)
-    """
     score = (
         clamp_score(expected_effect) * 0.35
         + clamp_score(data_accessibility) * 0.20
@@ -60,7 +48,6 @@ def calculate_priority_score(
         - clamp_score(risk_score) * 0.15
         - clamp_score(implementation_cost_score) * 0.10
     )
-
     return round(score, 2)
 
 
@@ -69,7 +56,6 @@ def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> floa
         return 0.0
 
     bonus = 0.0
-
     if discovery_metadata.get("discovery_mode") == "llm_company_process_discovery":
         bonus += 0.12
 
@@ -77,8 +63,7 @@ def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> floa
     if evidence_labels:
         bonus += min(len(evidence_labels), 3) * 0.04
 
-    suitability_rationale = str(discovery_metadata.get("suitability_rationale") or "").strip()
-    if suitability_rationale:
+    if str(discovery_metadata.get("suitability_rationale") or "").strip():
         bonus += 0.08
 
     score_rationale = discovery_metadata.get("score_rationale") or {}
@@ -93,6 +78,33 @@ def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> floa
     return round(max(0.0, min(bonus, DISCOVERY_BONUS_MAX)), 2)
 
 
+def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    result: dict[int, dict[str, Any]] = {}
+    for item in (compliance_assessment or {}).get("items", []):
+        process_id = safe_int(item.get("process_id"), 0)
+        if process_id:
+            result[process_id] = item
+    return result
+
+
+def apply_compliance_status(
+    base_status: str,
+    compliance_item: dict[str, Any] | None,
+) -> str:
+    if not compliance_item:
+        return base_status
+
+    if compliance_item.get("blocked"):
+        return "excluded"
+
+    compliance_level = compliance_item.get("compliance_level")
+    if compliance_item.get("human_review_required") or compliance_level in {"enhanced_review", "sensitive_review"}:
+        if base_status == "recommended":
+            return "human_review_required"
+
+    return base_status
+
+
 def determine_candidate_status(
     risk_score: int,
     data_accessibility: int,
@@ -103,20 +115,35 @@ def determine_candidate_status(
 
     if "excluded_from_mvp" in risk_flags:
         return "excluded"
-
     if risk_score >= 5:
         return "excluded"
-
     if risk_score >= 4:
         return "human_review_required"
-
     if data_accessibility <= 2:
         return "data_preparation_required"
-
     if saving_rate < 20:
         return "low_roi"
-
     return "recommended"
+
+
+def build_compliance_reason(compliance_item: dict[str, Any] | None) -> str:
+    if not compliance_item:
+        return ""
+
+    parts = []
+    if compliance_item.get("blocked"):
+        parts.append("규제 스크리닝에서 금지 또는 부적절 사용 가능성이 탐지되어 MVP 후보에서 제외한다.")
+
+    if compliance_item.get("high_impact_categories"):
+        parts.append(f"고영향 가능성 분류: {', '.join(compliance_item.get('high_impact_categories', []))}.")
+
+    if compliance_item.get("sensitive_hits"):
+        parts.append(f"민감정보/기밀 관련 신호: {', '.join(compliance_item.get('sensitive_hits', []))}.")
+
+    if compliance_item.get("required_controls"):
+        parts.append(f"필수 통제: {', '.join(compliance_item.get('required_controls', []))}.")
+
+    return " ".join(parts)
 
 
 def build_status_reason(
@@ -127,6 +154,7 @@ def build_status_reason(
     risk_flags: list[str] | None = None,
     discovery_metadata: dict[str, Any] | None = None,
     discovery_bonus: float = 0.0,
+    compliance_item: dict[str, Any] | None = None,
 ) -> str:
     risk_flags = risk_flags or []
     discovery_metadata = discovery_metadata or {}
@@ -135,7 +163,7 @@ def build_status_reason(
     if status == "excluded":
         base_reason = "위험도가 매우 높거나 MVP 범위에서 제외해야 하는 업무이다."
     elif status == "human_review_required":
-        base_reason = "위험도 4 이상 업무이므로 Human Review 후 PoC 착수 여부를 결정해야 한다."
+        base_reason = "위험도 또는 규제 스크리닝 결과상 Human Review 후 PoC 착수 여부를 결정해야 한다."
     elif status == "data_preparation_required":
         base_reason = "데이터 접근성이 낮아 데이터 정비와 접근권한 확인을 선행해야 한다."
     elif status == "low_roi":
@@ -145,6 +173,10 @@ def build_status_reason(
     else:
         base_reason = "기대효과, 데이터 접근성, 구현 가능성, 위험도를 종합했을 때 PoC 후보로 적합하다."
 
+    compliance_reason = build_compliance_reason(compliance_item)
+    if compliance_reason:
+        base_reason = f"{base_reason} Compliance 근거: {compliance_reason}"
+
     if suitability_rationale:
         return f"{base_reason} Discovery 근거: {suitability_rationale} Discovery bonus={discovery_bonus}."
 
@@ -152,30 +184,20 @@ def build_status_reason(
 
 
 def build_roi_map(roi_cost: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
-    if not roi_cost:
-        return {}
-
     result: dict[int, dict[str, Any]] = {}
-
-    for item in roi_cost.get("items", []):
+    for item in (roi_cost or {}).get("items", []):
         process_id = safe_int(item.get("process_id"), 0)
         if process_id:
             result[process_id] = item
-
     return result
 
 
 def build_risk_map(risk_governance: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
-    if not risk_governance:
-        return {}
-
     result: dict[int, dict[str, Any]] = {}
-
-    for item in risk_governance.get("items", []):
+    for item in (risk_governance or {}).get("items", []):
         process_id = safe_int(item.get("process_id"), 0)
         if process_id:
             result[process_id] = item
-
     return result
 
 
@@ -183,15 +205,16 @@ def rank_agent_candidates(
     processes: list[dict[str, Any]],
     roi_cost: dict[str, Any] | None = None,
     risk_governance: dict[str, Any] | None = None,
+    compliance_assessment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     roi_map = build_roi_map(roi_cost)
     risk_map = build_risk_map(risk_governance)
+    compliance_map = build_compliance_map(compliance_assessment)
 
     candidates: list[dict[str, Any]] = []
 
     for process in processes:
         process_id = safe_int(process.get("id"), 0)
-
         expected_effect = safe_int(process.get("expected_effect"), 3)
         data_accessibility = safe_int(process.get("data_accessibility"), 3)
         repeatability = safe_int(process.get("repeatability"), 3)
@@ -215,6 +238,7 @@ def rank_agent_candidates(
 
         roi_item = roi_map.get(process_id, {})
         risk_item = risk_map.get(process_id, {})
+        compliance_item = compliance_map.get(process_id, {})
 
         saving_rate = safe_float(roi_item.get("saving_rate"), 0.0)
         risk_flags = risk_item.get("flags", [])
@@ -225,6 +249,7 @@ def rank_agent_candidates(
             saving_rate=saving_rate,
             risk_flags=risk_flags,
         )
+        status = apply_compliance_status(status, compliance_item)
 
         reason = build_status_reason(
             status=status,
@@ -234,6 +259,7 @@ def rank_agent_candidates(
             risk_flags=risk_flags,
             discovery_metadata=discovery_metadata,
             discovery_bonus=discovery_bonus,
+            compliance_item=compliance_item,
         )
 
         candidates.append(
@@ -261,12 +287,14 @@ def rank_agent_candidates(
                 "discovery_metadata": discovery_metadata,
                 "score_rationale": discovery_metadata.get("score_rationale", {}) if isinstance(discovery_metadata, dict) else {},
                 "suitability_rationale": discovery_metadata.get("suitability_rationale") if isinstance(discovery_metadata, dict) else None,
+                "compliance": compliance_item,
             }
         )
 
     candidates.sort(
         key=lambda item: (
             item["status"] == "recommended",
+            item["status"] == "human_review_required",
             item["final_score"],
             item["saving_rate"],
         ),
@@ -277,9 +305,7 @@ def rank_agent_candidates(
         candidate["rank"] = rank
 
     recommended = [item for item in candidates if item["status"] == "recommended"]
-    review_required = [
-        item for item in candidates if item["status"] == "human_review_required"
-    ]
+    review_required = [item for item in candidates if item["status"] == "human_review_required"]
     excluded = [item for item in candidates if item["status"] == "excluded"]
 
     return {
@@ -290,5 +316,7 @@ def rank_agent_candidates(
             "review_required_count": len(review_required),
             "excluded_count": len(excluded),
             "top_candidate": candidates[0] if candidates else None,
+            "compliance_overall_status": (compliance_assessment or {}).get("overall_status"),
+            "compliance_summary": (compliance_assessment or {}).get("summary", {}),
         },
     }
