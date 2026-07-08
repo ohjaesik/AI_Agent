@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     agent_tool_sandbox_timeout_seconds: int = Field(default=30, alias="AGENT_TOOL_SANDBOX_TIMEOUT_SECONDS")
     agent_tool_sandbox_network: str = Field(default="none", alias="AGENT_TOOL_SANDBOX_NETWORK")
 
+    # Graph node isolation. direct is default; subprocess isolates each node into a Python worker process.
+    graph_node_execution_mode: str = Field(default="direct", alias="GRAPH_NODE_EXECUTION_MODE")
+    graph_node_worker_timeout_seconds: int = Field(default=300, alias="GRAPH_NODE_WORKER_TIMEOUT_SECONDS")
+    graph_node_worker_image: str = Field(default="ax-delivery-planner:latest", alias="GRAPH_NODE_WORKER_IMAGE")
+
     # Monitoring
     prometheus_scrape_interval: str = Field(default="15s", alias="PROMETHEUS_SCRAPE_INTERVAL")
     grafana_admin_user: str = Field(default="admin", alias="GRAFANA_ADMIN_USER")
