@@ -29,8 +29,11 @@ class Settings(BaseSettings):
     # External data source secrets
     dart_api_key: str | None = Field(default=None, alias="DART_API_KEY")
 
-    # API protection. If unset, local/test mode remains open.
+    # API protection. If APP_JWT_SECRET is set, Bearer JWT is supported.
     app_api_key: str | None = Field(default=None, alias="APP_API_KEY")
+    app_jwt_secret: str | None = Field(default=None, alias="APP_JWT_SECRET")
+    app_jwt_algorithm: str = Field(default="HS256", alias="APP_JWT_ALGORITHM")
+    app_jwt_exp_minutes: int = Field(default=480, alias="APP_JWT_EXP_MINUTES")
 
     # App
     app_env: str = Field(default="local", alias="APP_ENV")
