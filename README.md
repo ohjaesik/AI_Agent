@@ -16,7 +16,9 @@
 - vLLM/Gemma 기반 보고서 문단 작성, 실패 시 deterministic fallback
 - DOCX 보고서 생성
 - 실제 문서 ingestion CLI/API
-- 추천 결과 평가 script
+- DB unique index 기반 중복 방지 migration
+- API Key 및 Bearer JWT 기반 보호 API
+- role 기반 문서 접근권한 필터링
 - FastAPI 테스트 UI
 
 ## 1. 설치
@@ -47,17 +49,20 @@ VLLM_API_KEY=EMPTY
 VLLM_MODEL=google/gemma-2-9b-it
 DART_API_KEY=OPTIONAL_OPEN_DART_KEY
 APP_API_KEY=OPTIONAL_LOCAL_API_KEY
+APP_JWT_SECRET=OPTIONAL_JWT_SECRET
+APP_JWT_ALGORITHM=HS256
+APP_JWT_EXP_MINUTES=480
 APP_ENV=local
 ```
 
-`DART_API_KEY`를 `.env`에 넣으면 CLI/API 요청에 키를 직접 넘기지 않아도 됩니다. `APP_API_KEY`를 설정하면 `/companies/bootstrap`, `/documents/ingest`, `/rag/search`, `/rag/reindex`, `/analysis/run`, `/reviews/apply-ranking`는 `X-API-Key` 헤더가 있어야 호출됩니다.
+`DART_API_KEY`를 `.env`에 넣으면 CLI/API 요청에 키를 직접 넘기지 않아도 됩니다. `APP_API_KEY`를 설정하면 보호 API는 `X-API-Key` 헤더가 있어야 호출됩니다. `APP_JWT_SECRET`을 설정하면 `Authorization: Bearer <token>` 방식도 사용할 수 있습니다.
 
 ## 3. DB 초기화
 
 ```bash
 python -m app.db.init_pgvector
 python -m app.db.create_tables
-python -m app.db.migrate_discovery_metadata
+python -m app.db.migrate_operational_hardening
 ```
 
 seed 데이터가 필요하면 다음을 추가로 실행합니다.
@@ -70,12 +75,6 @@ python -m app.db.seed --reset
 
 ```bash
 python -m app.rag.indexer --company-id 1 --reset
-```
-
-기존 DB에서 특정 회사 ID를 쓰고 있다면 해당 ID를 넣습니다.
-
-```bash
-python -m app.rag.indexer --company-id 4 --reset
 ```
 
 ## 5. CLI 분석 실행
@@ -123,16 +122,7 @@ python -m app.company_bootstrap.bootstrap \
   --official-url "https://www.samsung.com/sec/sustainability/overview/"
 ```
 
-직접 키를 넘길 수도 있지만, 터미널 로그에 남을 수 있으므로 `.env` 사용을 권장합니다.
-
-```bash
-python -m app.company_bootstrap.bootstrap \
-  --company-name "삼성전자" \
-  --stock-code "005930" \
-  --dart-api-key "$DART_API_KEY"
-```
-
-Bootstrap은 서비스 레벨 idempotency를 적용합니다. 같은 회사명, 같은 공식 URL, 같은 업무 후보명으로 재실행하면 기존 회사·문서·업무 후보를 재사용/업데이트하고, 문서 chunk는 문서 단위로 재색인합니다. 실행 결과의 `agent_trace`와 `idempotency` 필드에서 생성/업데이트 여부를 확인할 수 있습니다.
+Bootstrap은 서비스 레벨 upsert와 DB unique index를 함께 사용합니다. 같은 회사명, 같은 공식 URL, 같은 업무 후보명으로 재실행하면 기존 회사·문서·업무 후보를 재사용/업데이트하고, 문서 chunk는 문서 단위로 재색인합니다. 실행 결과의 `agent_trace`와 `idempotency` 필드에서 생성/업데이트 여부를 확인할 수 있습니다.
 
 실행 결과로 `company_id`, `project_id`, `document_ids`, `process_ids`, `chunk_count`, `workflow_mode`, `agent_trace`가 출력됩니다. 이후 바로 분석을 실행할 수 있습니다.
 
@@ -194,6 +184,22 @@ http://localhost:8001/ui
 
 ```bash
 -H "X-API-Key: $APP_API_KEY"
+-H "X-User-Role: admin"
+```
+
+JWT 토큰을 사용할 경우:
+
+```bash
+curl -X POST http://localhost:8001/auth/token \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $APP_API_KEY" \
+  -d '{"user_id":"ojaesik","role":"admin"}'
+```
+
+이후:
+
+```bash
+-H "Authorization: Bearer <access_token>"
 ```
 
 ## 9. API 사용 예시
@@ -210,23 +216,9 @@ curl http://localhost:8001/health
 curl -X POST http://localhost:8001/companies/bootstrap \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $APP_API_KEY" \
+  -H "X-User-Role: admin" \
   -d '{
     "company_name": "삼성전자",
-    "official_urls": ["https://www.samsung.com/sec/about-us/company-info/"],
-    "create_project": true,
-    "index": true
-  }'
-```
-
-OpenDART는 서버 `.env`의 `DART_API_KEY`를 우선 사용합니다.
-
-```bash
-curl -X POST http://localhost:8001/companies/bootstrap \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $APP_API_KEY" \
-  -d '{
-    "company_name": "삼성전자",
-    "stock_code": "005930",
     "official_urls": ["https://www.samsung.com/sec/about-us/company-info/"],
     "create_project": true,
     "index": true
@@ -238,9 +230,12 @@ curl -X POST http://localhost:8001/companies/bootstrap \
 ```bash
 curl -X POST http://localhost:8001/documents/ingest \
   -H "X-API-Key: $APP_API_KEY" \
+  -H "X-User-Role: manager" \
   -F "company_id=1" \
   -F "process_id=31" \
   -F "file=@./sample_docs/sop.docx" \
+  -F "security_level=confidential" \
+  -F "allowed_roles=manager,admin" \
   -F "index=true"
 ```
 
@@ -248,6 +243,7 @@ curl -X POST http://localhost:8001/documents/ingest \
 
 ```bash
 curl -H "X-API-Key: $APP_API_KEY" \
+  -H "X-User-Role: analyst" \
   "http://localhost:8001/rag/search?company_id=1&query=공식자료%20사업%20제품&top_k=10"
 ```
 
@@ -255,6 +251,7 @@ curl -H "X-API-Key: $APP_API_KEY" \
 
 ```bash
 curl -X POST -H "X-API-Key: $APP_API_KEY" \
+  -H "X-User-Role: admin" \
   "http://localhost:8001/rag/reindex?company_id=1&reset=true"
 ```
 
@@ -262,26 +259,8 @@ curl -X POST -H "X-API-Key: $APP_API_KEY" \
 
 ```bash
 curl -X POST -H "X-API-Key: $APP_API_KEY" \
+  -H "X-User-Role: manager" \
   "http://localhost:8001/analysis/run?company_id=1&auto_approve=true"
-```
-
-### Human Review 결과를 ranking에 반영
-
-```bash
-curl -X POST http://localhost:8001/reviews/apply-ranking \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: $APP_API_KEY" \
-  -d '{
-    "priority_ranking": {"items": []},
-    "human_review": {
-      "decision": "edit",
-      "edited_payload": {
-        "promote_process_ids": [31],
-        "exclude_process_ids": [34],
-        "reason_overrides": {"31": "현업 요청으로 우선 PoC"}
-      }
-    }
-  }'
 ```
 
 ## 10. 테스트
@@ -290,9 +269,17 @@ curl -X POST http://localhost:8001/reviews/apply-ranking \
 pytest
 ```
 
-현재 포함된 테스트는 citation label 정규화와 선택적 API Key guard 중심입니다.
+현재 포함된 테스트는 citation label 정규화, API Key/JWT guard, role 기반 문서 접근정책 중심입니다.
 
-## 11. 추천 결과 평가
+## 11. 배포
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+자세한 내용은 `docs/DEPLOYMENT.md`를 참고합니다.
+
+## 12. 추천 결과 평가
 
 gold file 예시:
 
