@@ -1,0 +1,55 @@
+# app/graph/compliance_node.py
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.compliance.assessment import assess_ai_compliance
+from app.db.crud import save_analysis_result, write_audit_log
+from app.db.database import SessionLocal
+from app.graph.nodes import append_audit, append_error
+from app.graph.state import AXPlannerState
+
+
+def compliance_assessment_node(state: AXPlannerState) -> dict[str, Any]:
+    node_name = "compliance_assessment"
+
+    try:
+        result = assess_ai_compliance(
+            processes=state.get("business_processes", []),
+            risk_governance=state.get("risk_governance"),
+        )
+
+        with SessionLocal() as db:
+            save_analysis_result(
+                db=db,
+                project_id=int(state["project_id"]),
+                node_name=node_name,
+                result_json=result,
+            )
+            write_audit_log(
+                db=db,
+                project_id=int(state["project_id"]),
+                node_name=node_name,
+                event_type="success",
+                payload=result.get("summary", {}),
+            )
+
+        return {
+            "compliance_assessment": result,
+            "audit_logs": append_audit(
+                state,
+                node_name,
+                "success",
+                payload={
+                    "overall_status": result.get("overall_status"),
+                    **result.get("summary", {}),
+                },
+            ),
+        }
+
+    except Exception as exc:
+        return {
+            "errors": append_error(state, node_name, exc),
+            "audit_logs": append_audit(state, node_name, "failed"),
+        }
