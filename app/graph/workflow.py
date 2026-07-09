@@ -8,113 +8,150 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.expert_executor import expert_executed_node
-from app.agents.handoff import attach_agent_flow_outputs
-from app.agents.runtime import build_agent_contract, get_agent_binding_for_node
+from app.agents.handoff import attach_agent_stage_outputs
 from app.graph.node_worker import workerized_node
 from app.graph.replan_node import should_continue_after_replan, should_replan
 from app.graph.state import AXPlannerState
 
 
-def supervisor_delegated_node(node_name: str):
-    """Wrap a LangGraph node as an Agent-to-Agent delegated task.
+AGENT_STAGE_NODES: dict[str, list[str]] = {
+    "context_evidence_agent": ["load_project_data", "retrieve_context"],
+    "process_diagnosis_agent": ["process_analyzer", "data_readiness", "automation_feasibility"],
+    "governance_compliance_agent": ["risk_governance", "compliance_assessment"],
+    "business_case_agent": ["roi_cost", "priority_ranking"],
+    "evaluation_critic_agent": ["agent_evaluator", "llm_critic"],
+    "agent_replan": ["agent_replan"],
+    "delivery_orchestration_agent": ["human_review", "poc_delivery_planner", "report_writer", "docx_generator"],
+}
 
-    The graph still executes deterministic node edges, but every node result now
-    carries explicit Supervisor delegation, Agent package, and handoff metadata so
-    the runtime trace reads as Agent -> Agent flow instead of bare node chaining.
+AGENT_STAGE_TO_AGENT_ID: dict[str, str] = {
+    "context_evidence_agent": "context_evidence_agent",
+    "process_diagnosis_agent": "process_diagnosis_agent",
+    "governance_compliance_agent": "governance_compliance_agent",
+    "business_case_agent": "business_case_agent",
+    "evaluation_critic_agent": "evaluation_critic_agent",
+    "agent_replan": "evaluation_critic_agent",
+    "delivery_orchestration_agent": "delivery_orchestration_agent",
+}
+
+
+def merge_stage_result(accumulator: dict[str, Any], node_result: dict[str, Any]) -> dict[str, Any]:
+    """Merge internal node outputs inside an Agent-stage node.
+
+    LangGraph reducers merge across graph nodes, but here several old nodes run
+    inside one Agent node. Preserve list-like trace fields instead of replacing
+    them with the last internal node's value.
     """
-    node_runner = expert_executed_node(node_name, workerized_node(node_name))
-    binding = get_agent_binding_for_node(node_name) or {}
-    contract = build_agent_contract(node_name) or {}
-    agent_id = str(binding.get("agent_id") or contract.get("agent_id") or "unknown_agent")
+    merged = dict(accumulator)
+    list_keys = {
+        "audit_logs",
+        "errors",
+        "agent_contracts",
+        "agent_tool_calls",
+        "agent_decisions",
+        "agent_loop_iterations",
+        "agent_loop_requests",
+        "agent_supervisor_steps",
+        "agent_handoffs",
+    }
+    for key, value in node_result.items():
+        if key in list_keys:
+            merged[key] = list(merged.get(key, [])) + list(value or [])
+        else:
+            merged[key] = value
+    return merged
 
-    def _node(state: dict[str, Any]) -> dict[str, Any]:
-        result = node_runner(state)
-        return attach_agent_flow_outputs(
+
+def latest_loop_index(result: dict[str, Any]) -> int | None:
+    iterations = result.get("agent_loop_iterations") or []
+    if not iterations:
+        return None
+    return iterations[-1].get("loop_index")
+
+
+def expert_agent_stage(stage_name: str):
+    """Create one LangGraph node for one Expert Agent.
+
+    The top-level graph now moves by Agent stage. Each Agent stage runs the old
+    tool-level nodes it owns, produces a package, then hands it off to the next
+    Agent stage through explicit metadata.
+    """
+    internal_nodes = AGENT_STAGE_NODES[stage_name]
+    agent_id = AGENT_STAGE_TO_AGENT_ID[stage_name]
+    internal_runners = [
+        (node_name, expert_executed_node(node_name, workerized_node(node_name)))
+        for node_name in internal_nodes
+    ]
+
+    def _agent_node(state: dict[str, Any]) -> dict[str, Any]:
+        stage_state = dict(state)
+        stage_result: dict[str, Any] = {}
+        executed_nodes: list[str] = []
+
+        for node_name, runner in internal_runners:
+            node_result = runner(stage_state)
+            stage_result = merge_stage_result(stage_result, node_result)
+            stage_state = {**stage_state, **node_result}
+            executed_nodes.append(node_name)
+
+        return attach_agent_stage_outputs(
             state=state,
-            result=result,
+            result=stage_result,
             agent_id=agent_id,
-            node_name=node_name,
-            contract=contract,
-            loop_index=(result.get("agent_loop_iterations") or [{}])[-1].get("loop_index"),
+            stage_name=stage_name,
+            executed_nodes=executed_nodes,
+            loop_index=latest_loop_index(stage_result),
         )
 
-    _node.__name__ = f"supervisor_delegated_{node_name}"
-    return _node
+    _agent_node.__name__ = f"agent_stage_{stage_name}"
+    return _agent_node
 
 
 def build_ax_planner_graph():
     builder = StateGraph(AXPlannerState)
 
-    builder.add_node("load_project_data", supervisor_delegated_node("load_project_data"))
-    builder.add_node("retrieve_context", supervisor_delegated_node("retrieve_context"))
-    builder.add_node("process_analyzer", supervisor_delegated_node("process_analyzer"))
-    builder.add_node("data_readiness", supervisor_delegated_node("data_readiness"))
-    builder.add_node("automation_feasibility", supervisor_delegated_node("automation_feasibility"))
-    builder.add_node("roi_cost", supervisor_delegated_node("roi_cost"))
-    builder.add_node("risk_governance", supervisor_delegated_node("risk_governance"))
-    builder.add_node("compliance_assessment", supervisor_delegated_node("compliance_assessment"))
-    builder.add_node("priority_ranking", supervisor_delegated_node("priority_ranking"))
-    builder.add_node("agent_evaluator", supervisor_delegated_node("agent_evaluator"))
-    builder.add_node("llm_critic", supervisor_delegated_node("llm_critic"))
-    builder.add_node("agent_replan", supervisor_delegated_node("agent_replan"))
-    builder.add_node("human_review", supervisor_delegated_node("human_review"))
-    builder.add_node("poc_delivery_planner", supervisor_delegated_node("poc_delivery_planner"))
-    builder.add_node("report_writer", supervisor_delegated_node("report_writer"))
-    builder.add_node("docx_generator", supervisor_delegated_node("docx_generator"))
+    builder.add_node("context_evidence_agent", expert_agent_stage("context_evidence_agent"))
+    builder.add_node("process_diagnosis_agent", expert_agent_stage("process_diagnosis_agent"))
+    builder.add_node("governance_compliance_agent", expert_agent_stage("governance_compliance_agent"))
+    builder.add_node("business_case_agent", expert_agent_stage("business_case_agent"))
+    builder.add_node("evaluation_critic_agent", expert_agent_stage("evaluation_critic_agent"))
+    builder.add_node("agent_replan", expert_agent_stage("agent_replan"))
+    builder.add_node("delivery_orchestration_agent", expert_agent_stage("delivery_orchestration_agent"))
 
-    # 공통 입력 로드 단계
-    builder.add_edge(START, "load_project_data")
-    builder.add_edge("load_project_data", "retrieve_context")
+    builder.add_edge(START, "context_evidence_agent")
 
-    # 병렬 분석 fan-out
-    builder.add_edge("retrieve_context", "process_analyzer")
-    builder.add_edge("retrieve_context", "data_readiness")
-    builder.add_edge("retrieve_context", "automation_feasibility")
-    builder.add_edge("retrieve_context", "risk_governance")
+    # Context/Evidence package is handed to both diagnostic and governance Agents.
+    builder.add_edge("context_evidence_agent", "process_diagnosis_agent")
+    builder.add_edge("context_evidence_agent", "governance_compliance_agent")
 
-    # 부분 의존성
-    builder.add_edge("automation_feasibility", "roi_cost")
-    builder.add_edge("risk_governance", "compliance_assessment")
-
-    # fan-in: 모든 핵심 분석 결과가 준비된 뒤 우선순위 산정
+    # Business Case Agent waits for diagnosis and governance packages.
     builder.add_edge(
-        [
-            "process_analyzer",
-            "data_readiness",
-            "roi_cost",
-            "compliance_assessment",
-        ],
-        "priority_ranking",
+        ["process_diagnosis_agent", "governance_compliance_agent"],
+        "business_case_agent",
     )
 
-    # Agent Evaluator + LLM Critic이 추천 결과의 근거 coverage, confidence, compliance alignment를 재검증한다.
-    builder.add_edge("priority_ranking", "agent_evaluator")
-    builder.add_edge("agent_evaluator", "llm_critic")
+    # Evaluation & Critic Agent validates the ranked business-case package.
+    builder.add_edge("business_case_agent", "evaluation_critic_agent")
 
-    # 근거 부족 후보가 있으면 제한된 횟수만 RAG re-query loop를 수행하고, 초과/무효 시 Human Review로 넘긴다.
+    # If the critic requests evidence refresh, the Evaluation Agent performs a bounded replan
+    # and hands control back to Context & Evidence. Otherwise, delivery starts.
     builder.add_conditional_edges(
-        "llm_critic",
+        "evaluation_critic_agent",
         should_replan,
         {
             "agent_replan": "agent_replan",
-            "human_review": "human_review",
+            "human_review": "delivery_orchestration_agent",
         },
     )
     builder.add_conditional_edges(
         "agent_replan",
         should_continue_after_replan,
         {
-            "retrieve_context": "retrieve_context",
-            "human_review": "human_review",
+            "retrieve_context": "context_evidence_agent",
+            "human_review": "delivery_orchestration_agent",
         },
     )
 
-    # 의사결정 및 산출물 생성 단계
-    builder.add_edge("human_review", "poc_delivery_planner")
-    builder.add_edge("poc_delivery_planner", "report_writer")
-    builder.add_edge("report_writer", "docx_generator")
-    builder.add_edge("docx_generator", END)
+    builder.add_edge("delivery_orchestration_agent", END)
 
-    checkpointer = InMemorySaver()
-
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile(checkpointer=InMemorySaver())
