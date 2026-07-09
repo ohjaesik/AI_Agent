@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from fastapi.middleware.cors import CORSMiddleware
 from app.api.security import create_access_token, require_api_key, validate_api_key
 from app.auth.users import authenticate_user, create_user
 from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
@@ -24,6 +25,14 @@ from app.tools.review_applier import apply_human_review_to_ranking
 
 app = FastAPI(title="AX Delivery Planner API", version="0.1.0")
 app.add_middleware(RequestMetricsMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow cross-origin requests for local frontend integration
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class CompanyBootstrapRequest(BaseModel):

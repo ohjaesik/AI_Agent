@@ -301,3 +301,22 @@ def delete_chunks_by_company(db: Session, company_id: int) -> int:
     result = db.execute(stmt)
     db.commit()
     return result.rowcount or 0
+
+
+def delete_seed_data(db: Session) -> None:
+    """
+    개발 중 seed를 여러 번 실행하기 위한 초기화 함수.
+    FK 의존성 때문에 하위 테이블부터 삭제한다.
+    """
+    db.execute(delete(DocumentChunk))
+    db.execute(delete(AuditLog))
+    db.execute(delete(HumanReview))
+    db.execute(delete(AnalysisResult))
+    db.execute(delete(AnalysisProject))
+    db.execute(delete(ProcessDocument))
+    db.execute(delete(BusinessProcess))
+    db.execute(delete(EnterpriseSystem))
+    db.execute(delete(Department))
+    db.execute(delete(Company))
+    db.commit()
+
