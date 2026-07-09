@@ -1,5 +1,11 @@
 from app.core.config import get_settings
-from app.graph.replan_node import build_replan_items, replan_route_reason, should_replan
+from app.graph.replan_node import (
+    build_replan_items,
+    current_replan_attempts,
+    replan_route_reason,
+    should_continue_after_replan,
+    should_replan,
+)
 
 
 def configure_settings(monkeypatch, max_attempts="1", external_discovery="false"):
@@ -107,6 +113,34 @@ def test_should_replan_routes_to_human_after_unproductive_replan(monkeypatch):
 
     assert replan_route_reason(state) == "previous_replan_unproductive"
     assert should_replan(state) == "human_review"
+
+
+def test_current_replan_attempts_uses_request_attempt_fallback():
+    state = evidence_gap_state(
+        replan_attempts=0,
+        replan_request={"attempt": 2},
+    )
+
+    assert current_replan_attempts(state) == 2
+
+
+def test_should_continue_after_replan_can_route_directly_to_human_review():
+    state = evidence_gap_state(
+        replan_request={
+            "attempt": 3,
+            "max_attempts": 3,
+            "route_after_replan": "human_review",
+            "stop_reason": "max_replan_attempts_reached_after_current_attempt",
+        }
+    )
+
+    assert should_continue_after_replan(state) == "human_review"
+
+
+def test_should_continue_after_replan_defaults_to_retrieve_context():
+    state = evidence_gap_state(replan_request={"attempt": 1})
+
+    assert should_continue_after_replan(state) == "retrieve_context"
 
 
 def test_build_replan_items_caps_items():
