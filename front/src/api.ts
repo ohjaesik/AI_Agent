@@ -1,7 +1,30 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8001';
+const ENV_API_KEY = import.meta.env.VITE_API_KEY ?? '';
+const ENV_USER_ROLE = import.meta.env.VITE_USER_ROLE ?? 'admin';
+const ENV_USER_ID = import.meta.env.VITE_USER_ID ?? 'admin-user';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const apiKey = localStorage.getItem('ax_api_key') || ENV_API_KEY;
+  const userRole = localStorage.getItem('ax_user_role') || ENV_USER_ROLE;
+  const userId = localStorage.getItem('ax_user_id') || ENV_USER_ID;
+
+  const headers: Record<string, string> = {};
+
+  if (apiKey) {
+    headers['X-API-Key'] = apiKey;
+  }
+  if (userRole) {
+    headers['X-User-Role'] = userRole;
+  }
+  if (userId) {
+    headers['X-User-Id'] = userId;
+  }
+
+  return headers;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -22,24 +45,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     }
   }
 
-  // Retrieve auth headers from localStorage (for development/configuration flexibility)
-  const apiKey = localStorage.getItem('ax_api_key') || '';
-  const userRole = localStorage.getItem('ax_user_role') || 'admin'; // default to admin for dev
-  const userId = localStorage.getItem('ax_user_id') || 'admin-user';
-
   const defaultHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
+    ...getAuthHeaders(),
   };
-
-  if (apiKey) {
-    defaultHeaders['X-API-Key'] = apiKey;
-  }
-  if (userRole) {
-    defaultHeaders['X-User-Role'] = userRole;
-  }
-  if (userId) {
-    defaultHeaders['X-User-Id'] = userId;
-  }
 
   const res = await fetch(url, {
     headers: {
@@ -118,18 +127,9 @@ export function searchSimilarChunks(params: { query: string; companyId: number; 
 
 export function ingestDocument(formData: FormData) {
   // For file upload, fetch handles boundaries automatically when Content-Type header is omitted
-  const apiKey = localStorage.getItem('ax_api_key') || '';
-  const userRole = localStorage.getItem('ax_user_role') || 'admin';
-  const userId = localStorage.getItem('ax_user_id') || 'admin-user';
-
-  const headers: Record<string, string> = {};
-  if (apiKey) headers['X-API-Key'] = apiKey;
-  if (userRole) headers['X-User-Role'] = userRole;
-  if (userId) headers['X-User-Id'] = userId;
-
   return fetch(`${API_BASE_URL}/documents/ingest`, {
     method: 'POST',
-    headers,
+    headers: getAuthHeaders(),
     body: formData,
   }).then(async (res) => {
     if (!res.ok) {
