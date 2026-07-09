@@ -17,16 +17,7 @@ from app.graph.state import AXPlannerState
 from app.ingestion.service import index_single_document
 
 
-def max_replan_attempts() -> int:
-    return max(int(get_settings().agent_replan_max_attempts or 0), 0)
-
-
-def max_replan_items() -> int:
-    return max(int(get_settings().agent_replan_max_items or 0), 0)
-
-
-def max_replan_new_sources() -> int:
-    return max(int(get_settings().agent_replan_max_new_sources or 0), 0)
+REPLAN_MAX_ITEMS = 5
 
 
 def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
@@ -63,7 +54,7 @@ def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
                 ],
             }
         )
-    return items[:max_replan_items()]
+    return items[:REPLAN_MAX_ITEMS]
 
 
 def official_seed_urls(state: AXPlannerState) -> tuple[list[str], set[str]]:
@@ -114,29 +105,16 @@ def replan_query_terms(state: AXPlannerState, replan_items: list[dict[str, Any]]
     return deduped[:12]
 
 
-def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[str, Any]], max_total: int | None = None) -> dict[str, Any]:
+def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[str, Any]], max_total: int = 3) -> dict[str, Any]:
     settings = get_settings()
     company_id = int(state["company_id"])
     company_name = str((state.get("company_profile", {}) or {}).get("name") or "")
     seed_urls, existing_urls = official_seed_urls(state)
-    source_limit = max_replan_new_sources() if max_total is None else max(int(max_total or 0), 0)
     warnings: list[str] = []
-
-    if source_limit <= 0:
-        return {
-            "same_domain_discovered": [],
-            "public_web_search": {"results": [], "warnings": ["Replan source collection is disabled by AGENT_REPLAN_MAX_NEW_SOURCES=0."]},
-            "loaded": [],
-            "document_ids": [],
-            "created_documents": 0,
-            "updated_documents": 0,
-            "indexed_chunks": 0,
-            "warnings": ["Replan source collection is disabled by AGENT_REPLAN_MAX_NEW_SOURCES=0."],
-        }
 
     official_discovered = []
     if seed_urls:
-        official_discovered = discover_official_sources(seed_urls=seed_urls, existing_urls=existing_urls, max_total=source_limit)
+        official_discovered = discover_official_sources(seed_urls=seed_urls, existing_urls=existing_urls, max_total=max_total)
     else:
         warnings.append("No official seed URL available for same-domain discovery.")
 
@@ -144,7 +122,7 @@ def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[st
         company_name=company_name,
         query_terms=replan_query_terms(state, replan_items),
         existing_urls=existing_urls,
-        max_results=min(max(int(settings.external_web_max_results or 0), 0), source_limit),
+        max_results=settings.external_web_max_results,
     )
 
     urls_to_load: list[dict[str, str]] = []
@@ -152,8 +130,6 @@ def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[st
         urls_to_load.append({"url": item.url, "source_kind": "same_domain_official", "reason": item.reason})
     for item in public_search.get("results", []):
         urls_to_load.append({"url": str(item.get("url")), "source_kind": "external_public_web", "reason": str(item.get("provider", "public_web_search"))})
-
-    urls_to_load = urls_to_load[:source_limit]
 
     loaded_docs = []
     for item in urls_to_load:
@@ -196,6 +172,10 @@ def current_replan_attempts(state: AXPlannerState) -> int:
     return max(state_attempts, request_attempts)
 
 
+def max_replan_attempts() -> int:
+    return max(int(get_settings().agent_replan_max_attempts or 0), 0)
+
+
 def has_additional_evidence_need(state: AXPlannerState) -> bool:
     evaluation = state.get("agent_evaluation", {}) or {}
     summary = evaluation.get("summary", {}) or {}
@@ -231,8 +211,6 @@ def replan_route_reason(state: AXPlannerState) -> str:
         return "replan_disabled"
     if attempts >= max_attempts:
         return "max_replan_attempts_reached"
-    if max_replan_items() <= 0:
-        return "replan_items_disabled"
     if not has_additional_evidence_need(state):
         return "no_additional_evidence_needed"
     if previous_replan_unproductive(state):
@@ -247,17 +225,11 @@ def should_replan(state: AXPlannerState) -> str:
 
 
 def should_continue_after_replan(state: AXPlannerState) -> str:
-    max_attempts = max_replan_attempts()
-    if max_attempts <= 0 or current_replan_attempts(state) >= max_attempts:
-        return "human_review"
-    if previous_replan_unproductive(state):
-        return "human_review"
-
     request = state.get("replan_request") or {}
     route = request.get("route_after_replan")
-    if route == "retrieve_context":
-        return "retrieve_context"
-    return "human_review"
+    if route in {"retrieve_context", "human_review"}:
+        return str(route)
+    return "retrieve_context"
 
 
 def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
@@ -295,29 +267,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
 
         attempts = current_attempts + 1
         replan_items = build_replan_items(state)
-        if not replan_items:
-            replan_request = {
-                "attempt": attempts,
-                "max_attempts": max_attempts,
-                "mode": "stopped_before_source_collection",
-                "reason": "no_replan_items",
-                "items": [],
-                "source_collection": {},
-                "route_after_replan": "human_review",
-                "stop_reason": "no_replan_items",
-            }
-            return {
-                "replan_attempts": attempts,
-                "replan_request": replan_request,
-                "audit_logs": append_audit(
-                    state,
-                    node_name,
-                    "skipped",
-                    payload={"attempt": attempts, "max_attempts": max_attempts, "reason": "no_replan_items"},
-                ),
-            }
-
-        source_collection = collect_discovered_sources(state, replan_items=replan_items, max_total=max_replan_new_sources())
+        source_collection = collect_discovered_sources(state, replan_items=replan_items, max_total=3)
         productive = source_collection_productive(source_collection)
         route_after_replan = "retrieve_context" if productive and attempts < max_attempts else "human_review"
         stop_reason = None
@@ -335,7 +285,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
             "source_collection": source_collection,
             "route_after_replan": route_after_replan,
             "stop_reason": stop_reason,
-            "note": "동일 공식 도메인의 sitemap/link 기반 URL을 제한적으로 수집한다. EXTERNAL_WEB_DISCOVERY_ENABLED=true이면 Brave/SerpAPI 기반 public web search 결과도 보조 출처로 수집한다. 내부 문서 업로드나 인터뷰 메모는 Human Review/API 입력이 필요하다.",
+            "note": "동일 공식 도메인의 sitemap/link 기반 URL을 자동 수집한다. EXTERNAL_WEB_DISCOVERY_ENABLED=true이면 Brave/SerpAPI 기반 public web search 결과도 보조 출처로 수집한다. 내부 문서 업로드나 인터뷰 메모는 Human Review/API 입력이 필요하다.",
         }
 
         with SessionLocal() as db:
@@ -356,8 +306,6 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                     "route_after_replan": route_after_replan,
                     "stop_reason": stop_reason,
                     "replan_item_count": len(replan_items),
-                    "max_replan_items": max_replan_items(),
-                    "max_replan_new_sources": max_replan_new_sources(),
                     "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
                     "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
                     "indexed_chunks": source_collection.get("indexed_chunks", 0),
@@ -377,8 +325,6 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                     "route_after_replan": route_after_replan,
                     "stop_reason": stop_reason,
                     "replan_item_count": len(replan_items),
-                    "max_replan_items": max_replan_items(),
-                    "max_replan_new_sources": max_replan_new_sources(),
                     "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
                     "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
                     "indexed_chunks": source_collection.get("indexed_chunks", 0),
