@@ -3,7 +3,7 @@ import sys
 import pytest
 
 from app.agents.sandbox import AgentSandboxError, validate_command_safety
-from app.agents.tool_guard import run_allowed_command_tool
+from app.agents.tool_guard import get_allowed_tools, run_allowed_command_tool
 
 
 class Settings:
@@ -24,6 +24,15 @@ def test_allowed_command_tool_runs_in_direct_mode(monkeypatch):
 
     assert result.returncode == 0
     assert result.stdout.strip() == "ok"
+
+
+def test_registered_agent_keeps_legacy_fallback_tool_aliases():
+    allowed_tools = get_allowed_tools("agent_evaluator_agent")
+
+    assert "agent evaluator" in allowed_tools
+    assert "analysis result writer" in allowed_tools
+    assert "quality gate" in allowed_tools
+    assert "replan router" in allowed_tools
 
 
 def test_sandbox_rejects_denied_executable():
