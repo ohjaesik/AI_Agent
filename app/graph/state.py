@@ -62,6 +62,9 @@ class AXPlannerState(TypedDict, total=False):
     agent_contracts: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_tool_calls: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_loop_iterations: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_loop_requests: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_supervisor_extra_loop_enabled: bool
     process_analysis: dict[str, Any]
     data_readiness: dict[str, Any]
     automation_feasibility: dict[str, Any]
