@@ -93,7 +93,7 @@ def determine_candidate_status(risk_score: int, data_accessibility: int, saving_
         return "excluded"
     if risk_score >= 4:
         return "human_review_required"
-    if "social_impact_review_required" in risk_flags:
+    if "esg_review_required" in risk_flags:
         return "human_review_required"
     if data_accessibility <= 2:
         return "data_preparation_required"
@@ -117,26 +117,17 @@ def build_compliance_reason(compliance_item: dict[str, Any] | None) -> str:
     return " ".join(parts)
 
 
-def build_esg_social_reason(risk_flags: list[str]) -> str:
-    if "social_impact_review_required" not in risk_flags:
+def build_esg_reason(esg_assessment: dict[str, Any] | None) -> str:
+    if not esg_assessment or not esg_assessment.get("pillars"):
         return ""
-    controls = []
-    if "workforce_transition_required" in risk_flags:
-        controls.append("인력 대체·직무 전환 영향 검토")
-    if "employee_monitoring_guardrail_required" in risk_flags:
-        controls.append("직원 모니터링 목적 제한 및 개인 단위 징계 활용 금지")
-    if "reskilling_plan_required" in risk_flags:
-        controls.append("재교육·역량 전환 계획")
-    if "labor_stakeholder_review_required" in risk_flags:
-        controls.append("현장·노사 수용성 검토")
-    if "accessibility_fallback_required" in risk_flags:
-        controls.append("사람 상담/비디지털 접근 경로 유지")
-    if controls:
-        return f"ESG Social 영향 검토 필요: {', '.join(controls)}."
-    return "ESG Social 영향 검토 필요: Agent 도입에 따른 이해관계자 영향과 수용성을 Human Review에서 확인해야 한다."
+
+    pillars = [str(item.get("pillar")) for item in esg_assessment.get("pillars", []) if item.get("pillar")]
+    pillar_label = ", ".join(pillars)
+    summary = str(esg_assessment.get("summary") or "ESG 관점의 영향 검토가 필요하다.")
+    return f"ESG 통합 판단({pillar_label}): {summary}"
 
 
-def build_status_reason(status: str, risk_score: int, data_accessibility: int, saving_rate: float, risk_flags: list[str] | None = None, discovery_metadata: dict[str, Any] | None = None, discovery_bonus: float = 0.0, compliance_item: dict[str, Any] | None = None) -> str:
+def build_status_reason(status: str, risk_score: int, data_accessibility: int, saving_rate: float, risk_flags: list[str] | None = None, discovery_metadata: dict[str, Any] | None = None, discovery_bonus: float = 0.0, compliance_item: dict[str, Any] | None = None, esg_assessment: dict[str, Any] | None = None) -> str:
     risk_flags = risk_flags or []
     discovery_metadata = discovery_metadata or {}
     suitability_rationale = str(discovery_metadata.get("suitability_rationale") or "").strip()
@@ -144,7 +135,7 @@ def build_status_reason(status: str, risk_score: int, data_accessibility: int, s
     if status == "excluded":
         base_reason = "위험도가 매우 높거나 MVP 범위에서 제외해야 하는 업무이다."
     elif status == "human_review_required":
-        base_reason = "위험도, 규제 스크리닝 또는 ESG Social 영향도상 Human Review 후 PoC 착수 여부를 결정해야 한다."
+        base_reason = "위험도, 규제 스크리닝 또는 ESG 통합 판단상 Human Review 후 PoC 착수 여부를 결정해야 한다."
     elif status == "data_preparation_required":
         base_reason = "데이터 접근성이 낮아 데이터 정비와 접근권한 확인을 선행해야 한다."
     elif status == "low_roi":
@@ -154,9 +145,9 @@ def build_status_reason(status: str, risk_score: int, data_accessibility: int, s
     else:
         base_reason = "기대효과, 데이터 접근성, 구현 가능성, 위험도를 종합했을 때 PoC 후보로 적합하다."
 
-    esg_social_reason = build_esg_social_reason(risk_flags)
-    if esg_social_reason:
-        base_reason = f"{base_reason} {esg_social_reason}"
+    esg_reason = build_esg_reason(esg_assessment)
+    if esg_reason:
+        base_reason = f"{base_reason} {esg_reason}"
 
     compliance_reason = build_compliance_reason(compliance_item)
     if compliance_reason:
@@ -211,10 +202,11 @@ def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, A
         compliance_item = compliance_map.get(process_id, {})
         saving_rate = safe_float(roi_item.get("saving_rate"), 0.0)
         risk_flags = risk_item.get("flags", [])
+        esg_assessment = risk_item.get("esg_assessment", {})
 
         status = determine_candidate_status(risk_score, data_accessibility, saving_rate, risk_flags)
         status = apply_compliance_status(status, compliance_item)
-        reason = build_status_reason(status, risk_score, data_accessibility, saving_rate, risk_flags, discovery_metadata, discovery_bonus, compliance_item)
+        reason = build_status_reason(status, risk_score, data_accessibility, saving_rate, risk_flags, discovery_metadata, discovery_bonus, compliance_item, esg_assessment)
 
         candidates.append({
             "process_id": process_id,
@@ -235,8 +227,7 @@ def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, A
             "saving_rate": saving_rate,
             "monthly_saving": safe_int(roi_item.get("monthly_saving"), 0),
             "risk_flags": risk_flags,
-            "esg_social_risks": risk_item.get("esg_social_risks", []),
-            "esg_social_controls": risk_item.get("esg_social_controls", []),
+            "esg_assessment": esg_assessment,
             "status": status,
             "reason": reason,
             "discovery_metadata": discovery_metadata,
@@ -252,7 +243,7 @@ def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, A
     recommended = [item for item in candidates if item["status"] == "recommended"]
     review_required = [item for item in candidates if item["status"] == "human_review_required"]
     excluded = [item for item in candidates if item["status"] == "excluded"]
-    social_impact_review = [item for item in candidates if "social_impact_review_required" in item.get("risk_flags", [])]
+    esg_review_required = [item for item in candidates if "esg_review_required" in item.get("risk_flags", [])]
 
     return {
         "items": candidates,
@@ -261,7 +252,7 @@ def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, A
             "recommended_count": len(recommended),
             "review_required_count": len(review_required),
             "excluded_count": len(excluded),
-            "social_impact_review_count": len(social_impact_review),
+            "esg_review_required_count": len(esg_review_required),
             "top_candidate": candidates[0] if candidates else None,
             "compliance_overall_status": (effective_compliance or {}).get("overall_status"),
             "compliance_summary": (effective_compliance or {}).get("summary", {}),
