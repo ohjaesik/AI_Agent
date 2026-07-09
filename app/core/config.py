@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     serpapi_api_key: str | None = Field(default=None, alias="SERPAPI_API_KEY")
     external_web_max_results: int = Field(default=3, alias="EXTERNAL_WEB_MAX_RESULTS")
 
+    # Replan loop guard. 0 disables replan and routes evidence gaps directly to Human Review.
+    agent_replan_max_attempts: int = Field(default=1, alias="AGENT_REPLAN_MAX_ATTEMPTS")
+
     # API protection. If APP_JWT_SECRET is set, Bearer JWT is supported.
     app_api_key: str | None = Field(default=None, alias="APP_API_KEY")
     app_jwt_secret: str | None = Field(default=None, alias="APP_JWT_SECRET")
