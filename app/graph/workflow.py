@@ -6,7 +6,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.graph.node_worker import workerized_node
-from app.graph.replan_node import should_replan
+from app.graph.replan_node import should_continue_after_replan, should_replan
 from app.graph.state import AXPlannerState
 
 
@@ -59,7 +59,7 @@ def build_ax_planner_graph():
     builder.add_edge("priority_ranking", "agent_evaluator")
     builder.add_edge("agent_evaluator", "llm_critic")
 
-    # 근거 부족 후보가 있으면 1회 RAG re-query loop를 수행하고, 그래도 부족하면 Human Review로 넘긴다.
+    # 근거 부족 후보가 있으면 제한된 횟수만 RAG re-query loop를 수행하고, 초과/무효 시 Human Review로 넘긴다.
     builder.add_conditional_edges(
         "llm_critic",
         should_replan,
@@ -68,7 +68,14 @@ def build_ax_planner_graph():
             "human_review": "human_review",
         },
     )
-    builder.add_edge("agent_replan", "retrieve_context")
+    builder.add_conditional_edges(
+        "agent_replan",
+        should_continue_after_replan,
+        {
+            "retrieve_context": "retrieve_context",
+            "human_review": "human_review",
+        },
+    )
 
     # 의사결정 및 산출물 생성 단계
     builder.add_edge("human_review", "poc_delivery_planner")
