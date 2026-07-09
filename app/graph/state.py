@@ -59,6 +59,7 @@ class AXPlannerState(TypedDict, total=False):
 
     # Agent / Tool 분석 결과
     agent_registry: list[dict[str, Any]]
+    agent_contracts: Annotated[list[dict[str, Any]], merge_unique_dicts]
     process_analysis: dict[str, Any]
     data_readiness: dict[str, Any]
     automation_feasibility: dict[str, Any]
