@@ -24,6 +24,7 @@ class BootstrapGraphResult:
     agent_trace: list[dict[str, Any]] | None = None
     agent_contracts: list[dict[str, Any]] | None = None
     agent_tool_calls: list[dict[str, Any]] | None = None
+    agent_decisions: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +41,7 @@ class BootstrapGraphResult:
             "agent_trace": self.agent_trace or [],
             "agent_contracts": self.agent_contracts or [],
             "agent_tool_calls": self.agent_tool_calls or [],
+            "agent_decisions": self.agent_decisions or [],
         }
 
 
@@ -74,6 +76,7 @@ def run_bootstrap_supervisor_graph(
         "audit_logs": [],
         "agent_contracts": [],
         "agent_tool_calls": [],
+        "agent_decisions": [],
         "errors": [],
     }
     config = {"configurable": {"thread_id": thread_id}}
@@ -100,4 +103,5 @@ def run_bootstrap_supervisor_graph(
         agent_trace=list(result_state.get("audit_logs", [])),
         agent_contracts=list(result_state.get("agent_contracts", [])),
         agent_tool_calls=list(result_state.get("agent_tool_calls", [])),
+        agent_decisions=list(result_state.get("agent_decisions", [])),
     )
