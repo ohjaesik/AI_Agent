@@ -23,6 +23,7 @@ class BootstrapGraphResult:
     idempotency: dict[str, Any] | None = None
     agent_trace: list[dict[str, Any]] | None = None
     agent_contracts: list[dict[str, Any]] | None = None
+    agent_tool_calls: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -38,6 +39,7 @@ class BootstrapGraphResult:
             "idempotency": self.idempotency or {},
             "agent_trace": self.agent_trace or [],
             "agent_contracts": self.agent_contracts or [],
+            "agent_tool_calls": self.agent_tool_calls or [],
         }
 
 
@@ -71,6 +73,7 @@ def run_bootstrap_supervisor_graph(
         "warnings": [],
         "audit_logs": [],
         "agent_contracts": [],
+        "agent_tool_calls": [],
         "errors": [],
     }
     config = {"configurable": {"thread_id": thread_id}}
@@ -96,4 +99,5 @@ def run_bootstrap_supervisor_graph(
         idempotency=payload.get("idempotency", {}),
         agent_trace=list(result_state.get("audit_logs", [])),
         agent_contracts=list(result_state.get("agent_contracts", [])),
+        agent_tool_calls=list(result_state.get("agent_tool_calls", [])),
     )
