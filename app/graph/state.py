@@ -64,7 +64,18 @@ class AXPlannerState(TypedDict, total=False):
     agent_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_loop_iterations: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_loop_requests: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_supervisor_steps: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_handoffs: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_supervisor_extra_loop_enabled: bool
+
+    # Agent package artifacts
+    context_evidence_package: dict[str, Any]
+    process_diagnosis_package: dict[str, Any]
+    governance_package: dict[str, Any]
+    business_case_package: dict[str, Any]
+    evaluation_package: dict[str, Any]
+    delivery_package: dict[str, Any]
+
     process_analysis: dict[str, Any]
     data_readiness: dict[str, Any]
     automation_feasibility: dict[str, Any]
