@@ -32,10 +32,14 @@ def normalize_tool_name(tool: str) -> str:
 
 def get_allowed_tools(agent_id: str) -> set[str]:
     spec = get_agent_spec(agent_id)
+    fallback_tools = FALLBACK_AGENT_TOOLS.get(agent_id, [])
     if spec:
-        return {normalize_tool_name(tool) for tool in spec.get("tools", [])}
-    if agent_id in FALLBACK_AGENT_TOOLS:
-        return {normalize_tool_name(tool) for tool in FALLBACK_AGENT_TOOLS[agent_id]}
+        return {
+            normalize_tool_name(tool)
+            for tool in [*spec.get("tools", []), *fallback_tools]
+        }
+    if fallback_tools:
+        return {normalize_tool_name(tool) for tool in fallback_tools}
     raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
 
 
@@ -84,7 +88,7 @@ def build_tool_permission_report() -> list[dict[str, Any]]:
         {
             "agent_id": agent.get("id"),
             "agent_name": agent.get("name"),
-            "allowed_tools": agent.get("tools", []),
+            "allowed_tools": sorted(get_allowed_tools(str(agent.get("id")))),
             "controls": [*agent.get("controls", []), "runtime_tool_permission_check"],
         }
         for agent in get_agent_registry()
@@ -93,9 +97,10 @@ def build_tool_permission_report() -> list[dict[str, Any]]:
         {
             "agent_id": agent_id,
             "agent_name": agent_id,
-            "allowed_tools": tools,
+            "allowed_tools": sorted(get_allowed_tools(agent_id)),
             "controls": ["runtime_tool_permission_check", "optional_docker_command_sandbox"],
         }
         for agent_id, tools in FALLBACK_AGENT_TOOLS.items()
+        if not get_agent_spec(agent_id)
     )
     return rows
