@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from app.agents.registry import get_capability_for_node, get_agent_spec, get_tool_spec_for_node
+from app.agents.registry import get_capability_for_node, get_agent_spec, get_tool_specs_for_node
 
 NODE_AGENT_BINDINGS: dict[str, dict[str, str]] = {
     "company_profile_agent": {"agent_id": "company_onboarding_agent", "capability": "company_profile_resolution", "node_role": "회사 식별, OpenDART 조회, company profile 생성/갱신"},
@@ -66,7 +66,8 @@ def build_agent_contract(node_name: str) -> dict[str, Any] | None:
         "node_role": binding.get("node_role"),
         "nodes": [node_name],
     }
-    selected_tool_spec = get_tool_spec_for_node(agent_id, node_name)
+    candidate_tool_specs = get_tool_specs_for_node(agent_id, node_name)
+    selected_tool_spec = candidate_tool_specs[0] if candidate_tool_specs else None
 
     return {
         "node_name": node_name,
@@ -80,6 +81,7 @@ def build_agent_contract(node_name: str) -> dict[str, Any] | None:
         "capability_nodes": list(capability.get("nodes", [node_name])),
         "tools": list(spec.get("tools", [])),
         "tool_specs": list(spec.get("tool_specs", [])),
+        "candidate_tool_specs": candidate_tool_specs,
         "selected_tool_spec": selected_tool_spec,
         "controls": list(spec.get("controls", [])),
         "human_review_required": bool(spec.get("human_review_required", False)),
@@ -101,6 +103,7 @@ def build_contract_audit_log(node_name: str, contract: dict[str, Any]) -> dict[s
             "agent_name": contract.get("agent_name"),
             "capability": contract.get("capability"),
             "node_role": contract.get("node_role"),
+            "candidate_tools": [item.get("name") for item in contract.get("candidate_tool_specs", [])],
             "selected_tool": (contract.get("selected_tool_spec") or {}).get("name"),
             "implementation": contract.get("implementation"),
             "category": contract.get("category"),
