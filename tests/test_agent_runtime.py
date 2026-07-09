@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from app.agents.expert_executor import expert_executed_node
-from app.agents.registry import AGENT_REGISTRY, get_agent_registry, get_agent_spec, get_tool_spec_for_node
+from app.agents.registry import (
+    AGENT_REGISTRY,
+    MAX_TOOL_CANDIDATES_PER_NODE,
+    get_agent_registry,
+    get_agent_spec,
+    get_tool_spec_for_node,
+    get_tool_specs_for_node,
+)
 from app.agents.runtime import build_agent_contract, get_agent_binding_for_node, get_agent_id_for_node
 from app.agents.tool_guard import AgentToolPermissionError, assert_tools_allowed, assert_tool_spec_allowed
 
@@ -17,6 +24,28 @@ EXPECTED_AGENT_IDS = {
     "evaluation_critic_agent",
     "delivery_orchestration_agent",
 }
+
+ALL_BOUND_NODES = [
+    "company_profile_agent",
+    "source_ingestion_agent",
+    "process_discovery_agent",
+    "load_project_data",
+    "retrieve_context",
+    "process_analyzer",
+    "data_readiness",
+    "automation_feasibility",
+    "roi_cost",
+    "priority_ranking",
+    "risk_governance",
+    "compliance_assessment",
+    "agent_evaluator",
+    "llm_critic",
+    "agent_replan",
+    "human_review",
+    "poc_delivery_planner",
+    "report_writer",
+    "docx_generator",
+]
 
 
 def test_registry_contains_only_expert_agents() -> None:
@@ -45,6 +74,15 @@ def test_agent_specs_include_prompt_contract_and_tool_specs(agent: dict) -> None
     assert set(agent["managed_nodes"]).issubset(tool_nodes)
 
 
+@pytest.mark.parametrize("node_name", ALL_BOUND_NODES)
+def test_each_node_has_at_most_three_candidate_tools(node_name: str) -> None:
+    agent_id = get_agent_id_for_node(node_name)
+
+    assert agent_id is not None
+    specs = get_tool_specs_for_node(agent_id, node_name)
+    assert 1 <= len(specs) <= MAX_TOOL_CANDIDATES_PER_NODE
+
+
 def test_process_diagnosis_contract_and_tool_mapping() -> None:
     spec = get_agent_spec("process_diagnosis_agent")
     contract = build_agent_contract("data_readiness")
@@ -58,10 +96,15 @@ def test_process_diagnosis_contract_and_tool_mapping() -> None:
         "automation_feasibility_scoring",
     }
     assert get_tool_spec_for_node("process_diagnosis_agent", "data_readiness")["name"] == "data_readiness_scorer"
+    assert [item["name"] for item in get_tool_specs_for_node("process_diagnosis_agent", "data_readiness")] == [
+        "data_readiness_scorer",
+        "data_gap_detector",
+    ]
     assert contract is not None
     assert contract["agent_id"] == "process_diagnosis_agent"
     assert contract["capability"] == "data_readiness_scoring"
     assert contract["selected_tool_spec"]["name"] == "data_readiness_scorer"
+    assert [item["name"] for item in contract["candidate_tool_specs"]] == ["data_readiness_scorer", "data_gap_detector"]
 
 
 def test_node_to_expert_agent_mapping() -> None:
@@ -88,7 +131,7 @@ def test_evaluation_critic_permissions_use_expert_agent_id() -> None:
     assert spec["human_review_required"] is True
     assert "independent quality gate" in spec["role_prompt"]
     assert "compliance_alignment_check" in spec["controls"]
-    assert_tools_allowed("evaluation_critic_agent", ["LLM critic", "quality gate", "llm_critic", "replan_router"])
+    assert_tools_allowed("evaluation_critic_agent", ["LLM critic", "quality gate", "llm_critic", "replan_router", "critic_replan_decider"])
     assert assert_tool_spec_allowed("evaluation_critic_agent", "llm_critic")["name"] == "llm_critic"
     assert assert_tool_spec_allowed("evaluation_critic_agent", "replan_router")["name"] == "replan_router"
 
@@ -117,8 +160,45 @@ def test_expert_executor_runs_node_through_tool_call() -> None:
     assert result["data_readiness"]["summary"]["total_processes"] == 1
     assert result["agent_contracts"][0]["agent_id"] == "process_diagnosis_agent"
     assert result["agent_contracts"][0]["selected_tool"] == "data_readiness_scorer"
+    assert result["agent_contracts"][0]["candidate_tools"] == ["data_readiness_scorer", "data_gap_detector"]
     assert result["agent_tool_calls"][0]["tool_name"] == "data_readiness_scorer"
     assert [log["status"] for log in result["audit_logs"]][:2] == [
         "agent_tool_call_started",
         "agent_tool_call_succeeded",
     ]
+    assert result["agent_decisions"][0]["phase"] == "pre_tool_selection"
+    assert result["agent_decisions"][1]["phase"] == "post_tool_observation"
+
+
+def test_evaluation_critic_post_decision_changes_candidate_status() -> None:
+    def sample_node(state: dict) -> dict:
+        return {
+            "priority_ranking": {
+                "items": [
+                    {"process_id": 1, "status": "recommended", "candidate_agent_name": "Weak Evidence Agent"},
+                    {"process_id": 2, "status": "recommended", "candidate_agent_name": "Needs Review Agent"},
+                ],
+                "summary": {"recommended_count": 2},
+            },
+            "agent_evaluation": {
+                "items": [
+                    {
+                        "process_id": 1,
+                        "candidate_agent_name": "Weak Evidence Agent",
+                        "requires_additional_evidence": True,
+                        "predicted_status": "evidence_insufficient",
+                    }
+                ],
+                "summary": {"additional_evidence_required_count": 1},
+            },
+            "audit_logs": [],
+        }
+
+    wrapped = expert_executed_node("agent_evaluator", sample_node)
+    result = wrapped({"project_id": 1, "company_id": 1, "priority_ranking": {"items": [{"process_id": 1}]}})
+
+    assert result["agent_tool_calls"][0]["tool_name"] == "evidence_replan_decider"
+    assert result["priority_ranking"]["items"][0]["status_before_agent_decision"] == "recommended"
+    assert result["priority_ranking"]["items"][0]["status"] == "evidence_insufficient"
+    assert result["agent_evaluation"]["agent_decision"]["decision"] == "request_replan_or_human_review"
+    assert result["agent_decisions"][-1]["changed_output"] is True
