@@ -10,7 +10,7 @@ from typing import Any
 
 from langgraph.types import Command
 
-from app.agents.expert_registry import get_expert_agent_registry
+from app.agents.registry import get_agent_registry
 from app.db.crud import resolve_project_selection
 from app.db.database import SessionLocal
 from app.graph.workflow import build_ax_planner_graph
@@ -116,6 +116,7 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("retrieved_context_groups:", len(result.get("retrieved_contexts", {})))
     print("evidence_items:", len(result.get("evidence_items", [])))
     print("used_sources:", len(result.get("used_sources", [])))
+    print("agent_registry:", len(result.get("agent_registry", [])))
     print("agent_contracts:", len(result.get("agent_contracts", [])))
     print("report_sections:", len(result.get("report_data", {}).get("sections", [])))
 
@@ -182,7 +183,7 @@ def run_demo(
             "date": report_date or "",
             "status": normalized_report_status,
         },
-        "agent_registry": get_expert_agent_registry(),
+        "agent_registry": get_agent_registry(),
         "agent_contracts": [],
         "audit_logs": [],
         "errors": [],
