@@ -12,9 +12,12 @@ from app.company_bootstrap.url_loader import load_official_url
 from app.core.config import get_settings
 from app.db.crud import save_analysis_result, write_audit_log
 from app.db.database import SessionLocal
-from app.ingestion.service import index_single_document
 from app.graph.nodes import append_audit, append_error
 from app.graph.state import AXPlannerState
+from app.ingestion.service import index_single_document
+
+
+REPLAN_MAX_ITEMS = 5
 
 
 def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
@@ -51,7 +54,7 @@ def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
                 ],
             }
         )
-    return items
+    return items[:REPLAN_MAX_ITEMS]
 
 
 def official_seed_urls(state: AXPlannerState) -> tuple[list[str], set[str]]:
@@ -163,16 +166,51 @@ def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[st
     }
 
 
-def should_replan(state: AXPlannerState) -> str:
-    attempts = int(state.get("replan_attempts", 0) or 0)
-    if attempts >= 1:
-        return "human_review"
-
+def has_additional_evidence_need(state: AXPlannerState) -> bool:
     evaluation = state.get("agent_evaluation", {}) or {}
     summary = evaluation.get("summary", {}) or {}
-    if int(summary.get("additional_evidence_required_count", 0) or 0) > 0:
-        return "agent_replan"
-    return "human_review"
+    return int(summary.get("additional_evidence_required_count", 0) or 0) > 0
+
+
+def has_replan_source_path(state: AXPlannerState) -> bool:
+    settings = get_settings()
+    seed_urls, _ = official_seed_urls(state)
+    return bool(seed_urls) or bool(settings.external_web_discovery_enabled)
+
+
+def previous_replan_unproductive(state: AXPlannerState) -> bool:
+    if int(state.get("replan_attempts", 0) or 0) <= 0:
+        return False
+
+    source_collection = (state.get("replan_request") or {}).get("source_collection") or {}
+    same_domain = source_collection.get("same_domain_discovered") or []
+    public_results = ((source_collection.get("public_web_search") or {}).get("results") or [])
+    loaded = source_collection.get("loaded") or []
+    indexed_chunks = int(source_collection.get("indexed_chunks") or 0)
+
+    return not same_domain and not public_results and not loaded and indexed_chunks <= 0
+
+
+def replan_route_reason(state: AXPlannerState) -> str:
+    settings = get_settings()
+    attempts = int(state.get("replan_attempts", 0) or 0)
+    max_attempts = max(int(settings.agent_replan_max_attempts or 0), 0)
+
+    if max_attempts <= 0:
+        return "replan_disabled"
+    if attempts >= max_attempts:
+        return "max_replan_attempts_reached"
+    if not has_additional_evidence_need(state):
+        return "no_additional_evidence_needed"
+    if previous_replan_unproductive(state):
+        return "previous_replan_unproductive"
+    if not has_replan_source_path(state):
+        return "no_replan_source_path"
+    return "route_to_replan"
+
+
+def should_replan(state: AXPlannerState) -> str:
+    return "agent_replan" if replan_route_reason(state) == "route_to_replan" else "human_review"
 
 
 def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
@@ -188,6 +226,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
         source_collection = collect_discovered_sources(state, replan_items=replan_items, max_total=3)
         replan_request = {
             "attempt": attempts,
+            "max_attempts": max(int(get_settings().agent_replan_max_attempts or 0), 0),
             "mode": "official_domain_plus_opt_in_public_web_discovery",
             "reason": "Agent Evaluator가 일부 후보의 근거 coverage 또는 confidence 부족을 감지했다.",
             "items": replan_items,
@@ -209,6 +248,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                 event_type="success",
                 payload={
                     "attempt": attempts,
+                    "max_attempts": replan_request["max_attempts"],
                     "replan_item_count": len(replan_items),
                     "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
                     "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
@@ -225,6 +265,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                 "success",
                 payload={
                     "attempt": attempts,
+                    "max_attempts": replan_request["max_attempts"],
                     "replan_item_count": len(replan_items),
                     "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
                     "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
