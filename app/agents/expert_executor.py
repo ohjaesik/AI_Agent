@@ -12,6 +12,9 @@ from app.agents.tool_runtime import call_agent_tool
 
 StateT = TypeVar("StateT", bound=dict[str, Any])
 
+EVIDENCE_INSUFFICIENT_THRESHOLD = 0.15
+LOW_CONFIDENCE_THRESHOLD = 0.45
+
 
 def summarize_state_for_agent(state: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -31,6 +34,13 @@ def summarize_state_for_agent(state: dict[str, Any]) -> dict[str, Any]:
 
 def tool_names(tool_specs: list[dict[str, Any]]) -> list[str]:
     return [str(item.get("name")) for item in tool_specs if item.get("name")]
+
+
+def as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def select_tool_spec(
@@ -117,19 +127,67 @@ def build_agent_tool_decision(
     }
 
 
-def evidence_required_ids(agent_evaluation: dict[str, Any]) -> set[int]:
-    ids: set[int] = set()
+def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[int], set[int]]:
+    """Return severe insufficient ids and weaker review-needed ids.
+
+    evidence_insufficient should be rare. It is reserved for nearly missing evidence
+    or a combined low-evidence/low-confidence signal. Ordinary weak evidence routes
+    to human_review_required instead of being treated as insufficient.
+    """
+    insufficient_ids: set[int] = set()
+    review_ids: set[int] = set()
+
     for item in agent_evaluation.get("items", []) or []:
-        if item.get("requires_additional_evidence") or item.get("predicted_status") == "evidence_insufficient":
-            process_id = int(item.get("process_id") or 0)
-            if process_id:
-                ids.add(process_id)
-    return ids
+        process_id = int(item.get("process_id") or 0)
+        if not process_id:
+            continue
+
+        evidence_coverage = as_float(item.get("evidence_coverage"), 0.0)
+        confidence_score = as_float(item.get("confidence_score"), 0.0)
+        predicted_status = str(item.get("predicted_status") or "")
+        requires_additional_evidence = bool(item.get("requires_additional_evidence"))
+        critic = item.get("llm_critic") or {}
+        critic_verdict = str(critic.get("critic_verdict") or "")
+
+        severe_evidence_gap = evidence_coverage <= EVIDENCE_INSUFFICIENT_THRESHOLD
+        severe_low_confidence = confidence_score < LOW_CONFIDENCE_THRESHOLD
+        explicit_insufficient = predicted_status == "evidence_insufficient"
+
+        if severe_evidence_gap or (explicit_insufficient and severe_low_confidence):
+            insufficient_ids.add(process_id)
+        elif requires_additional_evidence or explicit_insufficient or critic_verdict in {"needs_review", "revise"}:
+            review_ids.add(process_id)
+
+    review_ids -= insufficient_ids
+    return insufficient_ids, review_ids
 
 
 def count_llm_review_needs(agent_evaluation: dict[str, Any]) -> int:
     summary = agent_evaluation.get("summary", {}) or {}
     return int(summary.get("llm_critic_needs_review_count", 0) or 0)
+
+
+def rebuild_priority_summary(ranking: dict[str, Any]) -> dict[str, Any]:
+    items = ranking.get("items", []) or []
+    status_counts: dict[str, int] = {}
+    for item in items:
+        status = str(item.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+
+    summary = dict(ranking.get("summary", {}) or {})
+    summary.update(
+        {
+            "total_candidates": len(items),
+            "recommended_count": status_counts.get("recommended", 0),
+            "review_required_count": status_counts.get("human_review_required", 0),
+            "human_review_required_count": status_counts.get("human_review_required", 0),
+            "evidence_insufficient_count": status_counts.get("evidence_insufficient", 0),
+            "excluded_count": status_counts.get("excluded", 0),
+            "status_counts": status_counts,
+        }
+    )
+    ranking["summary"] = summary
+    return ranking
 
 
 def build_replan_hint_items(process_ids: set[int], state: dict[str, Any], ranking: dict[str, Any], evaluation: dict[str, Any]) -> list[dict[str, Any]]:
@@ -163,15 +221,17 @@ def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any
     adjusted_count = 0
 
     for item in items:
-        if item.get("status") in {"excluded", "human_review_required"}:
+        if item.get("status") in {"excluded", "human_review_required", "evidence_insufficient"}:
             item["agent_decision_status"] = item.get("status")
             item["agent_decision_reason"] = "Business Case Agent preserved conservative governance/review status during ranking."
             adjusted_count += 1
 
-    if adjusted_count:
+    if items:
         ranking["items"] = items
-        ranking.setdefault("summary", {})["agent_decision_adjusted_count"] = adjusted_count
-        ranking["summary"]["agent_decision_applied"] = True
+        ranking = rebuild_priority_summary(ranking)
+        if adjusted_count:
+            ranking.setdefault("summary", {})["agent_decision_adjusted_count"] = adjusted_count
+            ranking["summary"]["agent_decision_applied"] = True
         result["priority_ranking"] = ranking
 
     post_decision = {
@@ -179,10 +239,10 @@ def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any
         "node_name": decision.get("node_name"),
         "agent_id": decision.get("agent_id"),
         "selected_tool": decision.get("selected_tool"),
-        "decision": "preserve_review_status" if adjusted_count else "pass_through",
+        "decision": "preserve_review_status" if adjusted_count else "refresh_status_summary",
         "changed_output": bool(adjusted_count),
         "adjusted_count": adjusted_count,
-        "reason": "Ranking results were checked against governance and human-review status.",
+        "reason": "Ranking results were checked against governance and human-review status, then summary counts were refreshed.",
     }
     return result, post_decision
 
@@ -191,48 +251,53 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
     evaluation = deepcopy(result.get("agent_evaluation") or state.get("agent_evaluation") or {})
     ranking = deepcopy(result.get("priority_ranking") or state.get("priority_ranking") or {})
     summary = evaluation.setdefault("summary", {})
-    required_ids = evidence_required_ids(evaluation)
-    additional_count = int(summary.get("additional_evidence_required_count", 0) or 0)
+    insufficient_ids, review_ids = split_evidence_decision_ids(evaluation)
     llm_review_count = count_llm_review_needs(evaluation)
-    effective_required_count = max(additional_count, len(required_ids), llm_review_count)
+    effective_required_count = max(int(summary.get("additional_evidence_required_count", 0) or 0), len(insufficient_ids | review_ids), llm_review_count)
 
     changed = False
     adjusted_count = 0
     if effective_required_count > 0:
         for item in ranking.get("items", []) or []:
             process_id = int(item.get("process_id") or 0)
-            if process_id in required_ids or item.get("status") == "recommended":
-                item.setdefault("status_before_agent_decision", item.get("status"))
-                if process_id in required_ids:
-                    item["status"] = "evidence_insufficient"
-                    item["agent_decision_status"] = "replan_or_human_review_required"
-                    item["agent_decision_reason"] = "Evaluation & Critic Agent detected insufficient evidence for this candidate."
-                elif item.get("status") == "recommended":
-                    item["status"] = "human_review_required"
-                    item["agent_decision_status"] = "human_review_required"
-                    item["agent_decision_reason"] = "Evaluation & Critic Agent required review before recommendation can be treated as final."
+            previous_status = item.get("status")
+            if process_id in insufficient_ids:
+                item.setdefault("status_before_agent_decision", previous_status)
+                item["status"] = "evidence_insufficient"
+                item["agent_decision_status"] = "replan_or_human_review_required"
+                item["agent_decision_reason"] = "Evaluation & Critic Agent found a severe evidence gap for this candidate."
+                adjusted_count += 1
+            elif process_id in review_ids or previous_status == "recommended":
+                item.setdefault("status_before_agent_decision", previous_status)
+                item["status"] = "human_review_required"
+                item["agent_decision_status"] = "human_review_required"
+                item["agent_decision_reason"] = "Evaluation & Critic Agent requires human review, but did not classify the evidence gap as severe."
                 adjusted_count += 1
 
-        summary["additional_evidence_required_count"] = effective_required_count
+        ranking = rebuild_priority_summary(ranking)
+        summary["additional_evidence_required_count"] = len(insufficient_ids | review_ids)
+        summary["evidence_insufficient_count"] = len(insufficient_ids)
+        summary["human_review_required_count"] = ranking.get("summary", {}).get("human_review_required_count", 0)
         summary["agent_decision_adjusted_count"] = adjusted_count
         summary["agent_decision_applied"] = True
         evaluation["summary"] = summary
         evaluation["agent_decision"] = {
             "decision": "request_replan_or_human_review",
-            "reason": "Evidence, confidence, or LLM critic review signals require a stronger routing decision before final PoC selection.",
-            "target_process_ids": sorted(required_ids),
+            "reason": "Severe evidence gaps are routed to evidence_insufficient; weaker evidence or critic concerns are routed to human_review_required.",
+            "insufficient_process_ids": sorted(insufficient_ids),
+            "review_process_ids": sorted(review_ids),
             "fallback_route": "human_review",
         }
         result["agent_evaluation"] = evaluation
         result["priority_ranking"] = ranking
-        if not result.get("replan_request"):
+        if insufficient_ids and not result.get("replan_request"):
             result["replan_request"] = {
                 "mode": "agent_decision_hint",
-                "reason": "Evaluation & Critic Agent requested replan or human review after observing weak evidence/review signals.",
-                "items": build_replan_hint_items(required_ids, state, ranking, evaluation),
+                "reason": "Evaluation & Critic Agent requested replan for candidates with severe evidence gaps.",
+                "items": build_replan_hint_items(insufficient_ids, state, ranking, evaluation),
                 "route_after_replan": "human_review",
             }
-        changed = True
+        changed = bool(adjusted_count)
 
     post_decision = {
         "phase": "post_tool_observation",
@@ -242,8 +307,10 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
         "decision": "request_replan_or_human_review" if changed else "pass_through",
         "changed_output": changed,
         "adjusted_count": adjusted_count,
-        "additional_evidence_required_count": effective_required_count,
-        "reason": "The critic converts weak evidence and review observations into routing/status metadata.",
+        "evidence_insufficient_count": len(insufficient_ids),
+        "review_required_count": len(review_ids),
+        "additional_evidence_required_count": len(insufficient_ids | review_ids),
+        "reason": "The critic now distinguishes severe evidence insufficiency from ordinary human-review cases.",
     }
     return result, post_decision
 
@@ -257,16 +324,34 @@ def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any
         poc_plan = deepcopy(result.get("poc_plan") or {})
         ranking_items = ((result.get("priority_ranking") or state.get("priority_ranking") or {}).get("items") or [])
         held_items = [item for item in ranking_items if item.get("status") in {"evidence_insufficient", "excluded"}]
-        if held_items:
+        review_items = [item for item in ranking_items if item.get("status") == "human_review_required"]
+        first_candidate = poc_plan.get("first_individual_poc_candidate") or {}
+        first_status = first_candidate.get("status") if isinstance(first_candidate, dict) else None
+
+        if held_items or review_items or first_status in {"evidence_insufficient", "excluded", "human_review_required"}:
+            selection_status = "provisional_review_required"
+            if first_status in {"evidence_insufficient", "excluded"} or held_items:
+                selection_status = "held_pending_evidence_or_governance"
+
+            poc_plan.setdefault("mvp_agent", {})["selection_status"] = selection_status
+            poc_plan.setdefault("mvp_agent", {})["selection_note"] = "PoC 후보는 자동 확정이 아니라 Human Review 이후 확정되는 provisional candidate이다."
+            poc_plan["mvp_selection"] = {
+                "status": selection_status,
+                "held_candidate_count": len(held_items),
+                "review_required_count": len(review_items),
+                "reason": "Evaluation/Governance Agent decision requires follow-up before final PoC commitment.",
+            }
+            poc_plan["requires_governance_followup"] = bool(held_items)
+            poc_plan["requires_human_review_followup"] = bool(review_items or held_items)
             poc_plan["agent_decision"] = {
                 "decision": "guarded_poc_plan",
-                "reason": "Some candidates were held by evaluation/governance, so PoC plan requires explicit review follow-up.",
+                "reason": "Candidate is treated as provisional until evidence/governance/human-review follow-up is completed.",
                 "held_candidate_count": len(held_items),
+                "review_required_count": len(review_items),
             }
-            poc_plan["requires_governance_followup"] = True
             result["poc_plan"] = poc_plan
             changed = True
-            adjusted_count = len(held_items)
+            adjusted_count = len(held_items) + len(review_items)
 
     if node_name == "report_writer" and result.get("report_data"):
         report_data = deepcopy(result.get("report_data") or {})
