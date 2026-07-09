@@ -305,3 +305,8 @@ def get_or_create_project(db: Session, company_id: int, company_name: str) -> tu
     db.commit()
     db.refresh(project)
     return project, created
+
+
+def get_or_create_analysis_project(db: Session, company_id: int, company_name: str) -> tuple[AnalysisProject, bool]:
+    """Backward-compatible alias for bootstrap nodes that create the analysis project."""
+    return get_or_create_project(db=db, company_id=company_id, company_name=company_name)
