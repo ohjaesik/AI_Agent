@@ -16,8 +16,8 @@ class Settings:
 def test_allowed_command_tool_runs_in_direct_mode(monkeypatch):
     monkeypatch.setattr("app.agents.sandbox.get_settings", lambda: Settings())
     result = run_allowed_command_tool(
-        agent_id="agent_evaluator_agent",
-        tool_name="agent evaluator",
+        agent_id="evaluation_critic_agent",
+        tool_name="quality gate",
         command=[sys.executable, "-c", "print('ok')"],
         timeout_seconds=5,
     )
@@ -27,10 +27,10 @@ def test_allowed_command_tool_runs_in_direct_mode(monkeypatch):
 
 
 def test_registered_agent_keeps_legacy_fallback_tool_aliases():
-    allowed_tools = get_allowed_tools("agent_evaluator_agent")
+    allowed_tools = get_allowed_tools("evaluation_critic_agent")
 
-    assert "agent evaluator" in allowed_tools
-    assert "analysis result writer" in allowed_tools
+    assert "llm critic" in allowed_tools
+    assert "evidence coverage scorer" in allowed_tools
     assert "quality gate" in allowed_tools
     assert "replan router" in allowed_tools
 
