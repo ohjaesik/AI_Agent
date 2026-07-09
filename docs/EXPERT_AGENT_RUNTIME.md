@@ -17,6 +17,33 @@ Tool-level Agents make the system noisy and difficult to explain. For example, `
 
 The system therefore uses expert Agents as responsibility, governance, and audit units. Each expert Agent owns several graph nodes through named capabilities.
 
+## Single registry source
+
+`app/agents/registry.py` is the single source of truth for Agent contracts.
+
+There is no separate expert registry module. The public registry returns the 7 expert Agent contracts directly.
+
+Each `AgentSpec` includes:
+
+- `id`
+- `name`
+- `category`
+- `purpose`
+- `implementation`
+- `managed_nodes`
+- `capabilities`
+- `tools`
+- `controls`
+- `human_review_required`
+- `regulatory_notes`
+- `role_prompt`
+- `task_instructions`
+- `quality_checks`
+- `output_contract`
+- `handoff_notes`
+
+`role_prompt` defines what kind of expert the Agent is and what responsibility boundary it must follow. `task_instructions` define what the Agent should do when its managed nodes run.
+
 ## Expert Agents
 
 | Expert Agent | Managed nodes | Responsibility |
@@ -30,24 +57,6 @@ The system therefore uses expert Agents as responsibility, governance, and audit
 | `delivery_orchestration_agent` | `human_review`, `poc_delivery_planner`, `report_writer`, `docx_generator` | Human review, PoC planning, report generation, DOCX export |
 
 ## Runtime contract binding
-
-`app/agents/expert_registry.py` defines the expert Agent contracts.
-
-Each `ExpertAgentSpec` includes:
-
-- `id`
-- `name`
-- `category`
-- `purpose`
-- `implementation`
-- `managed_nodes`
-- `capabilities`
-- `tools`
-- `controls`
-- `human_review_required`
-- `quality_checks`
-- `output_contract`
-- `handoff_notes`
 
 `app/agents/runtime.py` maps graph nodes to expert Agents through `NODE_AGENT_BINDINGS`.
 
@@ -73,6 +82,11 @@ Example:
   "capability": "data_readiness_scoring",
   "node_role": "데이터 접근성, 문서 연결성, 접근권한 기반 readiness 분류",
   "implementation": "rule_plus_rag_deterministic_scoring",
+  "role_prompt": "You are the Process Diagnosis Agent, an operations-analysis expert for AX planning...",
+  "task_instructions": [
+    "Analyze only business_processes already provided in the graph state.",
+    "Classify data readiness using deterministic thresholds and document linkage."
+  ],
   "managed_nodes": [
     "process_analyzer",
     "data_readiness",
@@ -82,20 +96,7 @@ Example:
 }
 ```
 
-The wrapper also appends an audit log entry with status `agent_contract_bound`.
-
-## Public registry compatibility
-
-`app/agents/registry.py` is kept as a compatibility module. It now returns the expert-level registry.
-
-```python
-from app.agents.registry import get_agent_registry, get_agent_spec
-
-registry = get_agent_registry()
-spec = get_agent_spec("process_diagnosis_agent")
-```
-
-This prevents old imports from returning the obsolete node/tool-level Agent catalog.
+The wrapper also appends an audit log entry with status `agent_contract_bound`. The audit log keeps the compact execution trace, while `agent_contracts` keeps the full prompt/contract metadata.
 
 ## State output
 
@@ -110,19 +111,21 @@ The state should contain:
 ```json
 {
   "agent_registry": [
-    {"id": "company_onboarding_agent"},
-    {"id": "context_evidence_agent"},
-    {"id": "process_diagnosis_agent"},
-    {"id": "business_case_agent"},
-    {"id": "governance_compliance_agent"},
-    {"id": "evaluation_critic_agent"},
-    {"id": "delivery_orchestration_agent"}
+    {"id": "company_onboarding_agent", "role_prompt": "..."},
+    {"id": "context_evidence_agent", "role_prompt": "..."},
+    {"id": "process_diagnosis_agent", "role_prompt": "..."},
+    {"id": "business_case_agent", "role_prompt": "..."},
+    {"id": "governance_compliance_agent", "role_prompt": "..."},
+    {"id": "evaluation_critic_agent", "role_prompt": "..."},
+    {"id": "delivery_orchestration_agent", "role_prompt": "..."}
   ],
   "agent_contracts": [
     {
       "node_name": "data_readiness",
       "agent_id": "process_diagnosis_agent",
-      "capability": "data_readiness_scoring"
+      "capability": "data_readiness_scoring",
+      "role_prompt": "...",
+      "task_instructions": ["..."]
     }
   ]
 }
