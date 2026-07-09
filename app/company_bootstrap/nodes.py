@@ -7,7 +7,7 @@ from typing import Any
 
 from app.company_bootstrap.dart_client import load_dart_company
 from app.company_bootstrap.idempotency import (
-    get_or_create_analysis_project,
+    get_or_create_project,
     get_or_create_departments,
     get_or_create_systems,
     get_or_update_company,
@@ -213,7 +213,7 @@ def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
             project = None
             project_created = False
             if state.get("create_project", True):
-                project, project_created = get_or_create_analysis_project(
+                project, project_created = get_or_create_project(
                     db,
                     company_id=company_id,
                     company_name=company_name,
