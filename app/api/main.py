@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.security import create_access_token, require_api_key, validate_api_key
 from app.auth.users import authenticate_user, create_user
@@ -33,6 +34,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount outputs folder to serve generated docx files for download
+app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
 
 
 class CompanyBootstrapRequest(BaseModel):
