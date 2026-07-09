@@ -6,6 +6,34 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
+STATE_INPUT_SCHEMA = {
+    "type": "object",
+    "required": ["state"],
+    "properties": {
+        "state": {"type": "object", "description": "Current LangGraph state snapshot."},
+    },
+}
+
+NODE_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "audit_logs": {"type": "array"},
+        "errors": {"type": "array"},
+    },
+    "additionalProperties": True,
+}
+
+
+def tool_spec(name: str, description: str, nodes: list[str]) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": description,
+        "nodes": nodes,
+        "input_schema": STATE_INPUT_SCHEMA,
+        "output_schema": NODE_OUTPUT_SCHEMA,
+    }
+
+
 @dataclass(frozen=True)
 class AgentSpec:
     id: str
@@ -15,6 +43,7 @@ class AgentSpec:
     implementation: str
     managed_nodes: list[str]
     capabilities: list[dict[str, Any]]
+    tool_specs: list[dict[str, Any]] = field(default_factory=list)
     tools: list[str] = field(default_factory=list)
     controls: list[str] = field(default_factory=list)
     human_review_required: bool = False
@@ -26,7 +55,10 @@ class AgentSpec:
     handoff_notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        tool_names = [item.get("name") for item in self.tool_specs if item.get("name")]
+        data["tools"] = sorted(set([*self.tools, *tool_names]))
+        return data
 
 
 AGENT_REGISTRY: list[AgentSpec] = [
@@ -41,6 +73,11 @@ AGENT_REGISTRY: list[AgentSpec] = [
             {"name": "company_profile_resolution", "node_role": "회사 식별, OpenDART 조회, company profile 생성/갱신", "nodes": ["company_profile_agent"]},
             {"name": "official_source_ingestion", "node_role": "공식 URL과 공시 자료 수집, 문서 저장, RAG 색인 준비", "nodes": ["source_ingestion_agent"]},
             {"name": "process_candidate_discovery", "node_role": "공식자료 기반 AX 후보 업무 생성과 evidence label 연결", "nodes": ["process_discovery_agent"]},
+        ],
+        tool_specs=[
+            tool_spec("company_profile_loader", "Resolve company identity, OpenDART overview, and project bootstrap context.", ["company_profile_agent"]),
+            tool_spec("official_source_ingestor", "Fetch official URLs and public filings and persist source documents.", ["source_ingestion_agent"]),
+            tool_spec("process_discovery_llm", "Generate source-grounded AX candidate processes with JSON validation and fallback.", ["process_discovery_agent"]),
         ],
         tools=["OpenDART client", "official URL loader", "document indexer", "vLLM/Gemma", "JSON schema validation"],
         controls=["official_source_only", "source_traceability", "allowed_citation_labels_only", "fallback_on_invalid_json"],
@@ -80,6 +117,10 @@ AGENT_REGISTRY: list[AgentSpec] = [
             {"name": "project_context_loading", "node_role": "project, company, process, document, system 정보를 DB에서 로드", "nodes": ["load_project_data"]},
             {"name": "rag_evidence_retrieval", "node_role": "업무별 pgvector 검색, evidence item 생성, used_sources 구성", "nodes": ["retrieve_context"]},
         ],
+        tool_specs=[
+            tool_spec("project_context_loader", "Load project, company, department, process, system, and document state from the database.", ["load_project_data"]),
+            tool_spec("rag_retriever", "Retrieve process-specific evidence chunks and citation sources from pgvector.", ["retrieve_context"]),
+        ],
         tools=["PostgreSQL", "pgvector retriever", "evidence collector"],
         controls=["traceable_chunk_metadata", "citation_label_preservation", "document_access_boundary"],
         role_prompt=(
@@ -118,6 +159,11 @@ AGENT_REGISTRY: list[AgentSpec] = [
             {"name": "data_readiness_scoring", "node_role": "데이터 접근성, 문서 연결성, 접근권한 기반 readiness 분류", "nodes": ["data_readiness"]},
             {"name": "automation_feasibility_scoring", "node_role": "반복성, 기대효과, 구현 가능성, 위험도 기반 assistive automation 가능성 계산", "nodes": ["automation_feasibility"]},
         ],
+        tool_specs=[
+            tool_spec("process_analyzer_tool", "Analyze process bottlenecks, target users, current flow, and evidence summary.", ["process_analyzer"]),
+            tool_spec("data_readiness_scorer", "Score data accessibility, document linkage, and preparation requirements.", ["data_readiness"]),
+            tool_spec("automation_feasibility_scorer", "Score assistive automation fit from repeatability, effect, feasibility, and risk.", ["automation_feasibility"]),
+        ],
         tools=["RAG context reader", "deterministic score calculator"],
         controls=["evidence_required_for_key_claims", "data_preparation_flag", "assistive_only_by_default"],
         role_prompt=(
@@ -155,6 +201,10 @@ AGENT_REGISTRY: list[AgentSpec] = [
             {"name": "roi_cost_calculation", "node_role": "현재 비용, 예상 비용, 절감률, PoC 비용 계산", "nodes": ["roi_cost"]},
             {"name": "candidate_priority_ranking", "node_role": "효과, 반복성, readiness, ROI, risk 기반 우선순위 산정", "nodes": ["priority_ranking"]},
         ],
+        tool_specs=[
+            tool_spec("roi_calculator", "Calculate baseline cost, expected savings, saving rate, and PoC cost estimates.", ["roi_cost"]),
+            tool_spec("priority_ranker", "Rank candidates using deterministic weighted scores and governance-aware status.", ["priority_ranking"]),
+        ],
         tools=["ROI calculator", "score calculator"],
         controls=["formula_traceability", "no_llm_financial_guessing", "bounded_score_weights"],
         role_prompt=(
@@ -191,6 +241,10 @@ AGENT_REGISTRY: list[AgentSpec] = [
         capabilities=[
             {"name": "risk_signal_screening", "node_role": "업무명, 문제, workflow, 문서, RAG context에서 risk flag 탐지", "nodes": ["risk_governance"]},
             {"name": "regulatory_mapping", "node_role": "EU AI Act, Korea AI Basic Act proxy, privacy/security mapping 생성", "nodes": ["compliance_assessment"]},
+        ],
+        tool_specs=[
+            tool_spec("risk_rule_engine", "Detect privacy, security, high-impact, sensitive, and prohibited-use risk signals.", ["risk_governance"]),
+            tool_spec("compliance_mapper", "Map candidates to compliance levels, controls, and review requirements.", ["compliance_assessment"]),
         ],
         tools=["policy rule engine", "regulatory mapping rules"],
         controls=["prohibited_use_screening", "high_impact_screening", "human_oversight_required", "incident_logging"],
@@ -235,7 +289,12 @@ AGENT_REGISTRY: list[AgentSpec] = [
             {"name": "llm_second_opinion", "node_role": "LLM 기반 보조 검토와 confidence calibration", "nodes": ["llm_critic"]},
             {"name": "bounded_replan", "node_role": "추가 근거가 유효할 때 제한된 replan loop 수행", "nodes": ["agent_replan"]},
         ],
-        tools=["evidence coverage scorer", "LLM critic", "quality gate", "replan router"],
+        tool_specs=[
+            tool_spec("evidence_quality_gate", "Evaluate evidence coverage, data confidence, rationale coverage, and compliance alignment.", ["agent_evaluator"]),
+            tool_spec("llm_critic", "Use an LLM second opinion to calibrate candidate recommendation status.", ["llm_critic"]),
+            tool_spec("replan_router", "Run bounded evidence re-query and route back to retrieval or human review.", ["agent_replan"]),
+        ],
+        tools=["LLM critic", "quality gate", "evidence coverage scorer", "replan router"],
         controls=["no_recommendation_without_evidence", "compliance_alignment_check", "confidence_thresholding", "bounded_replan_loop"],
         human_review_required=True,
         role_prompt=(
@@ -275,7 +334,13 @@ AGENT_REGISTRY: list[AgentSpec] = [
             {"name": "report_generation", "node_role": "근거 기반 report_data 생성, LLM 문장화, citation validation", "nodes": ["report_writer"]},
             {"name": "docx_export", "node_role": "report_data를 DOCX 파일로 내보내기", "nodes": ["docx_generator"]},
         ],
-        tools=["LangGraph interrupt", "report writer", "citation validator", "docx generator"],
+        tool_specs=[
+            tool_spec("human_review_gate", "Pause or resume the graph with an explicit human review decision.", ["human_review"]),
+            tool_spec("poc_planner", "Create a 6-week PoC plan with milestones, KPIs, and exit criteria.", ["poc_delivery_planner"]),
+            tool_spec("report_writer", "Generate grounded report_data with AI disclosure and citation validation.", ["report_writer"]),
+            tool_spec("docx_exporter", "Export report_data to a reviewable DOCX artifact.", ["docx_generator"]),
+        ],
+        tools=["LangGraph interrupt", "citation validator", "docx generator"],
         controls=["human_review_gate", "transparent_ai_disclosure", "citation_validation", "audit_trail"],
         human_review_required=True,
         role_prompt=(
@@ -323,10 +388,34 @@ def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[
     return None
 
 
+def get_tool_spec(agent_id: str, tool_name: str) -> dict[str, Any] | None:
+    spec = get_agent_spec(agent_id)
+    if not spec:
+        return None
+    normalized = tool_name.strip().lower().replace("_", " ").replace("-", " ")
+    for item in spec.get("tool_specs", []) or []:
+        current = str(item.get("name") or "").strip().lower().replace("_", " ").replace("-", " ")
+        if current == normalized:
+            return dict(item)
+    return None
+
+
+def get_tool_spec_for_node(agent_id: str, node_name: str) -> dict[str, Any] | None:
+    spec = get_agent_spec(agent_id)
+    if not spec:
+        return None
+    for item in spec.get("tool_specs", []) or []:
+        if node_name in item.get("nodes", []):
+            return dict(item)
+    return None
+
+
 __all__ = [
     "AgentSpec",
     "AGENT_REGISTRY",
     "get_agent_registry",
     "get_agent_spec",
     "get_capability_for_node",
+    "get_tool_spec",
+    "get_tool_spec_for_node",
 ]
