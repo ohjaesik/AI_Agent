@@ -67,6 +67,9 @@ class BootstrapState(TypedDict, total=False):
     project_id: int | None
     discovery_mode: str | None
 
+    # Runtime contracts
+    agent_contracts: Annotated[list[dict[str, Any]], merge_unique_dicts]
+
     # Result
     result: dict[str, Any]
 
