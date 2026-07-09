@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import pprint
+from pathlib import Path
 from typing import Any
 
 from langgraph.types import Command
@@ -12,6 +13,9 @@ from langgraph.types import Command
 from app.db.crud import resolve_project_selection
 from app.db.database import SessionLocal
 from app.graph.workflow import build_ax_planner_graph
+
+
+DEFAULT_STATE_OUTPUT_PATH = "outputs/workflow_state_real.json"
 
 
 def print_interrupt(result: dict[str, Any]) -> None:
@@ -34,6 +38,19 @@ def resolve_ids(
             project_id=project_id,
             company_id=company_id,
         )
+
+
+def save_workflow_state(result: dict[str, Any], output_path: str | Path | None) -> str | None:
+    if not output_path:
+        return None
+
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return str(path)
 
 
 def compact_payload(payload: Any, max_chars: int = 700) -> str:
@@ -133,6 +150,7 @@ def run_demo(
     review_decision: str = "approve",
     review_comment: str | None = None,
     verbose: bool = False,
+    state_output_path: str | None = None,
 ) -> dict[str, Any]:
     resolved = resolve_ids(project_id=project_id, company_id=company_id)
     resolved_project_id = resolved["project_id"]
@@ -177,6 +195,9 @@ def run_demo(
         print_interrupt(result)
 
         if not auto_approve:
+            saved_path = save_workflow_state(result, state_output_path)
+            if saved_path:
+                print("workflow_state_path:", saved_path)
             print("\nGraph paused. Resume with a human decision in code or run with --auto-approve.")
             return result
 
@@ -194,8 +215,12 @@ def run_demo(
             config=config,
         )
 
+    saved_path = save_workflow_state(result, state_output_path)
+
     print("\n=== AX Delivery Planner Graph Finished ===")
     print("report_docx_path:", result.get("report_docx_path"))
+    if saved_path:
+        print("workflow_state_path:", saved_path)
 
     if result.get("errors"):
         print("\n=== Errors ===")
@@ -245,6 +270,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reviewer-name", type=str, default="IT기획팀 담당자")
     parser.add_argument("--review-decision", type=str, default="approve", choices=["approve", "edit", "reject"])
     parser.add_argument("--review-comment", type=str, default=None)
+    parser.add_argument("--state-output-path", type=str, default=DEFAULT_STATE_OUTPUT_PATH)
     return parser.parse_args()
 
 
@@ -264,4 +290,5 @@ if __name__ == "__main__":
         review_decision=args.review_decision,
         review_comment=args.review_comment,
         verbose=args.verbose,
+        state_output_path=args.state_output_path,
     )
