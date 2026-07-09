@@ -44,6 +44,21 @@ def build_agent_registry_rows(state: dict[str, Any]) -> list[list[Any]]:
     return rows
 
 
+def build_agent_decision_rows(state: dict[str, Any]) -> list[list[Any]]:
+    rows = []
+    for decision in state.get("agent_decisions", []) or []:
+        if decision.get("phase") != "post_tool_observation":
+            continue
+        rows.append([
+            decision.get("node_name", "-"),
+            decision.get("selected_tool", "-"),
+            decision.get("decision", "-"),
+            "Y" if decision.get("changed_output") else "N",
+            decision.get("reason", "-"),
+        ])
+    return rows
+
+
 def build_agent_evaluation_rows(state: dict[str, Any]) -> list[list[Any]]:
     rows = []
     for item in state.get("agent_evaluation", {}).get("items", []):
@@ -71,6 +86,8 @@ def build_agent_evaluation_summary_rows(state: dict[str, Any]) -> list[list[Any]
         ["낮은 confidence 후보", summary.get("low_confidence_count", 0)],
         ["Human Review 필요 후보", summary.get("human_review_required_count", 0)],
         ["추가 근거 필요 후보", summary.get("additional_evidence_required_count", 0)],
+        ["Agent 결정 적용", "Y" if summary.get("agent_decision_applied") else "N"],
+        ["Agent 결정 조정 후보", summary.get("agent_decision_adjusted_count", 0)],
     ]
     if summary.get("llm_critic_applied"):
         rows.extend([
@@ -81,9 +98,44 @@ def build_agent_evaluation_summary_rows(state: dict[str, Any]) -> list[list[Any]
     return rows
 
 
+def normalize_replan_item(item: Any, state: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(item, dict):
+        return item
+    process_id = int(item or 0)
+    candidate = next(
+        (
+            row
+            for row in (state.get("priority_ranking", {}) or {}).get("items", [])
+            if int(row.get("process_id") or 0) == process_id
+        ),
+        {},
+    )
+    evaluation = next(
+        (
+            row
+            for row in (state.get("agent_evaluation", {}) or {}).get("items", [])
+            if int(row.get("process_id") or 0) == process_id
+        ),
+        {},
+    )
+    return {
+        "process_id": process_id,
+        "candidate_agent_name": candidate.get("candidate_agent_name") or evaluation.get("candidate_agent_name") or f"process:{process_id}",
+        "confidence_score": evaluation.get("confidence_score", 0),
+        "evidence_coverage": evaluation.get("evidence_coverage", 0),
+        "suggested_actions": [
+            "공식 URL 또는 내부 문서 추가 수집",
+            "업무 owner 인터뷰 메모 추가",
+            "RAG 재색인 후 재평가",
+        ],
+    }
+
+
 def build_replan_rows(state: dict[str, Any]) -> list[list[Any]]:
     rows = []
-    for item in state.get("replan_request", {}).get("items", []):
+    raw_items = state.get("replan_request", {}).get("items", [])
+    for raw_item in raw_items:
+        item = normalize_replan_item(raw_item, state)
         rows.append([
             item.get("candidate_agent_name", "-"),
             percent(item.get("confidence_score", 0)),
@@ -117,6 +169,21 @@ def build_agent_evaluation_section(state: dict[str, Any]) -> dict[str, Any]:
             "font_size": 6,
         },
     ]
+
+    decision_rows = build_agent_decision_rows(state)
+    if decision_rows:
+        blocks.extend([
+            {
+                "type": "paragraph",
+                "text": "아래 표는 Agent가 tool 실행 결과를 관찰한 뒤 실제 state에 반영한 post-decision 기록이다.",
+            },
+            {
+                "type": "table",
+                "headers": ["Node", "Selected Tool", "Decision", "Changed", "Reason"],
+                "rows": decision_rows,
+                "font_size": 6,
+            },
+        ])
 
     replan_rows = build_replan_rows(state)
     if replan_rows:
@@ -174,6 +241,7 @@ def insert_agent_evaluation_section(report_data: dict[str, Any], state: dict[str
     report_data["sections"] = renumber_sections(sections)
     report_data["agent_evaluation"] = state.get("agent_evaluation", {})
     report_data["agent_registry"] = state.get("agent_registry", [])
+    report_data["agent_decisions"] = state.get("agent_decisions", [])
     report_data["replan_request"] = state.get("replan_request", {})
     return report_data
 
