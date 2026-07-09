@@ -18,7 +18,7 @@ def agent_evaluator_node(state: AXPlannerState) -> dict[str, Any]:
         result = evaluate_agent_outputs(state)
         updated_priority_ranking = result.get("updated_priority_ranking", state.get("priority_ranking", {}))
         result_without_ranking: dict[str, Any] = {
-            "agent_registry": result.get("agent_registry", []),
+            "agent_tool_permissions": result.get("agent_tool_permissions", []),
             "items": result.get("items", []),
             "summary": result.get("summary", {}),
         }
@@ -45,7 +45,6 @@ def agent_evaluator_node(state: AXPlannerState) -> dict[str, Any]:
             )
 
         return {
-            "agent_registry": result.get("agent_registry", []),
             "agent_evaluation": result_without_ranking,
             "priority_ranking": updated_priority_ranking,
             "audit_logs": append_audit(
