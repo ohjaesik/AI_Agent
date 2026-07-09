@@ -2,38 +2,65 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.expert_executor import expert_executed_node
+from app.agents.handoff import attach_agent_flow_outputs
+from app.agents.runtime import build_agent_contract, get_agent_binding_for_node
 from app.graph.node_worker import workerized_node
 from app.graph.replan_node import should_continue_after_replan, should_replan
 from app.graph.state import AXPlannerState
 
 
-def agent_tool_executed_node(node_name: str):
-    return expert_executed_node(node_name, workerized_node(node_name))
+def supervisor_delegated_node(node_name: str):
+    """Wrap a LangGraph node as an Agent-to-Agent delegated task.
+
+    The graph still executes deterministic node edges, but every node result now
+    carries explicit Supervisor delegation, Agent package, and handoff metadata so
+    the runtime trace reads as Agent -> Agent flow instead of bare node chaining.
+    """
+    node_runner = expert_executed_node(node_name, workerized_node(node_name))
+    binding = get_agent_binding_for_node(node_name) or {}
+    contract = build_agent_contract(node_name) or {}
+    agent_id = str(binding.get("agent_id") or contract.get("agent_id") or "unknown_agent")
+
+    def _node(state: dict[str, Any]) -> dict[str, Any]:
+        result = node_runner(state)
+        return attach_agent_flow_outputs(
+            state=state,
+            result=result,
+            agent_id=agent_id,
+            node_name=node_name,
+            contract=contract,
+            loop_index=(result.get("agent_loop_iterations") or [{}])[-1].get("loop_index"),
+        )
+
+    _node.__name__ = f"supervisor_delegated_{node_name}"
+    return _node
 
 
 def build_ax_planner_graph():
     builder = StateGraph(AXPlannerState)
 
-    builder.add_node("load_project_data", agent_tool_executed_node("load_project_data"))
-    builder.add_node("retrieve_context", agent_tool_executed_node("retrieve_context"))
-    builder.add_node("process_analyzer", agent_tool_executed_node("process_analyzer"))
-    builder.add_node("data_readiness", agent_tool_executed_node("data_readiness"))
-    builder.add_node("automation_feasibility", agent_tool_executed_node("automation_feasibility"))
-    builder.add_node("roi_cost", agent_tool_executed_node("roi_cost"))
-    builder.add_node("risk_governance", agent_tool_executed_node("risk_governance"))
-    builder.add_node("compliance_assessment", agent_tool_executed_node("compliance_assessment"))
-    builder.add_node("priority_ranking", agent_tool_executed_node("priority_ranking"))
-    builder.add_node("agent_evaluator", agent_tool_executed_node("agent_evaluator"))
-    builder.add_node("llm_critic", agent_tool_executed_node("llm_critic"))
-    builder.add_node("agent_replan", agent_tool_executed_node("agent_replan"))
-    builder.add_node("human_review", agent_tool_executed_node("human_review"))
-    builder.add_node("poc_delivery_planner", agent_tool_executed_node("poc_delivery_planner"))
-    builder.add_node("report_writer", agent_tool_executed_node("report_writer"))
-    builder.add_node("docx_generator", agent_tool_executed_node("docx_generator"))
+    builder.add_node("load_project_data", supervisor_delegated_node("load_project_data"))
+    builder.add_node("retrieve_context", supervisor_delegated_node("retrieve_context"))
+    builder.add_node("process_analyzer", supervisor_delegated_node("process_analyzer"))
+    builder.add_node("data_readiness", supervisor_delegated_node("data_readiness"))
+    builder.add_node("automation_feasibility", supervisor_delegated_node("automation_feasibility"))
+    builder.add_node("roi_cost", supervisor_delegated_node("roi_cost"))
+    builder.add_node("risk_governance", supervisor_delegated_node("risk_governance"))
+    builder.add_node("compliance_assessment", supervisor_delegated_node("compliance_assessment"))
+    builder.add_node("priority_ranking", supervisor_delegated_node("priority_ranking"))
+    builder.add_node("agent_evaluator", supervisor_delegated_node("agent_evaluator"))
+    builder.add_node("llm_critic", supervisor_delegated_node("llm_critic"))
+    builder.add_node("agent_replan", supervisor_delegated_node("agent_replan"))
+    builder.add_node("human_review", supervisor_delegated_node("human_review"))
+    builder.add_node("poc_delivery_planner", supervisor_delegated_node("poc_delivery_planner"))
+    builder.add_node("report_writer", supervisor_delegated_node("report_writer"))
+    builder.add_node("docx_generator", supervisor_delegated_node("docx_generator"))
 
     # 공통 입력 로드 단계
     builder.add_edge(START, "load_project_data")
