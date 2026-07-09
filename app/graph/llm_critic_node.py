@@ -17,8 +17,8 @@ def llm_critic_node(state: AXPlannerState) -> dict[str, Any]:
 
     try:
         assert_tools_allowed(
-            "agent_evaluator_agent",
-            ["LLM critic", "agent evaluator", "analysis result writer"],
+            "evaluation_critic_agent",
+            ["LLM critic", "quality gate"],
         )
         result = apply_llm_critic_to_evaluation(
             priority_ranking=state.get("priority_ranking", {}) or {},
