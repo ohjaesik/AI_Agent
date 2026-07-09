@@ -38,21 +38,9 @@ AGENT_REGISTRY: list[AgentSpec] = [
         implementation="supervisor_tool_orchestrated_with_llm_discovery",
         managed_nodes=["company_profile_agent", "source_ingestion_agent", "process_discovery_agent"],
         capabilities=[
-            {
-                "name": "company_profile_resolution",
-                "node_role": "회사 식별, OpenDART 조회, company profile 생성/갱신",
-                "nodes": ["company_profile_agent"],
-            },
-            {
-                "name": "official_source_ingestion",
-                "node_role": "공식 URL과 공시 자료 수집, 문서 저장, RAG 색인 준비",
-                "nodes": ["source_ingestion_agent"],
-            },
-            {
-                "name": "process_candidate_discovery",
-                "node_role": "공식자료 기반 AX 후보 업무 생성과 evidence label 연결",
-                "nodes": ["process_discovery_agent"],
-            },
+            {"name": "company_profile_resolution", "node_role": "회사 식별, OpenDART 조회, company profile 생성/갱신", "nodes": ["company_profile_agent"]},
+            {"name": "official_source_ingestion", "node_role": "공식 URL과 공시 자료 수집, 문서 저장, RAG 색인 준비", "nodes": ["source_ingestion_agent"]},
+            {"name": "process_candidate_discovery", "node_role": "공식자료 기반 AX 후보 업무 생성과 evidence label 연결", "nodes": ["process_discovery_agent"]},
         ],
         tools=["OpenDART client", "official URL loader", "document indexer", "vLLM/Gemma", "JSON schema validation"],
         controls=["official_source_only", "source_traceability", "allowed_citation_labels_only", "fallback_on_invalid_json"],
@@ -89,16 +77,8 @@ AGENT_REGISTRY: list[AgentSpec] = [
         implementation="tool_based_rag_retrieval",
         managed_nodes=["load_project_data", "retrieve_context"],
         capabilities=[
-            {
-                "name": "project_context_loading",
-                "node_role": "project, company, process, document, system 정보를 DB에서 로드",
-                "nodes": ["load_project_data"],
-            },
-            {
-                "name": "rag_evidence_retrieval",
-                "node_role": "업무별 pgvector 검색, evidence item 생성, used_sources 구성",
-                "nodes": ["retrieve_context"],
-            },
+            {"name": "project_context_loading", "node_role": "project, company, process, document, system 정보를 DB에서 로드", "nodes": ["load_project_data"]},
+            {"name": "rag_evidence_retrieval", "node_role": "업무별 pgvector 검색, evidence item 생성, used_sources 구성", "nodes": ["retrieve_context"]},
         ],
         tools=["PostgreSQL", "pgvector retriever", "evidence collector"],
         controls=["traceable_chunk_metadata", "citation_label_preservation", "document_access_boundary"],
@@ -134,21 +114,9 @@ AGENT_REGISTRY: list[AgentSpec] = [
         implementation="rule_plus_rag_deterministic_scoring",
         managed_nodes=["process_analyzer", "data_readiness", "automation_feasibility"],
         capabilities=[
-            {
-                "name": "process_bottleneck_analysis",
-                "node_role": "업무 문제, 대상 사용자, 현재 흐름, 문서 의존성, 근거 요약",
-                "nodes": ["process_analyzer"],
-            },
-            {
-                "name": "data_readiness_scoring",
-                "node_role": "데이터 접근성, 문서 연결성, 접근권한 기반 readiness 분류",
-                "nodes": ["data_readiness"],
-            },
-            {
-                "name": "automation_feasibility_scoring",
-                "node_role": "반복성, 기대효과, 구현 가능성, 위험도 기반 assistive automation 가능성 계산",
-                "nodes": ["automation_feasibility"],
-            },
+            {"name": "process_bottleneck_analysis", "node_role": "업무 문제, 대상 사용자, 현재 흐름, 문서 의존성, 근거 요약", "nodes": ["process_analyzer"]},
+            {"name": "data_readiness_scoring", "node_role": "데이터 접근성, 문서 연결성, 접근권한 기반 readiness 분류", "nodes": ["data_readiness"]},
+            {"name": "automation_feasibility_scoring", "node_role": "반복성, 기대효과, 구현 가능성, 위험도 기반 assistive automation 가능성 계산", "nodes": ["automation_feasibility"]},
         ],
         tools=["RAG context reader", "deterministic score calculator"],
         controls=["evidence_required_for_key_claims", "data_preparation_flag", "assistive_only_by_default"],
@@ -184,16 +152,8 @@ AGENT_REGISTRY: list[AgentSpec] = [
         implementation="deterministic_calculation_and_weighted_ranking",
         managed_nodes=["roi_cost", "priority_ranking"],
         capabilities=[
-            {
-                "name": "roi_cost_calculation",
-                "node_role": "현재 비용, 예상 비용, 절감률, PoC 비용 계산",
-                "nodes": ["roi_cost"],
-            },
-            {
-                "name": "candidate_priority_ranking",
-                "node_role": "효과, 반복성, readiness, ROI, risk 기반 우선순위 산정",
-                "nodes": ["priority_ranking"],
-            },
+            {"name": "roi_cost_calculation", "node_role": "현재 비용, 예상 비용, 절감률, PoC 비용 계산", "nodes": ["roi_cost"]},
+            {"name": "candidate_priority_ranking", "node_role": "효과, 반복성, readiness, ROI, risk 기반 우선순위 산정", "nodes": ["priority_ranking"]},
         ],
         tools=["ROI calculator", "score calculator"],
         controls=["formula_traceability", "no_llm_financial_guessing", "bounded_score_weights"],
@@ -229,16 +189,8 @@ AGENT_REGISTRY: list[AgentSpec] = [
         implementation="policy_rule_engine_with_regulatory_mapping",
         managed_nodes=["risk_governance", "compliance_assessment"],
         capabilities=[
-            {
-                "name": "risk_signal_screening",
-                "node_role": "업무명, 문제, workflow, 문서, RAG context에서 risk flag 탐지",
-                "nodes": ["risk_governance"],
-            },
-            {
-                "name": "regulatory_mapping",
-                "node_role": "EU AI Act, Korea AI Basic Act proxy, privacy/security mapping 생성",
-                "nodes": ["compliance_assessment"],
-            },
+            {"name": "risk_signal_screening", "node_role": "업무명, 문제, workflow, 문서, RAG context에서 risk flag 탐지", "nodes": ["risk_governance"]},
+            {"name": "regulatory_mapping", "node_role": "EU AI Act, Korea AI Basic Act proxy, privacy/security mapping 생성", "nodes": ["compliance_assessment"]},
         ],
         tools=["policy rule engine", "regulatory mapping rules"],
         controls=["prohibited_use_screening", "high_impact_screening", "human_oversight_required", "incident_logging"],
@@ -279,21 +231,9 @@ AGENT_REGISTRY: list[AgentSpec] = [
         implementation="deterministic_quality_gate_with_optional_llm_critic",
         managed_nodes=["agent_evaluator", "llm_critic", "agent_replan"],
         capabilities=[
-            {
-                "name": "deterministic_agent_evaluation",
-                "node_role": "evidence coverage, data confidence, rationale coverage, compliance alignment 계산",
-                "nodes": ["agent_evaluator"],
-            },
-            {
-                "name": "llm_second_opinion",
-                "node_role": "LLM 기반 보조 검토와 confidence calibration",
-                "nodes": ["llm_critic"],
-            },
-            {
-                "name": "bounded_replan",
-                "node_role": "추가 근거가 유효할 때 제한된 replan loop 수행",
-                "nodes": ["agent_replan"],
-            },
+            {"name": "deterministic_agent_evaluation", "node_role": "evidence coverage, data confidence, rationale coverage, compliance alignment 계산", "nodes": ["agent_evaluator"]},
+            {"name": "llm_second_opinion", "node_role": "LLM 기반 보조 검토와 confidence calibration", "nodes": ["llm_critic"]},
+            {"name": "bounded_replan", "node_role": "추가 근거가 유효할 때 제한된 replan loop 수행", "nodes": ["agent_replan"]},
         ],
         tools=["evidence coverage scorer", "LLM critic", "quality gate", "replan router"],
         controls=["no_recommendation_without_evidence", "compliance_alignment_check", "confidence_thresholding", "bounded_replan_loop"],
@@ -330,26 +270,10 @@ AGENT_REGISTRY: list[AgentSpec] = [
         implementation="human_in_the_loop_delivery_supervisor",
         managed_nodes=["human_review", "poc_delivery_planner", "report_writer", "docx_generator"],
         capabilities=[
-            {
-                "name": "human_review_gate",
-                "node_role": "approve/edit/reject 검토 기록 수집과 graph resume",
-                "nodes": ["human_review"],
-            },
-            {
-                "name": "poc_delivery_planning",
-                "node_role": "승인 후보 기반 6주 PoC 계획, milestone, KPI 생성",
-                "nodes": ["poc_delivery_planner"],
-            },
-            {
-                "name": "report_generation",
-                "node_role": "근거 기반 report_data 생성, LLM 문장화, citation validation",
-                "nodes": ["report_writer"],
-            },
-            {
-                "name": "docx_export",
-                "node_role": "report_data를 DOCX 파일로 내보내기",
-                "nodes": ["docx_generator"],
-            },
+            {"name": "human_review_gate", "node_role": "approve/edit/reject 검토 기록 수집과 graph resume", "nodes": ["human_review"]},
+            {"name": "poc_delivery_planning", "node_role": "승인 후보 기반 6주 PoC 계획, milestone, KPI 생성", "nodes": ["poc_delivery_planner"]},
+            {"name": "report_generation", "node_role": "근거 기반 report_data 생성, LLM 문장화, citation validation", "nodes": ["report_writer"]},
+            {"name": "docx_export", "node_role": "report_data를 DOCX 파일로 내보내기", "nodes": ["docx_generator"]},
         ],
         tools=["LangGraph interrupt", "report writer", "citation validator", "docx generator"],
         controls=["human_review_gate", "transparent_ai_disclosure", "citation_validation", "audit_trail"],
@@ -399,21 +323,10 @@ def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[
     return None
 
 
-# Legacy aliases for older tests/imports during the refactor window.
-ExpertAgentSpec = AgentSpec
-EXPERT_AGENT_REGISTRY = AGENT_REGISTRY
-get_expert_agent_registry = get_agent_registry
-get_expert_agent_spec = get_agent_spec
-
-
 __all__ = [
     "AgentSpec",
     "AGENT_REGISTRY",
     "get_agent_registry",
     "get_agent_spec",
     "get_capability_for_node",
-    "ExpertAgentSpec",
-    "EXPERT_AGENT_REGISTRY",
-    "get_expert_agent_registry",
-    "get_expert_agent_spec",
 ]
