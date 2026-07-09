@@ -1,40 +1,113 @@
-# Expert Agent Supervisor Loop
+# Expert Agent Supervisor & Handoff Flow
 
-The runtime no longer uses a separate LLM planner to choose tools.
+The runtime uses Agent-stage nodes instead of bare LangGraph workflow nodes.
 
-The structure is now:
+The top-level `AX Delivery Supervisor Agent` delegates work to lower Expert Agents. Each lower Agent runs only its assigned internal tool nodes, produces a package, and hands that package to the next Agent.
 
-```text
-Top-level Agent Supervisor
-  -> resolve owning Expert Agent
-  -> load tools assigned to that Agent for the current node
-  -> run the assigned tools in order
-  -> apply the Agent's post-decision
-  -> loop at most 2 times by default
-  -> if more loop is needed, emit a command request and continue unless explicitly approved
-```
-
-## Runtime flow
+## Agent-stage graph
 
 ```mermaid
 flowchart TD
-    N[LangGraph node] --> S[Top-level Agent Supervisor]
-    S --> A[Resolve owning Expert Agent]
-    A --> R[Load AgentSpec role / instructions / controls]
-    R --> T[Load assigned tools from AgentSpec.tool_specs, max 3]
-    T --> L1[Loop 1: run assigned tools in registry order]
-    L1 --> O1[Tool observations]
-    O1 --> D1[Agent post-decision]
-    D1 --> C{Need another Agent loop?}
-    C -->|Yes, under max 2| L2[Loop 2: rerun assigned tool set]
-    C -->|No| OUT[handoff result to next node]
-    L2 --> O2[Tool observations]
-    O2 --> D2[Agent post-decision]
-    D2 --> M{Still needs more?}
-    M -->|Yes| Q[emit agent_loop_request with CLI command]
-    M -->|No| OUT
-    Q --> OUT
+    S[AX Delivery Supervisor Agent] --> C[Context & Evidence Agent]
+    C --> P[Process Diagnosis Agent]
+    C --> G[Governance & Compliance Agent]
+    P --> B[Business Case Agent]
+    G --> B
+    B --> E[Evaluation & Critic Agent]
+    E -->|needs evidence refresh| R[Evaluation Replan Task]
+    R -->|productive replan| C
+    R -->|stop / max attempts| D[Delivery Orchestration Agent]
+    E -->|validated / human review route| D
+    D --> O[Final DOCX / report output]
 ```
+
+## Runtime structure
+
+```text
+AX Delivery Supervisor Agent
+  -> delegates to one Expert Agent stage
+  -> Expert Agent runs its assigned internal tool nodes
+  -> Expert Agent applies post-decision rules and loop policy
+  -> Expert Agent emits a package artifact
+  -> Expert Agent hands off selected payload keys to downstream Agent
+```
+
+Current Agent-stage mapping in `app/graph/workflow.py`:
+
+```text
+context_evidence_agent
+  - load_project_data
+  - retrieve_context
+
+process_diagnosis_agent
+  - process_analyzer
+  - data_readiness
+  - automation_feasibility
+
+governance_compliance_agent
+  - risk_governance
+  - compliance_assessment
+
+business_case_agent
+  - roi_cost
+  - priority_ranking
+
+evaluation_critic_agent
+  - agent_evaluator
+  - llm_critic
+
+agent_replan
+  - agent_replan
+
+delivery_orchestration_agent
+  - human_review
+  - poc_delivery_planner
+  - report_writer
+  - docx_generator
+```
+
+## Handoff packages
+
+Each Agent stage writes one package artifact to state:
+
+```text
+context_evidence_package
+process_diagnosis_package
+governance_package
+business_case_package
+evaluation_package
+delivery_package
+```
+
+The `agent_handoffs` trace records movement between Agents:
+
+```json
+{
+  "from_agent": "context_evidence_agent",
+  "to_agent": "process_diagnosis_agent",
+  "source_stage": "context_evidence_agent",
+  "source_nodes": ["load_project_data", "retrieve_context"],
+  "target_nodes": ["process_analyzer", "data_readiness", "automation_feasibility"],
+  "payload_keys": ["business_processes", "retrieved_contexts", "evidence_items"]
+}
+```
+
+## Tool ownership
+
+Tools are not global. They are assigned in `app/agents/registry.py` under each `AgentSpec.tool_specs`.
+
+For example:
+
+```text
+Evaluation & Critic Agent
+  internal node: agent_evaluator
+  assigned tools:
+    - evidence_quality_gate
+    - review_status_calibrator
+    - evidence_replan_decider
+```
+
+The stage-level Agent node may contain several internal nodes, but each internal node still calls only the tools assigned to its owning Expert Agent.
 
 ## Loop policy
 
@@ -52,26 +125,9 @@ python -m app.main --project-id <PROJECT_ID> --auto-approve --allow-agent-extra-
 
 When the system thinks another loop could help but the cap has been reached, it writes an item to `agent_loop_requests` and continues with the best available result.
 
-## Agent-to-tool assignment
-
-Tools are not global. They are assigned in `app/agents/registry.py` under each `AgentSpec.tool_specs`.
-
-For example:
-
-```text
-Evaluation & Critic Agent
-  node: agent_evaluator
-  assigned tools:
-    - evidence_quality_gate
-    - review_status_calibrator
-    - evidence_replan_decider
-```
-
-The Agent Supervisor does not allow that Agent to call tools outside its own assigned list. The selected/emphasized tool is still recorded, but the loop executes the assigned tool set so the trace shows how the Agent used its available tools.
-
 ## LLM usage
 
-There is no separate `llm_planner.py` now.
+There is no separate `llm_planner.py`.
 
 LLM calls remain inside specific tools only:
 
@@ -89,56 +145,31 @@ Inspect these in `outputs/workflow_state_real.json`:
 
 ```json
 {
-  "agent_contracts": [
+  "agent_supervisor_steps": [
     {
-      "agent_id": "evaluation_critic_agent",
-      "node_name": "agent_evaluator",
-      "assigned_tools": [
-        {"name": "evidence_quality_gate", "uses_llm": false},
-        {"name": "review_status_calibrator", "uses_llm": false},
-        {"name": "evidence_replan_decider", "uses_llm": false}
-      ],
-      "agent_loop_mode": "expert_agent_supervisor_loop",
-      "loop_limit": 2
+      "supervisor_agent_id": "ax_delivery_supervisor_agent",
+      "delegated_to": "business_case_agent",
+      "delegated_stage": "business_case_agent",
+      "delegated_nodes": ["roi_cost", "priority_ranking"],
+      "input_keys": ["process_analysis", "data_readiness", "automation_feasibility", "risk_governance", "compliance_assessment"],
+      "expected_output_keys": ["roi_cost", "priority_ranking"]
     }
   ],
-  "agent_tool_calls": [
+  "agent_handoffs": [
     {
-      "agent_id": "evaluation_critic_agent",
-      "node_name": "agent_evaluator",
-      "loop_index": 1,
-      "tool_name": "evidence_quality_gate",
-      "executes_node": true,
-      "planner_used_llm": false
-    },
-    {
-      "agent_id": "evaluation_critic_agent",
-      "node_name": "agent_evaluator",
-      "loop_index": 1,
-      "tool_name": "review_status_calibrator",
-      "executes_node": false,
-      "planner_used_llm": false
+      "from_agent": "business_case_agent",
+      "to_agent": "evaluation_critic_agent",
+      "source_stage": "business_case_agent",
+      "source_nodes": ["roi_cost", "priority_ranking"],
+      "payload_keys": ["roi_cost", "priority_ranking"]
     }
   ],
-  "agent_loop_iterations": [
-    {
-      "agent_id": "evaluation_critic_agent",
-      "node_name": "agent_evaluator",
-      "loop_index": 1,
-      "assigned_tools_executed": [
-        "evidence_quality_gate",
-        "review_status_calibrator",
-        "evidence_replan_decider"
-      ]
-    }
-  ],
-  "agent_loop_requests": [
-    {
-      "node_name": "agent_evaluator",
-      "command": "python -m app.main --project-id 1 --auto-approve --allow-agent-extra-loop",
-      "default_action": "skip_extra_loop_and_continue"
-    }
-  ]
+  "business_case_package": {
+    "agent_id": "business_case_agent",
+    "produced_by": "business_case_agent",
+    "executed_nodes": ["roi_cost", "priority_ranking"],
+    "output_keys": ["roi_cost", "priority_ranking"]
+  }
 }
 ```
 
