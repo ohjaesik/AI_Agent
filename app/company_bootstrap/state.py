@@ -70,6 +70,7 @@ class BootstrapState(TypedDict, total=False):
     # Runtime contracts
     agent_contracts: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_tool_calls: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
 
     # Result
     result: dict[str, Any]
