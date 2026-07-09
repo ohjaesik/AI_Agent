@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from app.agents.registry import AGENT_REGISTRY, get_agent_registry, get_agent_spec
+from app.agents.tool_guard import AgentToolPermissionError, assert_tools_allowed
 
 
 EXPECTED_AGENT_IDS = {
@@ -61,6 +64,13 @@ def test_evaluation_critic_agent_enforces_conservative_review_policy() -> None:
     assert "independent quality gate" in spec["role_prompt"]
     assert "compliance_alignment_check" in spec["controls"]
     assert any("weak evidence" in check.lower() for check in spec["quality_checks"])
+
+
+def test_evaluation_critic_agent_tool_permissions_use_expert_agent_id() -> None:
+    assert_tools_allowed("evaluation_critic_agent", ["LLM critic", "quality gate"])
+
+    with pytest.raises(AgentToolPermissionError):
+        assert_tools_allowed("agent_evaluator_agent", ["LLM critic"])
 
 
 def test_delivery_orchestration_agent_uses_human_review_gate() -> None:
