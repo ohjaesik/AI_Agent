@@ -6,20 +6,10 @@ from collections.abc import Callable
 from functools import wraps
 from typing import Any, TypeVar
 
-from app.agents.registry import get_agent_spec
+from app.agents.registry import get_agent_registry, get_agent_spec
 from app.agents.sandbox import SandboxResult, run_sandboxed_command
 
 F = TypeVar("F", bound=Callable[..., Any])
-
-FALLBACK_AGENT_TOOLS = {
-    "agent_evaluator_agent": [
-        "agent evaluator",
-        "LLM critic",
-        "evidence coverage scorer",
-        "tool permission checker",
-        "analysis result writer",
-    ],
-}
 
 
 class AgentToolPermissionError(PermissionError):
@@ -32,15 +22,10 @@ def normalize_tool_name(tool: str) -> str:
 
 def get_allowed_tools(agent_id: str) -> set[str]:
     spec = get_agent_spec(agent_id)
-    fallback_tools = FALLBACK_AGENT_TOOLS.get(agent_id, [])
-    if spec:
-        return {
-            normalize_tool_name(tool)
-            for tool in [*spec.get("tools", []), *fallback_tools]
-        }
-    if fallback_tools:
-        return {normalize_tool_name(tool) for tool in fallback_tools}
-    raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
+    if not spec:
+        raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
+
+    return {normalize_tool_name(tool) for tool in spec.get("tools", [])}
 
 
 def assert_tools_allowed(agent_id: str, requested_tools: list[str]) -> None:
@@ -82,9 +67,7 @@ def enforce_agent_tools(agent_id: str, requested_tools: list[str]) -> Callable[[
 
 
 def build_tool_permission_report() -> list[dict[str, Any]]:
-    from app.agents.registry import get_agent_registry
-
-    rows = [
+    return [
         {
             "agent_id": agent.get("id"),
             "agent_name": agent.get("name"),
@@ -93,14 +76,3 @@ def build_tool_permission_report() -> list[dict[str, Any]]:
         }
         for agent in get_agent_registry()
     ]
-    rows.extend(
-        {
-            "agent_id": agent_id,
-            "agent_name": agent_id,
-            "allowed_tools": sorted(get_allowed_tools(agent_id)),
-            "controls": ["runtime_tool_permission_check", "optional_docker_command_sandbox"],
-        }
-        for agent_id, tools in FALLBACK_AGENT_TOOLS.items()
-        if not get_agent_spec(agent_id)
-    )
-    return rows
