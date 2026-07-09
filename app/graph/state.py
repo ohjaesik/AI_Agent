@@ -66,6 +66,10 @@ class AXPlannerState(TypedDict, total=False):
     agent_loop_requests: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_supervisor_steps: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_handoffs: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_llm_calls: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_commands: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    current_agent_command: dict[str, Any]
+    current_agent_reflection: dict[str, Any]
     agent_supervisor_extra_loop_enabled: bool
 
     # Agent package artifacts
