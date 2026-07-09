@@ -25,6 +25,8 @@ class BootstrapGraphResult:
     agent_contracts: list[dict[str, Any]] | None = None
     agent_tool_calls: list[dict[str, Any]] | None = None
     agent_decisions: list[dict[str, Any]] | None = None
+    agent_loop_iterations: list[dict[str, Any]] | None = None
+    agent_loop_requests: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +44,8 @@ class BootstrapGraphResult:
             "agent_contracts": self.agent_contracts or [],
             "agent_tool_calls": self.agent_tool_calls or [],
             "agent_decisions": self.agent_decisions or [],
+            "agent_loop_iterations": self.agent_loop_iterations or [],
+            "agent_loop_requests": self.agent_loop_requests or [],
         }
 
 
@@ -61,6 +65,7 @@ def run_bootstrap_supervisor_graph(
     index: bool = True,
     reset_company_chunks: bool = False,
     thread_id: str = "bootstrap-supervisor-cli",
+    allow_agent_extra_loop: bool = False,
 ) -> BootstrapGraphResult:
     graph = build_bootstrap_supervisor_graph()
     initial_state = {
@@ -77,6 +82,9 @@ def run_bootstrap_supervisor_graph(
         "agent_contracts": [],
         "agent_tool_calls": [],
         "agent_decisions": [],
+        "agent_loop_iterations": [],
+        "agent_loop_requests": [],
+        "agent_supervisor_extra_loop_enabled": allow_agent_extra_loop,
         "errors": [],
     }
     config = {"configurable": {"thread_id": thread_id}}
@@ -104,4 +112,6 @@ def run_bootstrap_supervisor_graph(
         agent_contracts=list(result_state.get("agent_contracts", [])),
         agent_tool_calls=list(result_state.get("agent_tool_calls", [])),
         agent_decisions=list(result_state.get("agent_decisions", [])),
+        agent_loop_iterations=list(result_state.get("agent_loop_iterations", [])),
+        agent_loop_requests=list(result_state.get("agent_loop_requests", [])),
     )
