@@ -6,7 +6,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, TypeVar
 
-from app.agents.expert_registry import get_capability_for_node, get_expert_agent_spec
+from app.agents.registry import get_capability_for_node, get_agent_spec
 
 StateT = TypeVar("StateT", bound=dict[str, Any])
 
@@ -131,7 +131,7 @@ def build_agent_contract(node_name: str) -> dict[str, Any] | None:
         return None
 
     agent_id = binding["agent_id"]
-    spec = get_expert_agent_spec(agent_id)
+    spec = get_agent_spec(agent_id)
     if not spec:
         return {
             "node_name": node_name,
@@ -161,6 +161,8 @@ def build_agent_contract(node_name: str) -> dict[str, Any] | None:
         "tools": list(spec.get("tools", [])),
         "controls": list(spec.get("controls", [])),
         "human_review_required": bool(spec.get("human_review_required", False)),
+        "role_prompt": spec.get("role_prompt", ""),
+        "task_instructions": list(spec.get("task_instructions", [])),
         "quality_checks": list(spec.get("quality_checks", [])),
         "output_contract": list(spec.get("output_contract", [])),
         "contract_found": True,
