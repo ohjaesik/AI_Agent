@@ -1,7 +1,6 @@
 # AX Delivery Planner AI Agent 설계도
 
 > Multi-Agent 기반 제조기업 AX 업무 진단 및 AI Agent 도입 우선순위 추천 시스템  
-> 제출용 구성: **전체 시스템 아키텍처 다이어그램 + 업무 흐름도**
 
 ---
 
