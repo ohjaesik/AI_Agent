@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     vllm_api_key: str = Field(default="EMPTY", alias="VLLM_API_KEY")
     vllm_model: str = Field(default="google/gemma-2-9b-it", alias="VLLM_MODEL")
 
+    # Expert Agent LLM planning. The planner chooses among tools assigned in AgentSpec.tool_specs.
+    agent_llm_planner_enabled: bool = Field(default=True, alias="AGENT_LLM_PLANNER_ENABLED")
+    agent_llm_planner_timeout_seconds: float = Field(default=3.0, alias="AGENT_LLM_PLANNER_TIMEOUT_SECONDS")
+
     # External data source secrets
     dart_api_key: str | None = Field(default=None, alias="DART_API_KEY")
 
