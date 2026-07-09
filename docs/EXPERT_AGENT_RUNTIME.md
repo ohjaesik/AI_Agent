@@ -8,14 +8,16 @@ The runtime hierarchy is:
 Expert Agent
   └─ capability
       └─ LangGraph node
-          └─ selected tool / LLM / rule / RAG execution
+          ├─ candidate tools, max 3 per node
+          ├─ selected tool / LLM / rule / RAG execution
+          └─ post-tool Agent decision
 ```
 
 ## Why this structure
 
 Tool-level Agents make the system noisy and difficult to explain. For example, `docx_generator`, `citation_validator`, and `score_calculator` are tools or execution steps, not independent decision-making Agents.
 
-The system therefore uses expert Agents as responsibility, governance, prompt, tool-permission, and audit units. Each expert Agent owns several graph nodes through named capabilities and calls tools allowed by its registry contract.
+The system therefore uses expert Agents as responsibility, governance, prompt, tool-permission, tool-selection, post-decision, and audit units. Each expert Agent owns several graph nodes through named capabilities and can choose among up to three tool candidates per node.
 
 ## Single registry source
 
@@ -43,7 +45,7 @@ Each `AgentSpec` includes:
 - `output_contract`
 - `handoff_notes`
 
-`role_prompt` defines what kind of expert the Agent is and what responsibility boundary it must follow. `task_instructions` define what the Agent should do when its managed nodes run. `tool_specs` define the concrete tools the Agent can call, including description, input schema, output schema, and bound graph nodes.
+`tool_specs` define the concrete tools the Agent can call, including description, input schema, output schema, purpose, and bound graph nodes. `get_tool_specs_for_node()` limits candidates to `MAX_TOOL_CANDIDATES_PER_NODE = 3`.
 
 ## Expert Agents
 
@@ -57,7 +59,7 @@ Each `AgentSpec` includes:
 | `evaluation_critic_agent` | `agent_evaluator`, `llm_critic`, `agent_replan` | Evidence quality gate, LLM second opinion, bounded replan |
 | `delivery_orchestration_agent` | `human_review`, `poc_delivery_planner`, `report_writer`, `docx_generator` | Human review, PoC planning, report generation, DOCX export |
 
-## Runtime tool calling
+## Runtime tool calling and decisions
 
 `app/agents/expert_executor.py` replaces direct graph node execution with an expert-Agent execution path.
 
@@ -66,14 +68,24 @@ LangGraph node
   -> expert_executed_node(node_name, node_fn)
   -> resolve agent_id + capability from NODE_AGENT_BINDINGS
   -> load AgentSpec role_prompt/task_instructions/tool_specs
-  -> select the tool bound to the node
+  -> load candidate tools for the node, max 3
+  -> select one tool using state-aware rules
   -> call_agent_tool(agent_id, tool_name, payload, runner)
   -> run permission check
   -> execute the underlying node tool
-  -> append observation, agent_tool_calls, agent_contracts, and audit_logs
+  -> observe tool result
+  -> apply post-tool Agent decision
+  -> append agent_decisions, agent_tool_calls, agent_contracts, and audit_logs
 ```
 
 `app/agents/tool_runtime.py` is the tool-calling gate. It validates the requested tool against `AgentSpec.tool_specs`, records `agent_tool_call_started`, runs the concrete node/tool function, records `agent_tool_call_succeeded`, and returns the observation to the expert executor.
+
+The executor now records two decision phases per bound node:
+
+```text
+pre_tool_selection  : Agent chooses one tool from up to 3 candidates.
+post_tool_observation: Agent observes the result and may pass through, add review metadata, request replan, downgrade weak-evidence candidates, or guard final delivery.
+```
 
 ## Runtime contract binding
 
@@ -89,7 +101,7 @@ Each binding includes:
 }
 ```
 
-The selected tool is resolved from the Agent's `tool_specs`.
+The selected tool is resolved from the Agent's candidate `tool_specs`.
 
 Example `agent_contracts` item:
 
@@ -99,23 +111,14 @@ Example `agent_contracts` item:
   "agent_id": "process_diagnosis_agent",
   "agent_name": "Process Diagnosis Agent",
   "capability": "data_readiness_scoring",
-  "node_role": "데이터 접근성, 문서 연결성, 접근권한 기반 readiness 분류",
-  "implementation": "rule_plus_rag_deterministic_scoring",
-  "role_prompt": "You are the Process Diagnosis Agent, an operations-analysis expert for AX planning...",
-  "task_instructions": [
-    "Analyze only business_processes already provided in the graph state.",
-    "Classify data readiness using deterministic thresholds and document linkage."
-  ],
+  "candidate_tools": ["data_readiness_scorer", "data_gap_detector"],
   "selected_tool": "data_readiness_scorer",
-  "tool_observation": {
-    "result_keys": ["audit_logs", "data_readiness"]
+  "post_decision": {
+    "decision": "pass_through",
+    "changed_output": false
   },
-  "managed_nodes": [
-    "process_analyzer",
-    "data_readiness",
-    "automation_feasibility"
-  ],
-  "contract_found": true
+  "role_prompt": "You are the Process Diagnosis Agent, an operations-analysis expert for AX planning...",
+  "task_instructions": ["..."]
 }
 ```
 
@@ -123,18 +126,33 @@ Example `agent_tool_calls` item:
 
 ```json
 {
-  "node_name": "data_readiness",
-  "agent_id": "process_diagnosis_agent",
-  "capability": "data_readiness_scoring",
-  "tool_name": "data_readiness_scorer",
-  "selection_reason": "The Process Diagnosis Agent selected data_readiness_scorer because node 'data_readiness' implements capability 'data_readiness_scoring'.",
+  "node_name": "agent_evaluator",
+  "agent_id": "evaluation_critic_agent",
+  "capability": "deterministic_agent_evaluation",
+  "candidate_tools": ["evidence_quality_gate", "review_status_calibrator", "evidence_replan_decider"],
+  "tool_name": "evidence_replan_decider",
+  "selection_reason": "evaluation must decide whether weak evidence should trigger bounded replan or human review",
   "observation": {
-    "result_keys": ["audit_logs", "data_readiness"]
+    "result_keys": ["agent_evaluation", "priority_ranking"]
   }
 }
 ```
 
-The audit log keeps the compact execution trace, while `agent_contracts` keeps the full prompt/contract metadata and `agent_tool_calls` keeps tool-call observations.
+Example `agent_decisions` item:
+
+```json
+{
+  "phase": "post_tool_observation",
+  "node_name": "agent_evaluator",
+  "agent_id": "evaluation_critic_agent",
+  "selected_tool": "evidence_replan_decider",
+  "decision": "request_replan_or_human_review",
+  "changed_output": true,
+  "additional_evidence_required_count": 3
+}
+```
+
+The audit log keeps the compact execution trace, `agent_contracts` keeps the full prompt/contract metadata, `agent_tool_calls` keeps tool-call observations, and `agent_decisions` records the actual Agent-level decision that can change state output.
 
 ## State output
 
@@ -158,21 +176,14 @@ The state should contain:
     {"id": "delivery_orchestration_agent", "role_prompt": "...", "tool_specs": ["..."]}
   ],
   "agent_contracts": [
-    {
-      "node_name": "data_readiness",
-      "agent_id": "process_diagnosis_agent",
-      "capability": "data_readiness_scoring",
-      "selected_tool": "data_readiness_scorer",
-      "role_prompt": "...",
-      "task_instructions": ["..."]
-    }
+    {"node_name": "data_readiness", "candidate_tools": ["data_readiness_scorer", "data_gap_detector"], "selected_tool": "data_readiness_scorer"}
   ],
   "agent_tool_calls": [
-    {
-      "node_name": "data_readiness",
-      "agent_id": "process_diagnosis_agent",
-      "tool_name": "data_readiness_scorer"
-    }
+    {"node_name": "data_readiness", "tool_name": "data_readiness_scorer"}
+  ],
+  "agent_decisions": [
+    {"phase": "pre_tool_selection", "selected_tool": "data_readiness_scorer"},
+    {"phase": "post_tool_observation", "decision": "pass_through"}
   ]
 }
 ```
