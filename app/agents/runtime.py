@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import Any
 
 from app.agents.registry import get_capability_for_node, get_agent_spec, get_tool_spec_for_node
-
-StateT = TypeVar("StateT", bound=dict[str, Any])
 
 NODE_AGENT_BINDINGS: dict[str, dict[str, str]] = {
     "company_profile_agent": {"agent_id": "company_onboarding_agent", "capability": "company_profile_resolution", "node_role": "회사 식별, OpenDART 조회, company profile 생성/갱신"},
@@ -113,23 +110,3 @@ def build_contract_audit_log(node_name: str, contract: dict[str, Any]) -> dict[s
             "contract_found": contract.get("contract_found", False),
         },
     }
-
-
-def bind_agent_contract_to_result(node_name: str, result: dict[str, Any]) -> dict[str, Any]:
-    contract = build_agent_contract(node_name)
-    if contract is None:
-        return result
-
-    bound = dict(result)
-    bound["agent_contracts"] = list(bound.get("agent_contracts", [])) + [contract]
-    bound["audit_logs"] = list(bound.get("audit_logs", [])) + [build_contract_audit_log(node_name, contract)]
-    return bound
-
-
-def with_agent_contract(node_name: str, node_fn: Callable[[StateT], dict[str, Any]]) -> Callable[[StateT], dict[str, Any]]:
-    def _node(state: StateT) -> dict[str, Any]:
-        result = node_fn(state)
-        return bind_agent_contract_to_result(node_name, result)
-
-    _node.__name__ = f"contract_bound_{node_name}"
-    return _node
