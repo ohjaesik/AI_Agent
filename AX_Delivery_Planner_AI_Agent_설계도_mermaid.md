@@ -347,14 +347,3 @@ flowchart TD
 ```
 
 ---
-
-## 3. 제출용 사용 방법
-
-Mermaid를 지원하는 Markdown 뷰어에서 열면 위 두 다이어그램이 자동 렌더링된다.
-
-추천 사용 방식은 다음과 같다.
-
-1. `VS Code`에서 Markdown Preview Mermaid Support 확장 설치
-2. 이 `.md` 파일 열기
-3. Mermaid Preview 또는 Markdown Preview로 확인
-4. 필요 시 PDF로 인쇄 또는 캡처하여 발표자료/보고서에 삽입
