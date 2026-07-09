@@ -12,9 +12,16 @@ from app.company_bootstrap.service import (
     infer_industry,
     infer_size,
 )
-from app.company_bootstrap.url_loader import OfficialUrlDocument
+from app.company_bootstrap.url_loader import OfficialUrlDocument, sanitize_text
 from app.db.migrate_discovery_metadata import ensure_discovery_metadata_column
 from app.db.models import AnalysisProject, BusinessProcess, Company, Department, EnterpriseSystem, ProcessDocument
+
+
+def safe_text(value: object, max_chars: int | None = None) -> str:
+    text = sanitize_text(str(value or ""))
+    if max_chars is not None:
+        return text[:max_chars]
+    return text
 
 
 def get_or_update_company(
@@ -34,10 +41,12 @@ def get_or_update_company(
 
     company.industry = infer_industry(combined_text, dart_company=dart_company)
     company.size = infer_size(dart_company=dart_company)
-    company.description = build_company_description(
-        company_name=company_name,
-        combined_text=combined_text,
-        dart_company=dart_company,
+    company.description = safe_text(
+        build_company_description(
+            company_name=company_name,
+            combined_text=combined_text,
+            dart_company=dart_company,
+        )
     )
 
     db.commit()
@@ -172,8 +181,8 @@ def upsert_source_documents(
             created_count += 1
         else:
             updated_count += 1
-        row.title = title
-        row.content = dart_company.to_document_content()
+        row.title = safe_text(title, 200)
+        row.content = safe_text(dart_company.to_document_content())
         row.department = "공식공시"
         row.security_level = "public_official"
         row.contains_sensitive_info = False
@@ -182,13 +191,13 @@ def upsert_source_documents(
         rows.append(row)
 
     for doc in official_docs:
-        content = f"공식 URL: {doc.url}\n문서 제목: {doc.title}\n\n{doc.content}"
+        content = safe_text(f"공식 URL: {doc.url}\n문서 제목: {doc.title}\n\n{doc.content}")
         row = find_official_url_document(db, company_id=company_id, url=doc.url)
         if row is None:
             row = ProcessDocument(
                 company_id=company_id,
                 process_id=None,
-                title=doc.title[:200],
+                title=safe_text(doc.title, 200),
                 document_type="official_url",
                 content=content,
                 department="공식웹사이트",
@@ -201,7 +210,7 @@ def upsert_source_documents(
             created_count += 1
         else:
             updated_count += 1
-            row.title = doc.title[:200]
+            row.title = safe_text(doc.title, 200)
             row.content = content
             row.department = "공식웹사이트"
             row.security_level = "public_official"
@@ -265,7 +274,7 @@ def upsert_business_processes(
         row.user_acceptance = spec["user_acceptance"]
         row.risk_score = spec["risk_score"]
         row.implementation_cost_score = spec["implementation_cost_score"]
-        row.security_level = "internal"
+        row.security_level = spec.get("security_level", "internal")
         row.candidate_agent_name = spec["candidate_agent_name"]
         row.discovery_metadata = build_discovery_metadata(spec)
         rows.append(row)
@@ -277,17 +286,22 @@ def upsert_business_processes(
     return rows, created_count, updated_count
 
 
-def get_or_create_analysis_project(db: Session, company_id: int, company_name: str) -> tuple[AnalysisProject, bool]:
+def get_or_create_project(db: Session, company_id: int, company_name: str) -> tuple[AnalysisProject, bool]:
     title = f"{company_name} 공식자료 기반 AX 전환 진단"
     project = db.execute(
-        select(AnalysisProject).where(AnalysisProject.company_id == company_id, AnalysisProject.title == title).order_by(AnalysisProject.id.asc())
+        select(AnalysisProject).where(
+            AnalysisProject.company_id == company_id,
+            AnalysisProject.title == title,
+        )
     ).scalars().first()
+    created = project is None
 
-    if project is not None:
-        return project, False
+    if project is None:
+        project = AnalysisProject(company_id=company_id, title=title, status="created")
+        db.add(project)
+    else:
+        project.status = "updated"
 
-    project = AnalysisProject(company_id=company_id, title=title, status="created")
-    db.add(project)
     db.commit()
     db.refresh(project)
-    return project, True
+    return project, created
