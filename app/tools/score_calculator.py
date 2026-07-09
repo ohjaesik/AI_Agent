@@ -93,6 +93,8 @@ def determine_candidate_status(risk_score: int, data_accessibility: int, saving_
         return "excluded"
     if risk_score >= 4:
         return "human_review_required"
+    if "social_impact_review_required" in risk_flags:
+        return "human_review_required"
     if data_accessibility <= 2:
         return "data_preparation_required"
     if saving_rate < 20:
@@ -115,6 +117,25 @@ def build_compliance_reason(compliance_item: dict[str, Any] | None) -> str:
     return " ".join(parts)
 
 
+def build_esg_social_reason(risk_flags: list[str]) -> str:
+    if "social_impact_review_required" not in risk_flags:
+        return ""
+    controls = []
+    if "workforce_transition_required" in risk_flags:
+        controls.append("인력 대체·직무 전환 영향 검토")
+    if "employee_monitoring_guardrail_required" in risk_flags:
+        controls.append("직원 모니터링 목적 제한 및 개인 단위 징계 활용 금지")
+    if "reskilling_plan_required" in risk_flags:
+        controls.append("재교육·역량 전환 계획")
+    if "labor_stakeholder_review_required" in risk_flags:
+        controls.append("현장·노사 수용성 검토")
+    if "accessibility_fallback_required" in risk_flags:
+        controls.append("사람 상담/비디지털 접근 경로 유지")
+    if controls:
+        return f"ESG Social 영향 검토 필요: {', '.join(controls)}."
+    return "ESG Social 영향 검토 필요: Agent 도입에 따른 이해관계자 영향과 수용성을 Human Review에서 확인해야 한다."
+
+
 def build_status_reason(status: str, risk_score: int, data_accessibility: int, saving_rate: float, risk_flags: list[str] | None = None, discovery_metadata: dict[str, Any] | None = None, discovery_bonus: float = 0.0, compliance_item: dict[str, Any] | None = None) -> str:
     risk_flags = risk_flags or []
     discovery_metadata = discovery_metadata or {}
@@ -123,7 +144,7 @@ def build_status_reason(status: str, risk_score: int, data_accessibility: int, s
     if status == "excluded":
         base_reason = "위험도가 매우 높거나 MVP 범위에서 제외해야 하는 업무이다."
     elif status == "human_review_required":
-        base_reason = "위험도 또는 규제 스크리닝 결과상 Human Review 후 PoC 착수 여부를 결정해야 한다."
+        base_reason = "위험도, 규제 스크리닝 또는 ESG Social 영향도상 Human Review 후 PoC 착수 여부를 결정해야 한다."
     elif status == "data_preparation_required":
         base_reason = "데이터 접근성이 낮아 데이터 정비와 접근권한 확인을 선행해야 한다."
     elif status == "low_roi":
@@ -132,6 +153,10 @@ def build_status_reason(status: str, risk_score: int, data_accessibility: int, s
         base_reason = "추천 가능하지만 보안·거버넌스 통제 조건을 함께 적용해야 한다."
     else:
         base_reason = "기대효과, 데이터 접근성, 구현 가능성, 위험도를 종합했을 때 PoC 후보로 적합하다."
+
+    esg_social_reason = build_esg_social_reason(risk_flags)
+    if esg_social_reason:
+        base_reason = f"{base_reason} {esg_social_reason}"
 
     compliance_reason = build_compliance_reason(compliance_item)
     if compliance_reason:
@@ -210,6 +235,8 @@ def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, A
             "saving_rate": saving_rate,
             "monthly_saving": safe_int(roi_item.get("monthly_saving"), 0),
             "risk_flags": risk_flags,
+            "esg_social_risks": risk_item.get("esg_social_risks", []),
+            "esg_social_controls": risk_item.get("esg_social_controls", []),
             "status": status,
             "reason": reason,
             "discovery_metadata": discovery_metadata,
@@ -225,6 +252,7 @@ def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, A
     recommended = [item for item in candidates if item["status"] == "recommended"]
     review_required = [item for item in candidates if item["status"] == "human_review_required"]
     excluded = [item for item in candidates if item["status"] == "excluded"]
+    social_impact_review = [item for item in candidates if "social_impact_review_required" in item.get("risk_flags", [])]
 
     return {
         "items": candidates,
@@ -233,6 +261,7 @@ def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, A
             "recommended_count": len(recommended),
             "review_required_count": len(review_required),
             "excluded_count": len(excluded),
+            "social_impact_review_count": len(social_impact_review),
             "top_candidate": candidates[0] if candidates else None,
             "compliance_overall_status": (effective_compliance or {}).get("overall_status"),
             "compliance_summary": (effective_compliance or {}).get("summary", {}),
