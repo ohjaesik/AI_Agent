@@ -10,7 +10,7 @@ from typing import Any
 
 from langgraph.types import Command
 
-from app.agents.registry import get_agent_registry
+from app.agents.expert_registry import get_expert_agent_registry
 from app.db.crud import resolve_project_selection
 from app.db.database import SessionLocal
 from app.graph.workflow import build_ax_planner_graph
@@ -182,7 +182,7 @@ def run_demo(
             "date": report_date or "",
             "status": normalized_report_status,
         },
-        "agent_registry": get_agent_registry(),
+        "agent_registry": get_expert_agent_registry(),
         "agent_contracts": [],
         "audit_logs": [],
         "errors": [],
