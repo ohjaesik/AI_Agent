@@ -10,7 +10,7 @@
 
 AX Delivery Planner는 특정 산업·기업의 업무를 분석해 AI Agent 도입 후보를 발굴하고, MVP Agent 선정, Human-in-the-loop, 위험 통제, PoC 계획, 최종 보고서까지 생성하는 **Front Delivery Engineer 관점의 AI Agent 설계 자동화 시스템**입니다.
 
-이 프로젝트의 핵심은 단순히 LLM이 답변하는 챗봇이 아니라, `supervisor_agent`가 하위 Expert Agent에게 업무를 할당하고, 각 Agent가 자신에게 할당된 tool을 실행한 뒤 결과 package를 다음 Agent에게 넘기는 **Agent-to-Agent handoff workflow**입니다.
+이 프로젝트의 핵심은 단순히 LLM이 답변하는 챗봇이 아니라, `supervisor_agent`가 하위 Expert Agent에게 업무를 할당하고, 각 Agent가 **자신의 role prompt와 handoff context를 LLM에 넣어 실행 명령을 만든 뒤**, 자신에게 할당된 tool을 실행하고 결과 package를 다음 Agent에게 넘기는 **LLM-driven Agent-to-Agent handoff workflow**입니다.
 
 ---
 
@@ -104,40 +104,46 @@ supervisor_agent
   -> Delivery Orchestration Agent에게 Human Review, PoC 계획, 보고서 생성을 명령
 ```
 
-하위 Agent는 자신에게 할당된 tool set만 실행한다. 실행 결과는 package로 정리되어 다음 Agent에게 전달된다.
+하위 Agent는 자신에게 할당된 role prompt, task instruction, handoff context, state summary, assigned internal node/tool 목록을 LLM에 입력한다. LLM은 해당 Agent의 실행 명령을 JSON으로 생성하고, runtime은 그 명령에 따라 Agent에게 할당된 node와 tool만 실행한다.
 
 ```text
-Agent 명령 수신
-  -> 자신에게 할당된 internal node 실행
+Supervisor가 Agent에게 명령 위임
+  -> Agent command prompt를 LLM에 입력
+  -> LLM이 node_order / node_commands / handoff_plan 생성
+  -> Agent가 자신에게 할당된 internal node 실행
   -> node별 assigned tools 실행
-  -> 결과 검토 및 post-decision
+  -> Agent reflection prompt를 LLM에 입력
+  -> LLM이 handoff / iterate / replan / human_review / stop 판단
   -> package 생성
   -> 다음 Agent에게 handoff
 ```
 
-LLM은 별도 planner로 쓰지 않는다. LLM은 특정 tool 내부에서만 제한적으로 사용한다.
+LLM은 두 수준에서 사용된다.
 
 | LLM 사용 위치 | 역할 |
 |---|---|
+| Agent command prompt | 각 Expert Agent가 자신의 실행 순서, node별 명령, handoff 계획을 생성 |
+| Agent reflection prompt | 각 Expert Agent가 실행 결과를 보고 handoff / iterate / replan / human_review / stop 판단 |
 | `process_discovery_llm` | 공식자료 기반 업무 후보 생성 |
 | `llm_critic` | 추천 후보의 second opinion 검토 |
 | `report_writer` | 보고서 문단 생성·정리 |
 
-최종 추천 판단은 LLM 단독이 아니라 rule, score, RAG evidence, Agent Evaluator, Human Review를 통해 통제한다.
+최종 추천 판단은 LLM 단독이 아니라 assigned tool permission, RAG evidence, score rule, Agent Evaluator, Human Review, loop limit을 통해 통제한다.
 
 ---
 
 ## 4. Agent-to-Agent workflow
 
-`app/graph/workflow.py`는 기존 세부 node 단위가 아니라 **Expert Agent stage 단위**로 구성된다.
+`app/graph/workflow.py`는 기존 세부 node 단위가 아니라 **Expert Agent stage 단위**로 구성된다. 각 Agent stage는 시작 시 LLM command prompt를 호출하고, 내부 tool 실행 후 LLM reflection prompt를 호출한다.
 
 ```mermaid
 flowchart TD
     S[AX Delivery Supervisor Agent]
 
     S --> C[Context & Evidence Agent]
-    C --> P[Process Diagnosis Agent]
-    C --> G[Governance & Compliance Agent]
+    C --> CLLM[Agent LLM Command / Reflection]
+    CLLM --> P[Process Diagnosis Agent]
+    CLLM --> G[Governance & Compliance Agent]
 
     P --> B[Business Case Agent]
     G --> B
@@ -163,9 +169,42 @@ flowchart TD
 | `agent_replan` | `agent_replan` | updated `evaluation_package` / `replan_request` |
 | `delivery_orchestration_agent` | `human_review`, `poc_delivery_planner`, `report_writer`, `docx_generator` | `delivery_package` |
 
+### Agent LLM trace
+
+실행 후 `workflow_state_real.json`에는 Agent prompt가 실제 LLM으로 호출되었는지 남는다.
+
+```json
+{
+  "agent_llm_calls": [
+    {
+      "kind": "agent_command",
+      "agent_id": "business_case_agent",
+      "stage_name": "business_case_agent",
+      "llm_used": true,
+      "mode": "expert_agent_llm_command",
+      "node_order": ["roi_cost", "priority_ranking"],
+      "handoff_plan": {
+        "next_agent": "evaluation_critic_agent",
+        "payload_keys": ["roi_cost", "priority_ranking"]
+      }
+    },
+    {
+      "kind": "agent_reflection",
+      "agent_id": "business_case_agent",
+      "stage_name": "business_case_agent",
+      "llm_used": true,
+      "mode": "expert_agent_llm_reflection",
+      "decision": "handoff"
+    }
+  ]
+}
+```
+
+`llm_used=false`이면 LLM endpoint 실패 또는 timeout으로 deterministic fallback이 실행된 것이다. 정상적으로 vLLM/OpenAI-compatible endpoint가 켜져 있으면 `llm_used=true`가 기록된다.
+
 ### Handoff trace
 
-실행 후 `workflow_state_real.json`에는 Agent 간 전달 흐름이 남는다.
+Agent 실행 후에는 다음 Agent에게 넘긴 payload도 기록된다.
 
 ```json
 {
@@ -198,7 +237,7 @@ flowchart TD
 
 ### Loop policy
 
-Agent가 추가 검토가 필요하다고 판단하면 기본적으로 최대 2회까지만 loop를 수행한다.
+Agent가 LLM reflection에서 추가 검토가 필요하다고 판단하면 기본적으로 최대 2회까지만 loop를 수행한다.
 
 ```text
 AGENT_SUPERVISOR_MAX_TOOL_LOOPS=2
@@ -270,6 +309,7 @@ python -m app.main --project-id <PROJECT_ID> --auto-approve --allow-agent-extra-
 이 프로젝트는 실제 실행 가능한 CLI/API 기반 프로토타입이다. 구현이 어려운 부분은 화면 예시 대신 다음 자료로 대체 가능하다.
 
 - Agent-to-Agent workflow diagram
+- Agent LLM command/reflection trace
 - workflow state JSON
 - 입력·출력 샘플
 - Prompt / role contract
@@ -305,6 +345,11 @@ flowchart TB
         D[Delivery Orchestration Agent]
     end
 
+    subgraph LLM[LLM Command Layer]
+        Cmd[Agent Command Prompt]
+        Ref[Agent Reflection Prompt]
+    end
+
     subgraph Data[Data & RAG Layer]
         PG[(PostgreSQL)]
         Vec[(pgvector)]
@@ -323,8 +368,10 @@ flowchart TB
     CLI --> Sup
     API --> Sup
     Sup --> C
-    C --> P
-    C --> G
+    C --> Cmd
+    Cmd --> Ref
+    Ref --> P
+    Ref --> G
     P --> B
     G --> B
     B --> E
@@ -349,6 +396,7 @@ flowchart TB
 | 회사명 기반 공식자료 수집 | 공식 URL, OpenDART 기반 회사 자료 수집 |
 | 내부 문서 ingestion | `.txt`, `.md`, `.pdf`, `.docx` 저장 및 RAG 색인 |
 | Supervisor-Agent workflow | 상위 Agent가 하위 Agent에게 명령을 할당하고 handoff |
+| Agent LLM command/reflection | 각 Agent의 prompt가 실제 LLM으로 들어가 실행 명령과 handoff 판단을 생성 |
 | RAG evidence | 업무 후보별 근거 검색, citation, evidence coverage |
 | Governance screening | 민감정보, 고영향, 금지 가능 후보 분류 |
 | Human Review | approve/edit/reject 기록 및 보고서 반영 |
@@ -358,7 +406,7 @@ flowchart TB
 |---|---|
 | 법률 자문 | Regulatory mapping은 운영 전 법무 검토가 필요함 |
 | 완성형 운영 UI | 현재 CLI/API 중심 MVP |
-| LLM 단독 의사결정 | 최종 추천 상태는 rule/score/evaluator/human review로 통제 |
+| LLM 단독 의사결정 | 최종 추천 상태는 tool permission, score, RAG evidence, evaluator, human review로 통제 |
 
 ---
 
@@ -501,7 +549,7 @@ python -m app.main \
 | Agent 기회 발굴 | 15 | 업무 후보 10개 이상 도출, 점수화, 우선순위 산정 |
 | MVP Agent 설계 | 25 | 대상 사용자, 시나리오, 데이터, tool, RAG, Human Review, 아키텍처 설계 |
 | 리스크 및 평가 설계 | 10 | 환각, 개인정보, 보안, 책임, human approval, confidence/evidence 평가 |
-| 프로토타입 또는 데모 | 15 | 실행 가능한 CLI/API, workflow state, DOCX 보고서 생성 |
+| 프로토타입 또는 데모 | 15 | 실행 가능한 CLI/API, Agent LLM trace, workflow state, DOCX 보고서 생성 |
 
 ---
 
@@ -511,11 +559,12 @@ python -m app.main \
 app/
   agents/
     registry.py              # Expert Agent 계약, 역할, tool_specs
+    agent_llm.py             # Agent command/reflection prompt 실행
     expert_executor.py       # Agent별 assigned tool loop 실행
     handoff.py               # Agent package와 Agent-to-Agent handoff 규칙
     tool_runtime.py          # tool permission check, audit log
   graph/
-    workflow.py              # Agent-stage LangGraph workflow
+    workflow.py              # LLM-command-driven Agent-stage LangGraph workflow
     nodes.py                 # 분석 internal node 구현
     replan_node.py           # evidence gap 재수집 route
     review_node.py           # Human Review interrupt
@@ -526,7 +575,7 @@ app/
   tools/                     # report/docx/review helper
 
 docs/
-  AGENT_SUPERVISOR_LOOP.md   # Supervisor-Agent handoff 구조 설명
+  AGENT_SUPERVISOR_LOOP.md   # Supervisor-Agent handoff 및 LLM Agent prompt 구조 설명
   EXPERT_AGENT_RUNTIME.md    # Expert Agent runtime 구조 설명
 
 outputs/
@@ -553,6 +602,9 @@ pytest
 핵심 확인 항목:
 
 ```text
+agent_llm_calls 존재
+agent_llm_calls[*].kind = agent_command / agent_reflection
+agent_llm_calls[*].llm_used = true 또는 fallback 사유 기록
 agent_supervisor_steps 존재
 agent_handoffs 존재
 context_evidence_package / business_case_package / delivery_package 존재
