@@ -121,7 +121,23 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("agent_tool_calls:", len(result.get("agent_tool_calls", [])))
     print("agent_loop_iterations:", len(result.get("agent_loop_iterations", [])))
     print("agent_loop_requests:", len(result.get("agent_loop_requests", [])))
+    print("agent_supervisor_steps:", len(result.get("agent_supervisor_steps", [])))
+    print("agent_handoffs:", len(result.get("agent_handoffs", [])))
+    print("agent_packages:", len([key for key in result if key.endswith("_package")]))
     print("report_sections:", len(result.get("report_data", {}).get("sections", [])))
+
+
+def print_agent_handoff_summary(result: dict[str, Any]) -> None:
+    handoffs = result.get("agent_handoffs", []) or []
+    if not handoffs:
+        return
+
+    print("\n=== Agent Handoffs ===")
+    for idx, handoff in enumerate(handoffs[-10:], start=max(1, len(handoffs) - 9)):
+        print(
+            f"{idx}. {handoff.get('from_agent')} -> {handoff.get('to_agent')} | "
+            f"payload={handoff.get('payload_keys')}"
+        )
 
 
 def print_agent_loop_requests(result: dict[str, Any]) -> None:
@@ -206,6 +222,8 @@ def run_demo(
         "agent_decisions": [],
         "agent_loop_iterations": [],
         "agent_loop_requests": [],
+        "agent_supervisor_steps": [],
+        "agent_handoffs": [],
         "agent_supervisor_extra_loop_enabled": allow_agent_extra_loop,
         "audit_logs": [],
         "errors": [],
@@ -256,6 +274,7 @@ def run_demo(
             print("-", error)
 
     print_report_generation_summary(result)
+    print_agent_handoff_summary(result)
     print_agent_loop_requests(result)
 
     print("\n=== Top Candidates ===")

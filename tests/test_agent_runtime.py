@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.expert_executor import expert_executed_node
+from app.agents.handoff import AGENT_TO_PACKAGE, HANDOFF_RULES
 from app.agents.registry import (
     AGENT_REGISTRY,
     MAX_TOOL_CANDIDATES_PER_NODE,
@@ -13,6 +14,7 @@ from app.agents.registry import (
 )
 from app.agents.runtime import build_agent_contract, get_agent_binding_for_node, get_agent_id_for_node
 from app.agents.tool_guard import AgentToolPermissionError, assert_tools_allowed, assert_tool_spec_allowed
+from app.graph.workflow import AGENT_STAGE_NODES, AGENT_STAGE_TO_AGENT_ID
 
 
 EXPECTED_AGENT_IDS = {
@@ -81,6 +83,22 @@ def test_each_node_has_at_most_three_candidate_tools(node_name: str) -> None:
     assert agent_id is not None
     specs = get_tool_specs_for_node(agent_id, node_name)
     assert 1 <= len(specs) <= MAX_TOOL_CANDIDATES_PER_NODE
+
+
+def test_ax_workflow_is_grouped_by_expert_agent_stages() -> None:
+    assert AGENT_STAGE_NODES == {
+        "context_evidence_agent": ["load_project_data", "retrieve_context"],
+        "process_diagnosis_agent": ["process_analyzer", "data_readiness", "automation_feasibility"],
+        "governance_compliance_agent": ["risk_governance", "compliance_assessment"],
+        "business_case_agent": ["roi_cost", "priority_ranking"],
+        "evaluation_critic_agent": ["agent_evaluator", "llm_critic"],
+        "agent_replan": ["agent_replan"],
+        "delivery_orchestration_agent": ["human_review", "poc_delivery_planner", "report_writer", "docx_generator"],
+    }
+    assert AGENT_STAGE_TO_AGENT_ID["agent_replan"] == "evaluation_critic_agent"
+    assert AGENT_TO_PACKAGE["business_case_agent"] == "business_case_package"
+    assert HANDOFF_RULES["business_case_agent"][0]["to_agent"] == "evaluation_critic_agent"
+    assert HANDOFF_RULES["evaluation_critic_agent"][0]["to_agent"] == "context_evidence_agent"
 
 
 def test_process_diagnosis_contract_and_tool_mapping() -> None:

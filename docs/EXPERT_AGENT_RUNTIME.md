@@ -1,29 +1,29 @@
 # Expert Agent Runtime Structure
 
-This project uses an expert-agent structure instead of creating one Agent for every tool or graph node.
+This project uses an Agent-stage workflow instead of creating one Agent for every tool or bare graph node.
 
 The runtime hierarchy is:
 
 ```text
-Expert Agent
-  └─ capability
-      └─ LangGraph node
-          ├─ candidate tools, max 3 per node
-          ├─ selected tool / LLM / rule / RAG execution
-          └─ post-tool Agent decision
+AX Delivery Supervisor Agent
+  └─ Expert Agent stage
+      ├─ assigned internal nodes
+      │   └─ assigned tools, max 3 per internal node
+      ├─ Agent package artifact
+      └─ Agent-to-Agent handoff
 ```
 
 ## Why this structure
 
 Tool-level Agents make the system noisy and difficult to explain. For example, `docx_generator`, `citation_validator`, and `score_calculator` are tools or execution steps, not independent decision-making Agents.
 
-The system therefore uses expert Agents as responsibility, governance, prompt, tool-permission, tool-selection, post-decision, and audit units. Each expert Agent owns several graph nodes through named capabilities and can choose among up to three tool candidates per node.
+The system therefore uses Expert Agents as responsibility, governance, prompt, tool-permission, post-decision, package, and handoff units. The top-level Supervisor delegates work to each Expert Agent stage, and each Expert Agent runs only its assigned internal nodes/tools.
 
 ## Single registry source
 
 `app/agents/registry.py` is the single source of truth for Agent contracts.
 
-There is no separate expert registry module. The public registry returns the 7 expert Agent contracts directly.
+There is no separate expert registry module. The public registry returns the 7 Expert Agent contracts directly.
 
 Each `AgentSpec` includes:
 
@@ -45,51 +45,100 @@ Each `AgentSpec` includes:
 - `output_contract`
 - `handoff_notes`
 
-`tool_specs` define the concrete tools the Agent can call, including description, input schema, output schema, purpose, and bound graph nodes. `get_tool_specs_for_node()` limits candidates to `MAX_TOOL_CANDIDATES_PER_NODE = 3`.
+`tool_specs` define the concrete tools the Agent can call, including description, input schema, output schema, purpose, and bound internal nodes. `get_tool_specs_for_node()` limits candidates to `MAX_TOOL_CANDIDATES_PER_NODE = 3`.
 
 ## Expert Agents
 
-| Expert Agent | Managed nodes | Responsibility |
+| Expert Agent | Internal nodes | Responsibility |
 |---|---|---|
 | `company_onboarding_agent` | `company_profile_agent`, `source_ingestion_agent`, `process_discovery_agent` | Company profile, official source ingestion, initial process discovery |
 | `context_evidence_agent` | `load_project_data`, `retrieve_context` | DB context loading and RAG evidence retrieval |
 | `process_diagnosis_agent` | `process_analyzer`, `data_readiness`, `automation_feasibility` | Process bottleneck, data readiness, and automation feasibility diagnosis |
-| `business_case_agent` | `roi_cost`, `priority_ranking` | ROI calculation and candidate prioritization |
 | `governance_compliance_agent` | `risk_governance`, `compliance_assessment` | Risk screening and regulatory mapping |
+| `business_case_agent` | `roi_cost`, `priority_ranking` | ROI calculation and candidate prioritization |
 | `evaluation_critic_agent` | `agent_evaluator`, `llm_critic`, `agent_replan` | Evidence quality gate, LLM second opinion, bounded replan |
 | `delivery_orchestration_agent` | `human_review`, `poc_delivery_planner`, `report_writer`, `docx_generator` | Human review, PoC planning, report generation, DOCX export |
 
-## Runtime tool calling and decisions
+## Agent-stage workflow
 
-`app/agents/expert_executor.py` replaces direct graph node execution with an expert-Agent execution path.
+`app/graph/workflow.py` now groups the old node graph into Agent-stage nodes:
 
 ```text
-LangGraph node
+context_evidence_agent
+  -> process_diagnosis_agent
+  -> business_case_agent
+  -> evaluation_critic_agent
+  -> delivery_orchestration_agent
+
+context_evidence_agent
+  -> governance_compliance_agent
+  -> business_case_agent
+
+evaluation_critic_agent
+  -> agent_replan
+  -> context_evidence_agent | delivery_orchestration_agent
+```
+
+Each Agent-stage node runs its assigned internal nodes in order. For example, `business_case_agent` runs `roi_cost` and then `priority_ranking`; `delivery_orchestration_agent` runs `human_review`, `poc_delivery_planner`, `report_writer`, and `docx_generator`.
+
+## Internal tool calling and decisions
+
+`app/agents/expert_executor.py` wraps each internal node execution with the owning Expert Agent's tool loop.
+
+```text
+Expert Agent stage
+  -> internal node
   -> expert_executed_node(node_name, node_fn)
   -> resolve agent_id + capability from NODE_AGENT_BINDINGS
   -> load AgentSpec role_prompt/task_instructions/tool_specs
-  -> load candidate tools for the node, max 3
-  -> select one tool using state-aware rules
+  -> run the assigned tool set for that internal node
   -> call_agent_tool(agent_id, tool_name, payload, runner)
   -> run permission check
-  -> execute the underlying node tool
-  -> observe tool result
+  -> execute/observe tool result
   -> apply post-tool Agent decision
   -> append agent_decisions, agent_tool_calls, agent_contracts, and audit_logs
 ```
 
 `app/agents/tool_runtime.py` is the tool-calling gate. It validates the requested tool against `AgentSpec.tool_specs`, records `agent_tool_call_started`, runs the concrete node/tool function, records `agent_tool_call_succeeded`, and returns the observation to the expert executor.
 
-The executor now records two decision phases per bound node:
+The executor records these internal decision phases:
 
 ```text
-pre_tool_selection  : Agent chooses one tool from up to 3 candidates.
-post_tool_observation: Agent observes the result and may pass through, add review metadata, request replan, downgrade weak-evidence candidates, or guard final delivery.
+agent_tool_loop       : Agent runs one assigned tool inside the stage.
+post_tool_observation : Agent observes the stage/internal-node result and may pass through, add review metadata, request replan, downgrade weak-evidence candidates, or guard final delivery.
+```
+
+## Agent-to-Agent handoff
+
+`app/agents/handoff.py` defines package artifacts and handoff rules.
+
+Package artifacts:
+
+```text
+context_evidence_package
+process_diagnosis_package
+governance_package
+business_case_package
+evaluation_package
+delivery_package
+```
+
+Example handoff:
+
+```json
+{
+  "from_agent": "business_case_agent",
+  "to_agent": "evaluation_critic_agent",
+  "source_stage": "business_case_agent",
+  "source_nodes": ["roi_cost", "priority_ranking"],
+  "payload_keys": ["roi_cost", "priority_ranking"],
+  "handoff_reason": "Evaluation & Critic Agent must validate ranked candidates before delivery."
+}
 ```
 
 ## Runtime contract binding
 
-`app/agents/runtime.py` maps graph nodes to expert Agents through `NODE_AGENT_BINDINGS`.
+`app/agents/runtime.py` maps internal graph nodes to Expert Agents through `NODE_AGENT_BINDINGS`.
 
 Each binding includes:
 
@@ -101,8 +150,6 @@ Each binding includes:
 }
 ```
 
-The selected tool is resolved from the Agent's candidate `tool_specs`.
-
 Example `agent_contracts` item:
 
 ```json
@@ -113,46 +160,27 @@ Example `agent_contracts` item:
   "capability": "data_readiness_scoring",
   "candidate_tools": ["data_readiness_scorer", "data_gap_detector"],
   "selected_tool": "data_readiness_scorer",
+  "agent_loop_mode": "expert_agent_supervisor_loop",
+  "loop_limit": 2,
   "post_decision": {
     "decision": "pass_through",
     "changed_output": false
-  },
-  "role_prompt": "You are the Process Diagnosis Agent, an operations-analysis expert for AX planning...",
-  "task_instructions": ["..."]
-}
-```
-
-Example `agent_tool_calls` item:
-
-```json
-{
-  "node_name": "agent_evaluator",
-  "agent_id": "evaluation_critic_agent",
-  "capability": "deterministic_agent_evaluation",
-  "candidate_tools": ["evidence_quality_gate", "review_status_calibrator", "evidence_replan_decider"],
-  "tool_name": "evidence_replan_decider",
-  "selection_reason": "evaluation must decide whether weak evidence should trigger bounded replan or human review",
-  "observation": {
-    "result_keys": ["agent_evaluation", "priority_ranking"]
   }
 }
 ```
 
-Example `agent_decisions` item:
+Example `agent_supervisor_steps` item:
 
 ```json
 {
-  "phase": "post_tool_observation",
-  "node_name": "agent_evaluator",
-  "agent_id": "evaluation_critic_agent",
-  "selected_tool": "evidence_replan_decider",
-  "decision": "request_replan_or_human_review",
-  "changed_output": true,
-  "additional_evidence_required_count": 3
+  "supervisor_agent_id": "ax_delivery_supervisor_agent",
+  "delegated_to": "business_case_agent",
+  "delegated_stage": "business_case_agent",
+  "delegated_nodes": ["roi_cost", "priority_ranking"],
+  "input_keys": ["process_analysis", "data_readiness", "automation_feasibility", "risk_governance", "compliance_assessment"],
+  "expected_output_keys": ["roi_cost", "priority_ranking"]
 }
 ```
-
-The audit log keeps the compact execution trace, `agent_contracts` keeps the full prompt/contract metadata, `agent_tool_calls` keeps tool-call observations, and `agent_decisions` records the actual Agent-level decision that can change state output.
 
 ## State output
 
@@ -166,30 +194,12 @@ The state should contain:
 
 ```json
 {
-  "agent_registry": [
-    {"id": "company_onboarding_agent", "role_prompt": "...", "tool_specs": ["..."]},
-    {"id": "context_evidence_agent", "role_prompt": "...", "tool_specs": ["..."]},
-    {"id": "process_diagnosis_agent", "role_prompt": "...", "tool_specs": ["..."]},
-    {"id": "business_case_agent", "role_prompt": "...", "tool_specs": ["..."]},
-    {"id": "governance_compliance_agent", "role_prompt": "...", "tool_specs": ["..."]},
-    {"id": "evaluation_critic_agent", "role_prompt": "...", "tool_specs": ["..."]},
-    {"id": "delivery_orchestration_agent", "role_prompt": "...", "tool_specs": ["..."]}
-  ],
-  "agent_contracts": [
-    {"node_name": "data_readiness", "candidate_tools": ["data_readiness_scorer", "data_gap_detector"], "selected_tool": "data_readiness_scorer"}
-  ],
-  "agent_tool_calls": [
-    {"node_name": "data_readiness", "tool_name": "data_readiness_scorer"}
-  ],
-  "agent_decisions": [
-    {"phase": "pre_tool_selection", "selected_tool": "data_readiness_scorer"},
-    {"phase": "post_tool_observation", "decision": "pass_through"}
-  ]
+  "agent_registry": [{"id": "context_evidence_agent", "role_prompt": "...", "tool_specs": ["..."]}],
+  "agent_contracts": [{"node_name": "data_readiness", "candidate_tools": ["data_readiness_scorer", "data_gap_detector"]}],
+  "agent_tool_calls": [{"node_name": "data_readiness", "tool_name": "data_readiness_scorer"}],
+  "agent_decisions": [{"phase": "post_tool_observation", "changed_output": false}],
+  "agent_supervisor_steps": [{"delegated_to": "business_case_agent"}],
+  "agent_handoffs": [{"from_agent": "business_case_agent", "to_agent": "evaluation_critic_agent"}],
+  "business_case_package": {"output_keys": ["roi_cost", "priority_ranking"]}
 }
-```
-
-## Tests
-
-```bash
-pytest tests/test_agent_runtime.py tests/test_agent_evaluator.py
 ```
