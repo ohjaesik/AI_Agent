@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+MAX_TOOL_CANDIDATES_PER_NODE = 3
 
 STATE_INPUT_SCHEMA = {
     "type": "object",
     "required": ["state"],
     "properties": {
         "state": {"type": "object", "description": "Current LangGraph state snapshot."},
+        "agent_decision": {"type": "object", "description": "Pre-tool decision made by the expert Agent."},
     },
 }
 
@@ -19,16 +21,18 @@ NODE_OUTPUT_SCHEMA = {
     "properties": {
         "audit_logs": {"type": "array"},
         "errors": {"type": "array"},
+        "agent_decisions": {"type": "array"},
     },
     "additionalProperties": True,
 }
 
 
-def tool_spec(name: str, description: str, nodes: list[str]) -> dict[str, Any]:
+def tool_spec(name: str, description: str, nodes: list[str], purpose: str = "execute") -> dict[str, Any]:
     return {
         "name": name,
         "description": description,
         "nodes": nodes,
+        "purpose": purpose,
         "input_schema": STATE_INPUT_SCHEMA,
         "output_schema": NODE_OUTPUT_SCHEMA,
     }
@@ -67,7 +71,7 @@ AGENT_REGISTRY: list[AgentSpec] = [
         name="Company Onboarding Agent",
         category="input_and_context",
         purpose="회사명, 공식 URL, OpenDART 정보를 기반으로 분석 대상 기업과 초기 업무 후보를 구성한다.",
-        implementation="supervisor_tool_orchestrated_with_llm_discovery",
+        implementation="multi_tool_supervisor_with_llm_discovery",
         managed_nodes=["company_profile_agent", "source_ingestion_agent", "process_discovery_agent"],
         capabilities=[
             {"name": "company_profile_resolution", "node_role": "회사 식별, OpenDART 조회, company profile 생성/갱신", "nodes": ["company_profile_agent"]},
@@ -76,34 +80,27 @@ AGENT_REGISTRY: list[AgentSpec] = [
         ],
         tool_specs=[
             tool_spec("company_profile_loader", "Resolve company identity, OpenDART overview, and project bootstrap context.", ["company_profile_agent"]),
+            tool_spec("profile_evidence_validator", "Check whether company profile fields are source-grounded before handoff.", ["company_profile_agent"], "validate"),
             tool_spec("official_source_ingestor", "Fetch official URLs and public filings and persist source documents.", ["source_ingestion_agent"]),
+            tool_spec("source_quality_filter", "Reject weak or non-official source candidates before indexing.", ["source_ingestion_agent"], "validate"),
             tool_spec("process_discovery_llm", "Generate source-grounded AX candidate processes with JSON validation and fallback.", ["process_discovery_agent"]),
+            tool_spec("discovery_fallback_planner", "Create conservative fallback process candidates when LLM discovery is weak.", ["process_discovery_agent"], "fallback"),
         ],
         tools=["OpenDART client", "official URL loader", "document indexer", "vLLM/Gemma", "JSON schema validation"],
         controls=["official_source_only", "source_traceability", "allowed_citation_labels_only", "fallback_on_invalid_json"],
         role_prompt=(
-            "You are the Company Onboarding Agent, an AX delivery discovery specialist. "
-            "Your responsibility is to create the traceable company context for the whole workflow. "
-            "Use only official URLs, OpenDART data, uploaded files, or explicit user input. "
-            "You may use an LLM only to structure company-specific candidate processes from source-grounded excerpts. "
-            "Never invent internal operations, business units, or process facts that are not supported by the supplied evidence labels."
+            "You are the Company Onboarding Agent, an AX delivery discovery specialist. Your responsibility is to create the traceable company context for the whole workflow. "
+            "Use only official URLs, OpenDART data, uploaded files, or explicit user input. You may use an LLM only to structure company-specific candidate processes from source-grounded excerpts. "
+            "Never invent internal operations, business units, or process facts that are not supported by supplied evidence labels."
         ),
         task_instructions=[
-            "Resolve the company identity, homepage, public profile, and analysis scope.",
-            "Ingest official sources and preserve source URLs, source labels, and document metadata.",
-            "Discover realistic AX candidate processes from official source excerpts using strict JSON output.",
-            "Attach only allowed evidence labels to generated process candidates.",
-            "Use deterministic fallback candidates when LLM discovery fails validation.",
+            "Resolve company identity and analysis scope.",
+            "Ingest official sources with source labels and metadata.",
+            "Discover realistic AX candidate processes from official source excerpts.",
+            "Use fallback candidates only when LLM discovery is invalid or too weak.",
         ],
-        quality_checks=[
-            "Reject non-official URLs unless explicitly allowed by the caller.",
-            "Every generated process must be source-grounded or marked as fallback.",
-            "LLM output must pass JSON schema and allowed citation-label validation.",
-        ],
-        output_contract=[
-            "company_id, project_id, document_ids, and process_ids must be created or reused idempotently.",
-            "company_profile and process discovery metadata must remain traceable to official source labels.",
-        ],
+        quality_checks=["Reject non-official URLs unless explicitly allowed.", "Generated processes must be source-grounded or marked fallback."],
+        output_contract=["company_id, project_id, document_ids, and process_ids must be created or reused idempotently."],
         handoff_notes=["Pass company/project/document/process identifiers to Context & Evidence Agent."],
     ),
     AgentSpec(
@@ -111,40 +108,28 @@ AGENT_REGISTRY: list[AgentSpec] = [
         name="Context & Evidence Agent",
         category="rag_and_evidence",
         purpose="DB에 저장된 분석 context를 로드하고, 업무별 RAG 근거와 citation source를 구성한다.",
-        implementation="tool_based_rag_retrieval",
+        implementation="multi_tool_rag_retrieval_and_evidence_gate",
         managed_nodes=["load_project_data", "retrieve_context"],
         capabilities=[
             {"name": "project_context_loading", "node_role": "project, company, process, document, system 정보를 DB에서 로드", "nodes": ["load_project_data"]},
             {"name": "rag_evidence_retrieval", "node_role": "업무별 pgvector 검색, evidence item 생성, used_sources 구성", "nodes": ["retrieve_context"]},
         ],
         tool_specs=[
-            tool_spec("project_context_loader", "Load project, company, department, process, system, and document state from the database.", ["load_project_data"]),
+            tool_spec("project_context_loader", "Load project, company, process, system, and document state from the database.", ["load_project_data"]),
+            tool_spec("context_completeness_checker", "Check whether required project context is missing before analysis.", ["load_project_data"], "validate"),
             tool_spec("rag_retriever", "Retrieve process-specific evidence chunks and citation sources from pgvector.", ["retrieve_context"]),
+            tool_spec("evidence_gap_detector", "Detect candidate processes with missing or weak evidence coverage.", ["retrieve_context"], "diagnose"),
+            tool_spec("source_deduplicator", "Deduplicate citation sources while preserving source metadata.", ["retrieve_context"], "normalize"),
         ],
         tools=["PostgreSQL", "pgvector retriever", "evidence collector"],
         controls=["traceable_chunk_metadata", "citation_label_preservation", "document_access_boundary"],
         role_prompt=(
-            "You are the Context & Evidence Agent, the evidence librarian for the AX planner graph. "
-            "Your role is to load project context and retrieve only traceable evidence for each candidate process. "
-            "Do not analyze ROI, feasibility, or compliance. Do not upgrade confidence when evidence is missing. "
-            "Your output is the evidence substrate used by all downstream expert Agents."
+            "You are the Context & Evidence Agent, the evidence librarian for the AX planner graph. Your role is to load project context and retrieve only traceable evidence for each candidate process. "
+            "Do not analyze ROI, feasibility, or compliance. Do not upgrade confidence when evidence is missing. Your output is the evidence substrate used by all downstream expert Agents."
         ),
-        task_instructions=[
-            "Load project, company, departments, systems, business processes, and documents from the database.",
-            "Retrieve process-specific context from pgvector and preserve chunk/document/source metadata.",
-            "Build evidence_items and used_sources with stable citation labels.",
-            "Deduplicate sources without losing source kind, URL, security level, or document linkage.",
-            "Mark missing RAG evidence explicitly instead of silently assuming support.",
-        ],
-        quality_checks=[
-            "Every evidence item must be traceable to document/chunk/source metadata.",
-            "Confidential or restricted documents must preserve access-boundary metadata.",
-            "Do not treat boilerplate or unrelated web text as process evidence.",
-        ],
-        output_contract=[
-            "retrieved_contexts, evidence_items, and used_sources must be available to downstream nodes.",
-            "Each source must preserve citation label, source kind, URL or upload reference, and document id where available.",
-        ],
+        task_instructions=["Load project context from DB.", "Retrieve process-specific evidence.", "Mark missing RAG evidence explicitly."],
+        quality_checks=["Every evidence item must be traceable.", "Do not treat unrelated web text as process evidence."],
+        output_contract=["retrieved_contexts, evidence_items, and used_sources must be available to downstream nodes."],
         handoff_notes=["Pass evidence state to diagnosis, governance, evaluation, and delivery Agents."],
     ),
     AgentSpec(
@@ -152,7 +137,7 @@ AGENT_REGISTRY: list[AgentSpec] = [
         name="Process Diagnosis Agent",
         category="analysis",
         purpose="업무별 병목, 데이터 준비도, 자동화 보조 가능성을 진단한다.",
-        implementation="rule_plus_rag_deterministic_scoring",
+        implementation="multi_tool_diagnostic_scoring",
         managed_nodes=["process_analyzer", "data_readiness", "automation_feasibility"],
         capabilities=[
             {"name": "process_bottleneck_analysis", "node_role": "업무 문제, 대상 사용자, 현재 흐름, 문서 의존성, 근거 요약", "nodes": ["process_analyzer"]},
@@ -161,33 +146,21 @@ AGENT_REGISTRY: list[AgentSpec] = [
         ],
         tool_specs=[
             tool_spec("process_analyzer_tool", "Analyze process bottlenecks, target users, current flow, and evidence summary.", ["process_analyzer"]),
+            tool_spec("process_evidence_checker", "Check whether process claims are supported by retrieved evidence.", ["process_analyzer"], "validate"),
             tool_spec("data_readiness_scorer", "Score data accessibility, document linkage, and preparation requirements.", ["data_readiness"]),
+            tool_spec("data_gap_detector", "Detect missing system, document, or access prerequisites before scoring high readiness.", ["data_readiness"], "diagnose"),
             tool_spec("automation_feasibility_scorer", "Score assistive automation fit from repeatability, effect, feasibility, and risk.", ["automation_feasibility"]),
+            tool_spec("automation_risk_filter", "Downgrade automation fit when autonomous execution or high-risk use is implied.", ["automation_feasibility"], "validate"),
         ],
         tools=["RAG context reader", "deterministic score calculator"],
         controls=["evidence_required_for_key_claims", "data_preparation_flag", "assistive_only_by_default"],
         role_prompt=(
-            "You are the Process Diagnosis Agent, an operations-analysis expert for AX planning. "
-            "Your responsibility is to diagnose how each candidate process works, whether the data is ready, "
-            "and whether AI can safely assist the workflow. You must stay evidence-grounded and conservative. "
-            "Do not create new process candidates and do not recommend autonomous execution authority."
+            "You are the Process Diagnosis Agent, an operations-analysis expert for AX planning. Your responsibility is to diagnose how each candidate process works, whether the data is ready, and whether AI can safely assist the workflow. "
+            "Stay evidence-grounded and conservative. Do not create new process candidates and do not recommend autonomous execution authority."
         ),
-        task_instructions=[
-            "Analyze only business_processes already provided in the graph state.",
-            "Summarize process problem, target user, current workflow, bottleneck, and evidence source.",
-            "Classify data readiness using deterministic thresholds and document linkage.",
-            "Estimate assistive automation feasibility from repeatability, expected effect, tech feasibility, and risk score.",
-            "Use recommendation, retrieval, drafting, triage, monitoring, or review-support framing by default.",
-        ],
-        quality_checks=[
-            "Do not mark readiness high when data_accessibility is below configured thresholds.",
-            "Do not treat marketing slogans as internal workflow facts.",
-            "Feasibility comments must explain the driver, not only repeat the numeric score.",
-        ],
-        output_contract=[
-            "process_analysis, data_readiness, and automation_feasibility must be keyed by process_id.",
-            "Each item must include enough rationale for priority ranking and report generation.",
-        ],
+        task_instructions=["Analyze only provided business_processes.", "Classify readiness with deterministic thresholds.", "Use assistive automation framing by default."],
+        quality_checks=["Do not mark readiness high when data accessibility is weak.", "Feasibility comments must explain the driver."],
+        output_contract=["process_analysis, data_readiness, and automation_feasibility must be keyed by process_id."],
         handoff_notes=["Pass diagnosis outputs to Business Case and Governance Agents."],
     ),
     AgentSpec(
@@ -195,7 +168,7 @@ AGENT_REGISTRY: list[AgentSpec] = [
         name="Business Case Agent",
         category="calculation_and_prioritization",
         purpose="업무 후보의 비용 절감 가능성과 PoC 우선순위를 산정한다.",
-        implementation="deterministic_calculation_and_weighted_ranking",
+        implementation="multi_tool_business_case_and_status_calibration",
         managed_nodes=["roi_cost", "priority_ranking"],
         capabilities=[
             {"name": "roi_cost_calculation", "node_role": "현재 비용, 예상 비용, 절감률, PoC 비용 계산", "nodes": ["roi_cost"]},
@@ -203,32 +176,20 @@ AGENT_REGISTRY: list[AgentSpec] = [
         ],
         tool_specs=[
             tool_spec("roi_calculator", "Calculate baseline cost, expected savings, saving rate, and PoC cost estimates.", ["roi_cost"]),
+            tool_spec("roi_assumption_checker", "Flag assumption-heavy ROI estimates before ranking.", ["roi_cost"], "validate"),
             tool_spec("priority_ranker", "Rank candidates using deterministic weighted scores and governance-aware status.", ["priority_ranking"]),
+            tool_spec("ranking_policy_reviewer", "Review ranking against governance, evidence, and human-review policies.", ["priority_ranking"], "review"),
+            tool_spec("candidate_status_calibrator", "Adjust candidate status when evidence or compliance signals conflict with ranking score.", ["priority_ranking"], "calibrate"),
         ],
         tools=["ROI calculator", "score calculator"],
         controls=["formula_traceability", "no_llm_financial_guessing", "bounded_score_weights"],
         role_prompt=(
-            "You are the Business Case Agent, a deterministic prioritization expert. "
-            "Your responsibility is to calculate comparable PoC economics and rank candidate Agents. "
-            "You must not invent financial assumptions with an LLM. Treat ROI as a planning estimate, not an investment guarantee. "
-            "Your ranking is a candidate recommendation that must still pass evaluator and human review controls."
+            "You are the Business Case Agent, a deterministic prioritization expert. Your responsibility is to calculate comparable PoC economics and rank candidate Agents. "
+            "Do not invent financial assumptions with an LLM. Treat ROI as a planning estimate, not an investment guarantee. Your ranking must still pass evaluator and human review controls."
         ),
-        task_instructions=[
-            "Calculate current cost, expected cost, saving amount, saving rate, PoC cost, and relative ROI with traceable formulas.",
-            "Use automation_feasibility.expected_time_reduction_rate as the main savings driver.",
-            "Combine diagnosis, readiness, ROI, and risk fields into a bounded weighted ranking.",
-            "Keep blocked or evidence-insufficient candidates from being treated as final winners.",
-            "Preserve score rationale for report and audit output.",
-        ],
-        quality_checks=[
-            "Do not use LLM-generated financial assumptions.",
-            "saving_rate and final_score must be numeric and bounded.",
-            "Assumption-heavy calculations should be visible to downstream evaluation.",
-        ],
-        output_contract=[
-            "roi_cost and priority_ranking must be generated with process_id references.",
-            "ranking items must include final_score, saving_rate, status, rationale, risk flags, and review requirements.",
-        ],
+        task_instructions=["Calculate traceable ROI.", "Combine diagnosis, readiness, ROI, and risk into bounded ranking.", "Do not let high ROI override governance or evidence gaps."],
+        quality_checks=["Do not use LLM-generated financial assumptions.", "saving_rate and final_score must be bounded."],
+        output_contract=["roi_cost and priority_ranking must be generated with process_id references and decision rationale."],
         handoff_notes=["Pass ranked candidates to Evaluation & Critic Agent."],
     ),
     AgentSpec(
@@ -236,7 +197,7 @@ AGENT_REGISTRY: list[AgentSpec] = [
         name="Governance & Compliance Agent",
         category="governance",
         purpose="보안, 개인정보, 기밀, 고영향 가능성, 금지 가능 사용을 점검한다.",
-        implementation="policy_rule_engine_with_regulatory_mapping",
+        implementation="multi_tool_policy_screening_and_compliance_mapping",
         managed_nodes=["risk_governance", "compliance_assessment"],
         capabilities=[
             {"name": "risk_signal_screening", "node_role": "업무명, 문제, workflow, 문서, RAG context에서 risk flag 탐지", "nodes": ["risk_governance"]},
@@ -244,37 +205,21 @@ AGENT_REGISTRY: list[AgentSpec] = [
         ],
         tool_specs=[
             tool_spec("risk_rule_engine", "Detect privacy, security, high-impact, sensitive, and prohibited-use risk signals.", ["risk_governance"]),
+            tool_spec("sensitive_use_escalator", "Escalate uncertain sensitive-use signals to human review.", ["risk_governance"], "escalate"),
             tool_spec("compliance_mapper", "Map candidates to compliance levels, controls, and review requirements.", ["compliance_assessment"]),
+            tool_spec("human_review_policy_mapper", "Map sensitive/enhanced review cases to concrete human oversight controls.", ["compliance_assessment"], "review"),
         ],
         tools=["policy rule engine", "regulatory mapping rules"],
         controls=["prohibited_use_screening", "high_impact_screening", "human_oversight_required", "incident_logging"],
         human_review_required=True,
-        regulatory_notes=[
-            "Regulatory mapping is operational screening for PoC planning, not legal advice.",
-            "Sensitive or high-impact signals must be escalated even if expected ROI is high.",
-        ],
+        regulatory_notes=["Regulatory mapping is operational screening for PoC planning, not legal advice."],
         role_prompt=(
-            "You are the Governance & Compliance Agent, the safety and policy expert for AX candidate selection. "
-            "Your job is to detect prohibited-use, high-impact, privacy, security, confidential-data, safety, employment, finance, "
-            "healthcare, education, and legal/public-service risk signals. You must be conservative and escalate uncertain cases. "
-            "Do not let high ROI downgrade governance obligations."
+            "You are the Governance & Compliance Agent, the safety and policy expert for AX candidate selection. Your job is to detect prohibited-use, high-impact, privacy, security, confidential-data, safety, employment, finance, healthcare, education, and legal/public-service risk signals. "
+            "Be conservative and escalate uncertain cases. Do not let high ROI downgrade governance obligations."
         ),
-        task_instructions=[
-            "Scan process names, target users, problems, workflows, documents, and RAG context for risk triggers.",
-            "Assign risk flags, severity, human_review_required, and required controls.",
-            "Map candidates to standard, sensitive_review, enhanced_review, or blocked compliance levels.",
-            "Block prohibited-use candidates and require Human Review for sensitive or high-impact candidates.",
-            "Summarize risk category and controls without exposing confidential source text.",
-        ],
-        quality_checks=[
-            "Blocked candidates must not remain recommended.",
-            "Enhanced or sensitive review candidates must require Human Review.",
-            "Compliance level must not be lowered because of high ROI or high feasibility.",
-        ],
-        output_contract=[
-            "risk_governance and compliance_assessment must be generated for ranking/evaluation/report.",
-            "Each compliance item must include level, blocked flag, human review flag, required controls, and regulatory mappings.",
-        ],
+        task_instructions=["Scan process context for risk triggers.", "Assign risk flags and required controls.", "Block prohibited-use candidates and require Human Review for sensitive or high-impact candidates."],
+        quality_checks=["Blocked candidates must not remain recommended.", "Compliance level must not be lowered because of high ROI."],
+        output_contract=["risk_governance and compliance_assessment must include level, blocked flag, human review flag, and controls."],
         handoff_notes=["Pass governance results to Evaluation & Critic and Delivery Orchestration Agents."],
     ),
     AgentSpec(
@@ -282,7 +227,7 @@ AGENT_REGISTRY: list[AgentSpec] = [
         name="Evaluation & Critic Agent",
         category="evaluation",
         purpose="우선순위 결과의 근거 충분성, confidence, compliance alignment를 재검증하고 필요 시 replan을 수행한다.",
-        implementation="deterministic_quality_gate_with_optional_llm_critic",
+        implementation="multi_tool_quality_gate_with_post_decision_calibration",
         managed_nodes=["agent_evaluator", "llm_critic", "agent_replan"],
         capabilities=[
             {"name": "deterministic_agent_evaluation", "node_role": "evidence coverage, data confidence, rationale coverage, compliance alignment 계산", "nodes": ["agent_evaluator"]},
@@ -291,34 +236,24 @@ AGENT_REGISTRY: list[AgentSpec] = [
         ],
         tool_specs=[
             tool_spec("evidence_quality_gate", "Evaluate evidence coverage, data confidence, rationale coverage, and compliance alignment.", ["agent_evaluator"]),
+            tool_spec("review_status_calibrator", "Downgrade or hold candidates when evaluation conflicts with ranking status.", ["agent_evaluator"], "calibrate"),
+            tool_spec("evidence_replan_decider", "Decide whether weak-evidence candidates should route to bounded replan.", ["agent_evaluator"], "route"),
             tool_spec("llm_critic", "Use an LLM second opinion to calibrate candidate recommendation status.", ["llm_critic"]),
+            tool_spec("critic_replan_decider", "Convert LLM review findings into replan or human-review routing hints.", ["llm_critic"], "route"),
+            tool_spec("critic_status_calibrator", "Apply conservative status adjustments from LLM critique observations.", ["llm_critic"], "calibrate"),
             tool_spec("replan_router", "Run bounded evidence re-query and route back to retrieval or human review.", ["agent_replan"]),
+            tool_spec("replan_productivity_checker", "Stop replan loops when source collection is unproductive.", ["agent_replan"], "validate"),
         ],
         tools=["LLM critic", "quality gate", "evidence coverage scorer", "replan router"],
         controls=["no_recommendation_without_evidence", "compliance_alignment_check", "confidence_thresholding", "bounded_replan_loop"],
         human_review_required=True,
         role_prompt=(
-            "You are the Evaluation & Critic Agent, the independent quality gate for the AX planner. "
-            "Your responsibility is to challenge the priority ranking, verify evidence coverage, check compliance alignment, "
-            "and calibrate confidence. Deterministic evaluation is the source of truth; LLM critique is only a second opinion. "
-            "If evidence is weak, route to evidence_insufficient or bounded replan instead of approving."
+            "You are the Evaluation & Critic Agent, the independent quality gate for the AX planner. Your responsibility is to challenge the priority ranking, verify evidence coverage, check compliance alignment, and calibrate confidence. "
+            "Deterministic evaluation is the source of truth; LLM critique is a second opinion. If evidence is weak, route to evidence_insufficient or bounded replan instead of approving."
         ),
-        task_instructions=[
-            "Evaluate each ranked candidate for evidence coverage, data confidence, rationale coverage, and risk uncertainty.",
-            "Map blocked compliance to excluded and sensitive/enhanced review to Human Review.",
-            "Use LLM critic only for structured second-opinion review and JSON-schema-compatible output.",
-            "Trigger replan only when additional evidence collection is likely to improve a candidate decision.",
-            "Keep replan loops bounded and auditable.",
-        ],
-        quality_checks=[
-            "Zero or very weak evidence must not remain recommended.",
-            "LLM critic failure must fall back to deterministic evaluation.",
-            "Review gate must remain conservative even when status accuracy is high.",
-        ],
-        output_contract=[
-            "agent_evaluation must include predicted_status, confidence_score, evidence metrics, issues, review flag, and replan flag.",
-            "priority_ranking_after_evaluation must preserve candidate order while updating status/review flags where needed.",
-        ],
+        task_instructions=["Evaluate every ranked candidate.", "Map blocked compliance to excluded.", "Trigger replan or conservative human review when evidence is weak.", "Keep replan loops bounded and auditable."],
+        quality_checks=["Zero or very weak evidence must not remain recommended.", "LLM critic failure must fall back to deterministic evaluation."],
+        output_contract=["agent_evaluation must include predicted_status, confidence_score, evidence metrics, issues, review flag, and replan flag."],
         handoff_notes=["Pass evaluated candidates to Delivery Orchestration Agent."],
     ),
     AgentSpec(
@@ -326,7 +261,7 @@ AGENT_REGISTRY: list[AgentSpec] = [
         name="Delivery Orchestration Agent",
         category="supervisor_output",
         purpose="Human Review 이후 승인 후보를 PoC 계획과 보고서 산출물로 전환한다.",
-        implementation="human_in_the_loop_delivery_supervisor",
+        implementation="multi_tool_human_in_the_loop_delivery_supervisor",
         managed_nodes=["human_review", "poc_delivery_planner", "report_writer", "docx_generator"],
         capabilities=[
             {"name": "human_review_gate", "node_role": "approve/edit/reject 검토 기록 수집과 graph resume", "nodes": ["human_review"]},
@@ -336,35 +271,26 @@ AGENT_REGISTRY: list[AgentSpec] = [
         ],
         tool_specs=[
             tool_spec("human_review_gate", "Pause or resume the graph with an explicit human review decision.", ["human_review"]),
+            tool_spec("review_decision_validator", "Check whether review approval conflicts with evidence or compliance holds.", ["human_review"], "validate"),
             tool_spec("poc_planner", "Create a 6-week PoC plan with milestones, KPIs, and exit criteria.", ["poc_delivery_planner"]),
+            tool_spec("poc_candidate_guard", "Hold PoC candidate selection when all candidates require evidence or governance follow-up.", ["poc_delivery_planner"], "guard"),
+            tool_spec("poc_kpi_checker", "Check whether PoC KPIs are measurable from available systems and data.", ["poc_delivery_planner"], "validate"),
             tool_spec("report_writer", "Generate grounded report_data with AI disclosure and citation validation.", ["report_writer"]),
+            tool_spec("citation_policy_reviewer", "Verify report claims against allowed sources and citation validation results.", ["report_writer"], "validate"),
+            tool_spec("delivery_decision_summarizer", "Summarize Agent decisions, tool calls, and review gates for the report.", ["report_writer"], "summarize"),
             tool_spec("docx_exporter", "Export report_data to a reviewable DOCX artifact.", ["docx_generator"]),
+            tool_spec("docx_artifact_checker", "Check whether the DOCX export path and metadata are present.", ["docx_generator"], "validate"),
         ],
         tools=["LangGraph interrupt", "citation validator", "docx generator"],
         controls=["human_review_gate", "transparent_ai_disclosure", "citation_validation", "audit_trail"],
         human_review_required=True,
         role_prompt=(
-            "You are the Delivery Orchestration Agent, the final AX delivery planning supervisor. "
-            "Your responsibility is to convert evaluated and reviewed candidates into an actionable PoC plan and report. "
-            "You must preserve the Human Review record, disclose AI-assisted generation, validate citations, and export a reviewable DOCX. "
-            "Do not present unapproved or evidence-insufficient candidates as final PoC selections."
+            "You are the Delivery Orchestration Agent, the final AX delivery planning supervisor. Your responsibility is to convert evaluated and reviewed candidates into an actionable PoC plan and report. "
+            "Preserve Human Review records, disclose AI-assisted generation, validate citations, and export a reviewable DOCX. Do not present unapproved or evidence-insufficient candidates as final PoC selections."
         ),
-        task_instructions=[
-            "Pause for Human Review or apply the provided review decision before final delivery outputs.",
-            "Select an approved candidate and build a 6-week PoC plan with milestones, entry criteria, exit criteria, and KPIs.",
-            "Generate report_data from deterministic base data and use LLM only for grounded paragraph drafting when available.",
-            "Validate all report citations against used_sources or evidence_items.",
-            "Export the final report to DOCX and preserve output path in state.",
-        ],
-        quality_checks=[
-            "Do not generate final-status report without an approval record.",
-            "Do not select excluded or evidence_insufficient candidates as the first PoC candidate.",
-            "Report references must tie back to used_sources or evidence_items.",
-        ],
-        output_contract=[
-            "human_review, poc_plan, report_data, and report_docx_path must be produced.",
-            "report_data must include review status, AI-use disclosure, references, and citation validation results.",
-        ],
+        task_instructions=["Apply Human Review decision before final delivery.", "Build a 6-week PoC plan only from eligible candidates.", "Validate citations and export DOCX."],
+        quality_checks=["Do not generate final-status report without approval record.", "Do not select excluded or evidence_insufficient candidates as first PoC candidate."],
+        output_contract=["human_review, poc_plan, report_data, and report_docx_path must be produced with decision metadata."],
         handoff_notes=["Return report_docx_path and workflow state to CLI/API caller."],
     ),
 ]
@@ -381,6 +307,10 @@ def get_agent_spec(agent_id: str) -> dict[str, Any] | None:
     return None
 
 
+def normalize_tool_name(tool_name: str) -> str:
+    return str(tool_name or "").strip().lower().replace("_", " ").replace("-", " ")
+
+
 def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[str, Any] | None:
     for capability in agent_spec.get("capabilities", []) or []:
         if node_name in capability.get("nodes", []):
@@ -388,34 +318,38 @@ def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[
     return None
 
 
+def get_tool_specs_for_node(agent_id: str, node_name: str, max_tools: int = MAX_TOOL_CANDIDATES_PER_NODE) -> list[dict[str, Any]]:
+    spec = get_agent_spec(agent_id)
+    if not spec:
+        return []
+    matches = [dict(item) for item in spec.get("tool_specs", []) or [] if node_name in item.get("nodes", [])]
+    return matches[:max_tools]
+
+
 def get_tool_spec(agent_id: str, tool_name: str) -> dict[str, Any] | None:
     spec = get_agent_spec(agent_id)
     if not spec:
         return None
-    normalized = tool_name.strip().lower().replace("_", " ").replace("-", " ")
+    normalized = normalize_tool_name(tool_name)
     for item in spec.get("tool_specs", []) or []:
-        current = str(item.get("name") or "").strip().lower().replace("_", " ").replace("-", " ")
-        if current == normalized:
+        if normalize_tool_name(str(item.get("name") or "")) == normalized:
             return dict(item)
     return None
 
 
 def get_tool_spec_for_node(agent_id: str, node_name: str) -> dict[str, Any] | None:
-    spec = get_agent_spec(agent_id)
-    if not spec:
-        return None
-    for item in spec.get("tool_specs", []) or []:
-        if node_name in item.get("nodes", []):
-            return dict(item)
-    return None
+    specs = get_tool_specs_for_node(agent_id, node_name, max_tools=1)
+    return specs[0] if specs else None
 
 
 __all__ = [
     "AgentSpec",
     "AGENT_REGISTRY",
+    "MAX_TOOL_CANDIDATES_PER_NODE",
     "get_agent_registry",
     "get_agent_spec",
     "get_capability_for_node",
     "get_tool_spec",
     "get_tool_spec_for_node",
+    "get_tool_specs_for_node",
 ]
