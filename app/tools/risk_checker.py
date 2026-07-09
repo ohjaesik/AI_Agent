@@ -20,60 +20,112 @@ HIGH_RISK_KEYWORDS = [
     "안전 조치",
 ]
 
-ESG_SOCIAL_KEYWORDS = {
-    "workforce_displacement": [
-        "인력 절감",
-        "인력 감축",
-        "감원",
-        "대체",
-        "무인화",
-        "자동화로 대체",
-        "headcount reduction",
-        "workforce reduction",
-        "job displacement",
-        "labor displacement",
-    ],
-    "employee_monitoring": [
-        "작업자 모니터링",
-        "직원 모니터링",
-        "근태 모니터링",
-        "성과 감시",
-        "생산성 추적",
-        "employee monitoring",
-        "worker monitoring",
-        "productivity tracking",
-        "surveillance",
-    ],
-    "skill_gap": [
-        "재교육",
-        "업스킬링",
-        "리스킬링",
-        "교육 필요",
-        "역량 격차",
-        "skill gap",
-        "reskilling",
-        "upskilling",
-    ],
-    "labor_relation": [
-        "노조",
-        "노사",
-        "노동조합",
-        "현장 반발",
-        "노동 이슈",
-        "labor union",
-        "labor relation",
-        "worker resistance",
-    ],
-    "service_accessibility": [
-        "상담 자동화",
-        "고객 응대 자동화",
-        "민원 자동화",
-        "취약계층",
-        "접근성",
-        "customer service automation",
-        "accessibility",
-        "vulnerable customer",
-    ],
+ESG_KEYWORDS = {
+    "environmental": {
+        "energy_carbon": [
+            "에너지",
+            "전력",
+            "탄소",
+            "온실가스",
+            "배출",
+            "전력 사용량",
+            "energy",
+            "carbon",
+            "emission",
+            "power usage",
+        ],
+        "resource_efficiency": [
+            "자원 효율",
+            "폐기물",
+            "종이 절감",
+            "paperless",
+            "waste",
+            "resource efficiency",
+        ],
+    },
+    "social": {
+        "workforce_impact": [
+            "인력 절감",
+            "인력 감축",
+            "감원",
+            "대체",
+            "무인화",
+            "자동화로 대체",
+            "headcount reduction",
+            "workforce reduction",
+            "job displacement",
+            "labor displacement",
+        ],
+        "employee_monitoring": [
+            "작업자 모니터링",
+            "직원 모니터링",
+            "근태 모니터링",
+            "성과 감시",
+            "생산성 추적",
+            "employee monitoring",
+            "worker monitoring",
+            "productivity tracking",
+            "surveillance",
+        ],
+        "capability_transition": [
+            "재교육",
+            "업스킬링",
+            "리스킬링",
+            "교육 필요",
+            "역량 격차",
+            "skill gap",
+            "reskilling",
+            "upskilling",
+        ],
+        "stakeholder_acceptance": [
+            "노조",
+            "노사",
+            "노동조합",
+            "현장 반발",
+            "노동 이슈",
+            "취약계층",
+            "접근성",
+            "labor union",
+            "worker resistance",
+            "accessibility",
+            "vulnerable customer",
+        ],
+    },
+    "governance": {
+        "compliance_accountability": [
+            "법무",
+            "규제",
+            "감사",
+            "승인",
+            "책임자",
+            "컴플라이언스",
+            "compliance",
+            "audit",
+            "approval",
+            "accountability",
+        ],
+        "privacy_security": [
+            "개인정보",
+            "고객정보",
+            "기밀",
+            "보안",
+            "접근권한",
+            "personal data",
+            "privacy",
+            "confidential",
+            "security",
+        ],
+        "ai_governance": [
+            "설명가능성",
+            "투명성",
+            "휴먼리뷰",
+            "사람 검토",
+            "human review",
+            "explainability",
+            "transparency",
+            "ai governance",
+        ],
+    },
 }
 
 SENSITIVE_SECURITY_LEVELS = {"confidential", "restricted"}
@@ -96,34 +148,87 @@ def contains_high_risk_keyword(text: str | None) -> list[str]:
     return [keyword for keyword in HIGH_RISK_KEYWORDS if keyword in text]
 
 
-def contains_esg_social_keywords(text: str | None) -> dict[str, list[str]]:
+def detect_esg_signals(text: str | None) -> dict[str, dict[str, list[str]]]:
     if not text:
         return {}
 
     normalized = text.lower()
-    matches: dict[str, list[str]] = {}
-    for category, keywords in ESG_SOCIAL_KEYWORDS.items():
-        hits = [keyword for keyword in keywords if keyword.lower() in normalized]
-        if hits:
-            matches[category] = hits
+    matches: dict[str, dict[str, list[str]]] = {}
+    for pillar, categories in ESG_KEYWORDS.items():
+        for category, keywords in categories.items():
+            hits = [keyword for keyword in keywords if keyword.lower() in normalized]
+            if hits:
+                matches.setdefault(pillar, {})[category] = hits
     return matches
 
 
-def build_esg_social_controls(categories: list[str]) -> list[str]:
-    controls = []
-    if "workforce_displacement" in categories:
-        controls.append("인력 대체 효과가 예상되는 업무는 인력 감축 목적이 아니라 업무 보조·재배치·역량 전환 관점으로 PoC 범위를 제한한다.")
-        controls.append("PoC 착수 전 현업 영향도, 직무 변화, 재교육 계획을 Human Review에서 확인한다.")
-    if "employee_monitoring" in categories:
-        controls.append("직원·작업자 모니터링 성격의 데이터는 개인 징계·인사평가 자동화에 직접 사용하지 않는다.")
-        controls.append("개인 단위 추적보다 라인·팀·프로세스 단위의 집계 지표를 우선 사용한다.")
-    if "skill_gap" in categories:
-        controls.append("Agent 도입으로 필요한 업무 역량 변화를 정의하고 사용자 교육·전환 지원 계획을 포함한다.")
-    if "labor_relation" in categories:
-        controls.append("노사·현장 수용성 이슈가 예상되면 PoC 범위와 데이터 사용 목적을 사전에 설명하고 의견 수렴 절차를 둔다.")
-    if "service_accessibility" in categories:
-        controls.append("고객 응대 자동화는 취약계층·비디지털 사용자에게 사람 상담 경로를 유지한다.")
+def merge_esg_signals(
+    base: dict[str, dict[str, list[str]]],
+    addition: dict[str, dict[str, list[str]]],
+) -> dict[str, dict[str, list[str]]]:
+    for pillar, categories in addition.items():
+        base.setdefault(pillar, {})
+        for category, hits in categories.items():
+            base[pillar].setdefault(category, [])
+            base[pillar][category].extend(hits)
+    return base
+
+
+def flatten_esg_pillars(signals: dict[str, dict[str, list[str]]]) -> list[dict[str, Any]]:
+    result = []
+    for pillar, categories in sorted(signals.items()):
+        result.append(
+            {
+                "pillar": pillar,
+                "categories": sorted(categories),
+                "matched_keywords": sorted(set(hit for hits in categories.values() for hit in hits)),
+            }
+        )
+    return result
+
+
+def build_esg_controls(signals: dict[str, dict[str, list[str]]]) -> list[str]:
+    controls: list[str] = []
+    environmental = signals.get("environmental", {})
+    social = signals.get("social", {})
+    governance = signals.get("governance", {})
+
+    if environmental:
+        controls.append("환경 관점에서는 Agent 도입이 에너지·탄소·자원 사용량에 미치는 영향과 산정 근거를 함께 기록한다.")
+    if "workforce_impact" in social:
+        controls.append("사회 관점에서는 인력 감축 목적이 아니라 업무 보조·직무 전환·재교육 관점으로 PoC 범위를 제한한다.")
+    if "employee_monitoring" in social:
+        controls.append("사회 관점에서는 직원·작업자 모니터링 데이터를 개인 징계·인사평가 자동화에 직접 사용하지 않는다.")
+    if "capability_transition" in social:
+        controls.append("사회 관점에서는 Agent 도입에 따른 사용자 교육·업스킬링·리스킬링 계획을 포함한다.")
+    if "stakeholder_acceptance" in social:
+        controls.append("사회 관점에서는 현업·노사·고객 등 이해관계자 수용성과 대체 경로를 Human Review에서 확인한다.")
+    if governance:
+        controls.append("거버넌스 관점에서는 책임자, 승인권자, 감사 로그, 설명가능성, 접근권한을 PoC 착수 전 확인한다.")
+
     return controls
+
+
+def build_esg_assessment(signals: dict[str, dict[str, list[str]]]) -> dict[str, Any]:
+    pillars = flatten_esg_pillars(signals)
+    controls = build_esg_controls(signals)
+    review_required = bool(signals.get("social") or signals.get("governance"))
+    impact_level = "review_required" if review_required else "opportunity" if signals.get("environmental") else "none"
+
+    if not pillars:
+        summary = "ESG 관점에서 별도 검토 신호가 탐지되지 않았다."
+    elif review_required:
+        summary = "Agent 도입이 ESG 관점에서 이해관계자, 데이터 거버넌스, 책임성 또는 운영 통제에 영향을 줄 수 있어 통합 ESG Review가 필요하다."
+    else:
+        summary = "Agent 도입이 환경 효율 관점의 긍정 효과를 가질 수 있으나 산정 근거 확인이 필요하다."
+
+    return {
+        "impact_level": impact_level,
+        "review_required": review_required,
+        "pillars": pillars,
+        "required_controls": controls,
+        "summary": summary,
+    }
 
 
 def determine_risk_level(risk_score: int) -> str:
@@ -158,8 +263,7 @@ def check_process_risk(
 
     combined_text = "\n".join([name, problem, workflow, candidate, target_user])
     matched_keywords = contains_high_risk_keyword(combined_text)
-    esg_social_matches = contains_esg_social_keywords(combined_text)
-    esg_social_categories = sorted(esg_social_matches)
+    esg_signals = detect_esg_signals(combined_text)
 
     context_sensitive = False
     context_titles: list[str] = []
@@ -178,11 +282,9 @@ def check_process_risk(
             str(context.get("title") or ""),
             str(context.get("text") or context.get("content") or context.get("snippet") or ""),
         ])
-        context_esg_matches = contains_esg_social_keywords(context_text)
-        for category, hits in context_esg_matches.items():
-            esg_social_matches.setdefault(category, [])
-            esg_social_matches[category].extend(hits)
-        esg_social_categories = sorted(esg_social_matches)
+        esg_signals = merge_esg_signals(esg_signals, detect_esg_signals(context_text))
+
+    esg_assessment = build_esg_assessment(esg_signals)
 
     flags: list[str] = []
     controls: list[str] = []
@@ -207,19 +309,11 @@ def check_process_risk(
         flags.append("sensitive_context_detected")
         controls.append("검색된 근거 문서에 민감정보가 포함될 수 있으므로 RAG 결과 노출 범위를 제한한다.")
 
-    if esg_social_categories:
-        flags.append("social_impact_review_required")
-        controls.extend(build_esg_social_controls(esg_social_categories))
-        if "workforce_displacement" in esg_social_categories:
-            flags.append("workforce_transition_required")
-        if "employee_monitoring" in esg_social_categories:
-            flags.append("employee_monitoring_guardrail_required")
-        if "skill_gap" in esg_social_categories:
-            flags.append("reskilling_plan_required")
-        if "labor_relation" in esg_social_categories:
-            flags.append("labor_stakeholder_review_required")
-        if "service_accessibility" in esg_social_categories:
-            flags.append("accessibility_fallback_required")
+    if esg_assessment["pillars"]:
+        flags.append("esg_assessment_present")
+        controls.extend(esg_assessment["required_controls"])
+    if esg_assessment["review_required"]:
+        flags.append("esg_review_required")
 
     if "발주" in name or "발주" in candidate:
         flags.append("execution_not_allowed")
@@ -244,11 +338,7 @@ def check_process_risk(
         "sensitive_context_titles": sorted(set(context_titles)),
         "flags": sorted(set(flags)),
         "controls": controls,
-        "esg_social_risks": [
-            {"category": category, "matched_keywords": sorted(set(hits))}
-            for category, hits in sorted(esg_social_matches.items())
-        ],
-        "esg_social_controls": build_esg_social_controls(esg_social_categories),
+        "esg_assessment": esg_assessment,
     }
 
 
@@ -274,8 +364,12 @@ def check_risks_for_processes(
         1 for item in items if "human_review_required" in item["flags"]
     )
 
-    social_impact_review_count = sum(
-        1 for item in items if "social_impact_review_required" in item["flags"]
+    esg_assessment_count = sum(
+        1 for item in items if "esg_assessment_present" in item["flags"]
+    )
+
+    esg_review_required_count = sum(
+        1 for item in items if "esg_review_required" in item["flags"]
     )
 
     return {
@@ -284,6 +378,7 @@ def check_risks_for_processes(
             "total_processes": len(items),
             "high_risk_count": high_risk_count,
             "review_required_count": review_required_count,
-            "social_impact_review_count": social_impact_review_count,
+            "esg_assessment_count": esg_assessment_count,
+            "esg_review_required_count": esg_review_required_count,
         },
     }
