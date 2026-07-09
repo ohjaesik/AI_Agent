@@ -123,7 +123,7 @@ def build_agent_evaluation_section(state: dict[str, Any]) -> dict[str, Any]:
         blocks.extend([
             {
                 "type": "paragraph",
-                "text": "Agent Replan Loop는 evidence coverage가 낮은 후보에 대해 기존 RAG 문서를 1회 재검색하고, 추가 공식 URL·내부 문서·업무 owner 인터뷰 메모 등 보완 입력을 Human Review에 요청한다.",
+                "text": "Agent Replan Loop는 evidence coverage가 낮은 후보에 대해 설정된 제한 횟수 안에서 RAG 문서와 공식 URL을 재검색하고, 추가 공식 URL·내부 문서·업무 owner 인터뷰 메모 등 보완 입력을 Human Review에 요청한다.",
             },
             {
                 "type": "table",
