@@ -16,6 +16,13 @@ STATUS_ORDER = {
 }
 REVIEW_LEVELS = {"enhanced_review", "sensitive_review"}
 
+LOW_EVIDENCE_ISSUE_THRESHOLD = 0.30
+ADDITIONAL_EVIDENCE_THRESHOLD = 0.40
+POST_REPLAN_ADDITIONAL_EVIDENCE_THRESHOLD = 0.35
+CONFIDENCE_THRESHOLD = 0.50
+HUMAN_REVIEW_THRESHOLD = 0.65
+VERY_WEAK_EVIDENCE_THRESHOLD = 0.15
+
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
     return round(max(minimum, min(maximum, value)), 3)
@@ -131,7 +138,7 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
         - risk_uncertainty * 0.12
     )
 
-    if evidence_coverage < 0.45:
+    if evidence_coverage < LOW_EVIDENCE_ISSUE_THRESHOLD:
         issues.append("low evidence coverage")
     if rationale_coverage < 0.50:
         issues.append("low rationale coverage")
@@ -139,11 +146,11 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
         issues.append("low data confidence")
 
     post_replan = replan_evidence_lift >= 0.08
-    additional_evidence_threshold = 0.60 if not post_replan else 0.45
-    confidence_threshold = 0.50 if not post_replan else 0.62
-    human_review_threshold = 0.75 if not post_replan else 0.70
+    additional_evidence_threshold = POST_REPLAN_ADDITIONAL_EVIDENCE_THRESHOLD if post_replan else ADDITIONAL_EVIDENCE_THRESHOLD
+    confidence_threshold = CONFIDENCE_THRESHOLD
+    human_review_threshold = HUMAN_REVIEW_THRESHOLD
     zero_evidence_coverage = evidence_coverage <= 0.0
-    very_weak_evidence_coverage = evidence_coverage < 0.20 or (evidence_coverage < 0.25 and data_confidence < 0.25)
+    very_weak_evidence_coverage = evidence_coverage < VERY_WEAK_EVIDENCE_THRESHOLD or (evidence_coverage < 0.20 and data_confidence < 0.30)
 
     return {
         "process_id": candidate.get("process_id"),
@@ -213,8 +220,15 @@ def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_ite
         "total_candidates": len(updated_items),
         "recommended_count": len(recommended),
         "review_required_count": len(review_required),
+        "human_review_required_count": len(review_required),
         "evidence_insufficient_count": len(evidence_insufficient),
         "excluded_count": len(excluded),
+        "status_counts": {
+            "recommended": len(recommended),
+            "human_review_required": len(review_required),
+            "evidence_insufficient": len(evidence_insufficient),
+            "excluded": len(excluded),
+        },
         "top_candidate": updated_items[0] if updated_items else None,
         "agent_evaluator_applied": True,
     }
@@ -248,7 +262,7 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
         )
 
     updated_ranking = apply_evaluation_to_ranking(ranking_for_evaluation, evaluation_items)
-    low_confidence_count = sum(1 for item in evaluation_items if item.get("confidence_score", 1) < 0.50)
+    low_confidence_count = sum(1 for item in evaluation_items if item.get("confidence_score", 1) < CONFIDENCE_THRESHOLD)
     human_review_required_count = sum(1 for item in evaluation_items if item.get("requires_human_review"))
     additional_evidence_count = sum(1 for item in evaluation_items if item.get("requires_additional_evidence"))
     avg_confidence = round(sum(float(item.get("confidence_score") or 0.0) for item in evaluation_items) / len(evaluation_items), 3) if evaluation_items else 0.0
@@ -262,6 +276,13 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
             "human_review_required_count": human_review_required_count,
             "additional_evidence_required_count": additional_evidence_count,
             "replan_evidence_lift": replan_evidence_lift,
+            "thresholds": {
+                "low_evidence_issue_threshold": LOW_EVIDENCE_ISSUE_THRESHOLD,
+                "additional_evidence_threshold": ADDITIONAL_EVIDENCE_THRESHOLD,
+                "post_replan_additional_evidence_threshold": POST_REPLAN_ADDITIONAL_EVIDENCE_THRESHOLD,
+                "human_review_threshold": HUMAN_REVIEW_THRESHOLD,
+                "very_weak_evidence_threshold": VERY_WEAK_EVIDENCE_THRESHOLD,
+            },
         },
         "updated_priority_ranking": updated_ranking,
     }
