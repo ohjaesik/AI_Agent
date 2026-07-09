@@ -253,7 +253,7 @@ def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
     additional_evidence_count = sum(1 for item in evaluation_items if item.get("requires_additional_evidence"))
     avg_confidence = round(sum(float(item.get("confidence_score") or 0.0) for item in evaluation_items) / len(evaluation_items), 3) if evaluation_items else 0.0
     return {
-        "agent_registry": build_tool_permission_report(),
+        "agent_tool_permissions": build_tool_permission_report(),
         "items": evaluation_items,
         "summary": {
             "evaluated_candidates": len(evaluation_items),
