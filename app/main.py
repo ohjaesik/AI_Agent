@@ -118,6 +118,7 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("used_sources:", len(result.get("used_sources", [])))
     print("agent_registry:", len(result.get("agent_registry", [])))
     print("agent_contracts:", len(result.get("agent_contracts", [])))
+    print("agent_tool_calls:", len(result.get("agent_tool_calls", [])))
     print("report_sections:", len(result.get("report_data", {}).get("sections", [])))
 
 
@@ -185,6 +186,7 @@ def run_demo(
         },
         "agent_registry": get_agent_registry(),
         "agent_contracts": [],
+        "agent_tool_calls": [],
         "audit_logs": [],
         "errors": [],
     }
