@@ -6,15 +6,17 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, TypeVar
 
-from app.agents.llm_planner import plan_agent_post_decision, plan_agent_tool_selection
 from app.agents.registry import get_agent_spec, get_tool_specs_for_node
 from app.agents.runtime import build_agent_contract, build_contract_audit_log, get_agent_binding_for_node
 from app.agents.tool_runtime import call_agent_tool
+from app.core.config import get_settings
 
 StateT = TypeVar("StateT", bound=dict[str, Any])
 
 EVIDENCE_INSUFFICIENT_THRESHOLD = 0.15
 LOW_CONFIDENCE_THRESHOLD = 0.45
+DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS = 2
+EXPLICIT_EXTRA_LOOP_BONUS = 1
 
 
 def summarize_state_for_agent(state: dict[str, Any]) -> dict[str, Any]:
@@ -29,6 +31,7 @@ def summarize_state_for_agent(state: dict[str, Any]) -> dict[str, Any]:
         "priority_item_count": len((state.get("priority_ranking", {}) or {}).get("items", []) or []),
         "has_human_review": bool(state.get("human_review")),
         "replan_attempts": state.get("replan_attempts", 0),
+        "agent_supervisor_extra_loop_enabled": bool(state.get("agent_supervisor_extra_loop_enabled")),
         "available_state_keys": sorted(state.keys()),
     }
 
@@ -37,11 +40,55 @@ def tool_names(tool_specs: list[dict[str, Any]]) -> list[str]:
     return [str(item.get("name")) for item in tool_specs if item.get("name")]
 
 
+def tool_uses_llm(tool_spec: dict[str, Any]) -> bool:
+    name = str(tool_spec.get("name") or "")
+    return bool(tool_spec.get("uses_llm")) or "llm" in name.lower() or name in {"process_discovery_llm", "llm_critic", "report_writer"}
+
+
+def summarize_assigned_tool(tool_spec: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": tool_spec.get("name"),
+        "description": tool_spec.get("description"),
+        "purpose": tool_spec.get("purpose", "execute"),
+        "nodes": tool_spec.get("nodes", []),
+        "uses_llm": tool_uses_llm(tool_spec),
+    }
+
+
 def as_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def get_agent_loop_settings(state: dict[str, Any]) -> tuple[int, bool, str | None]:
+    """Resolve loop policy without breaking tests when env settings are absent."""
+    try:
+        settings = get_settings()
+        max_loops = int(settings.agent_supervisor_max_tool_loops or DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS)
+        extra_loop_enabled = bool(settings.agent_supervisor_extra_loop_enabled)
+        settings_error = None
+    except Exception as exc:
+        max_loops = DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS
+        extra_loop_enabled = False
+        settings_error = f"settings_unavailable: {type(exc).__name__}: {exc}"
+
+    if state.get("agent_supervisor_extra_loop_enabled"):
+        extra_loop_enabled = True
+
+    max_loops = max(1, min(max_loops, DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS))
+    if extra_loop_enabled:
+        max_loops += EXPLICIT_EXTRA_LOOP_BONUS
+
+    return max_loops, extra_loop_enabled, settings_error
+
+
+def order_assigned_tools(candidate_tool_specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep registry order but make sure execute tools are first when present."""
+    execute_tools = [tool for tool in candidate_tool_specs if str(tool.get("purpose") or "execute") == "execute"]
+    other_tools = [tool for tool in candidate_tool_specs if tool not in execute_tools]
+    return [*execute_tools, *other_tools]
 
 
 def select_tool_spec(
@@ -52,15 +99,16 @@ def select_tool_spec(
     candidate_tool_specs: list[dict[str, Any]],
     state: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    """Deterministic fallback selector.
+    """Select the primary execution tool for deterministic fallback and trace readability.
 
-    The Expert Agent first receives these assigned candidates from AgentSpec.tool_specs.
-    The LLM planner may choose another assigned candidate, but never a tool outside this list.
+    The Supervisor loop still runs the assigned tool set. This selector only identifies
+    the first tool that carries the actual node execution result.
     """
     if not candidate_tool_specs:
         raise ValueError(f"No candidate tool specs for node: {node_name}")
 
-    by_name = {str(item.get("name")): item for item in candidate_tool_specs}
+    ordered_tools = order_assigned_tools(candidate_tool_specs)
+    by_name = {str(item.get("name")): item for item in ordered_tools}
     evaluation_summary = (state.get("agent_evaluation") or {}).get("summary", {}) or {}
     additional_evidence_count = int(evaluation_summary.get("additional_evidence_required_count", 0) or 0)
     priority_items = (state.get("priority_ranking") or {}).get("items", []) or []
@@ -71,7 +119,7 @@ def select_tool_spec(
         (
             node_name == "priority_ranking" and (review_count > 0 or blocked_count > 0) and "candidate_status_calibrator" in by_name,
             "candidate_status_calibrator",
-            "governance or review-required candidates exist, so deterministic fallback selected a status calibration tool instead of only ranking by score.",
+            "governance or review-required candidates exist, so this assigned calibration tool is emphasized inside the Agent loop.",
         ),
         (
             node_name == "agent_evaluator" and "evidence_replan_decider" in by_name,
@@ -81,17 +129,17 @@ def select_tool_spec(
         (
             node_name == "llm_critic" and additional_evidence_count > 0 and "critic_replan_decider" in by_name,
             "critic_replan_decider",
-            "previous evaluation found evidence gaps, so deterministic fallback selected a replan/human-review routing tool.",
+            "previous evaluation found evidence gaps, so this assigned routing tool is emphasized inside the Agent loop.",
         ),
         (
             node_name == "poc_delivery_planner" and review_count == len(priority_items) and priority_items and "poc_candidate_guard" in by_name,
             "poc_candidate_guard",
-            "all candidates require review, so deterministic fallback selected a PoC selection guard.",
+            "all candidates require review, so this assigned guard tool is emphasized inside the Agent loop.",
         ),
         (
             node_name == "report_writer" and state.get("agent_decisions") and "delivery_decision_summarizer" in by_name,
             "delivery_decision_summarizer",
-            "previous Agent decisions exist and must be reflected in the final report data.",
+            "previous Agent decisions exist and must be reflected in the final report metadata.",
         ),
     ]
 
@@ -99,10 +147,9 @@ def select_tool_spec(
         if condition:
             return by_name[selected_name], reason
 
-    default_tool = candidate_tool_specs[0]
+    default_tool = ordered_tools[0]
     return default_tool, (
-        f"The {agent_spec.get('name')} fallback policy selected the primary assigned tool because node '{node_name}' "
-        f"implements capability '{contract.get('capability')}' and no stronger routing condition was detected."
+        f"{agent_spec.get('name')} emphasized the primary assigned tool for capability '{contract.get('capability')}'."
     )
 
 
@@ -115,24 +162,31 @@ def build_agent_tool_decision(
     selected_tool_spec: dict[str, Any],
     selection_reason: str,
     state: dict[str, Any],
-    planner_result: dict[str, Any],
+    loop_index: int,
+    tool_index: int,
+    loop_limit: int,
+    executes_node: bool,
 ) -> dict[str, Any]:
     return {
-        "phase": "pre_tool_selection",
+        "phase": "agent_tool_loop",
         "node_name": node_name,
         "agent_id": agent_spec.get("id"),
         "agent_name": agent_spec.get("name"),
         "capability": contract.get("capability"),
         "node_role": contract.get("node_role"),
+        "loop_index": loop_index,
+        "loop_limit": loop_limit,
+        "tool_index": tool_index,
         "candidate_tools": tool_names(candidate_tool_specs),
-        "assigned_tools": planner_result.get("assigned_tools", []),
+        "assigned_tools": [summarize_assigned_tool(tool) for tool in candidate_tool_specs],
         "selected_tool": selected_tool_spec.get("name"),
-        "selected_tool_uses_llm": bool(planner_result.get("selected_tool_uses_llm")),
+        "selected_tool_purpose": selected_tool_spec.get("purpose", "execute"),
+        "selected_tool_uses_llm": tool_uses_llm(selected_tool_spec),
+        "executes_node": executes_node,
         "tool_description": selected_tool_spec.get("description"),
         "selection_reason": selection_reason,
-        "planner_mode": planner_result.get("planner_mode"),
-        "planner_used_llm": bool(planner_result.get("planner_used_llm")),
-        "planner_risk_note": planner_result.get("risk_note"),
+        "planner_mode": "expert_agent_supervisor_loop",
+        "planner_used_llm": False,
         "role_prompt": agent_spec.get("role_prompt", ""),
         "task_instructions": agent_spec.get("task_instructions", []),
         "state_summary": summarize_state_for_agent(state),
@@ -407,65 +461,222 @@ def apply_post_decision(result: dict[str, Any], decision: dict[str, Any], state:
     }
 
 
-def merge_agent_execution_result(
+def agent_needs_next_loop(node_name: str, post_decision: dict[str, Any], result: dict[str, Any], loop_index: int) -> bool:
+    if loop_index >= DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS:
+        return False
+
+    if node_name in {"agent_evaluator", "llm_critic"}:
+        if int(post_decision.get("additional_evidence_required_count") or 0) > 0 and not result.get("replan_request"):
+            return True
+
+    if node_name == "poc_delivery_planner" and post_decision.get("changed_output"):
+        return True
+
+    return False
+
+
+def build_extra_loop_request(
     *,
     node_name: str,
-    base_result: dict[str, Any],
-    contract: dict[str, Any],
-    tool_audit_logs: list[dict[str, Any]],
-    tool_observation: dict[str, Any],
-    pre_decision: dict[str, Any],
+    agent_id: str,
     post_decision: dict[str, Any],
+    state: dict[str, Any],
+    loop_limit: int,
 ) -> dict[str, Any]:
-    merged = dict(base_result)
+    project_id = state.get("project_id")
+    command = "python -m app.main --auto-approve --allow-agent-extra-loop"
+    if project_id:
+        command += f" --project-id {project_id}"
+    return {
+        "node_name": node_name,
+        "agent_id": agent_id,
+        "reason": post_decision.get("reason"),
+        "loop_limit_reached": loop_limit,
+        "requested_extra_loops": 1,
+        "command": command,
+        "default_action": "skip_extra_loop_and_continue",
+    }
+
+
+def validation_runner_result(current_result: dict[str, Any], tool_spec: dict[str, Any], loop_index: int) -> dict[str, Any]:
+    result = dict(current_result)
+    validations = list(result.get("agent_tool_validations", []))
+    validations.append(
+        {
+            "tool_name": tool_spec.get("name"),
+            "purpose": tool_spec.get("purpose", "execute"),
+            "loop_index": loop_index,
+            "status": "observed_existing_node_result",
+        }
+    )
+    result["agent_tool_validations"] = validations
+    return result
+
+
+def run_agent_tool_loop(
+    *,
+    node_name: str,
+    node_fn: Callable[[StateT], dict[str, Any]],
+    state: StateT,
+    agent_spec: dict[str, Any],
+    contract: dict[str, Any],
+    candidate_tool_specs: list[dict[str, Any]],
+    emphasized_tool_spec: dict[str, Any],
+    emphasized_reason: str,
+) -> dict[str, Any]:
+    agent_id = str(agent_spec.get("id"))
+    loop_limit, extra_loop_enabled, settings_note = get_agent_loop_settings(state)
+    assigned_tools = order_assigned_tools(candidate_tool_specs)
+    current_result: dict[str, Any] = {}
+    all_audit_logs: list[dict[str, Any]] = []
+    pre_decisions: list[dict[str, Any]] = []
+    post_decisions: list[dict[str, Any]] = []
+    tool_call_records: list[dict[str, Any]] = []
+    loop_iterations: list[dict[str, Any]] = []
+
+    for loop_index in range(1, loop_limit + 1):
+        loop_state = {**state, **current_result}
+        loop_tool_names: list[str] = []
+        loop_observations: list[dict[str, Any]] = []
+
+        for tool_index, tool_spec in enumerate(assigned_tools, start=1):
+            executes_node = tool_index == 1
+            reason = emphasized_reason if tool_spec.get("name") == emphasized_tool_spec.get("name") else (
+                f"{agent_spec.get('name')} runs assigned tool '{tool_spec.get('name')}' in supervisor loop {loop_index}."
+            )
+            pre_decision = build_agent_tool_decision(
+                node_name=node_name,
+                agent_spec=agent_spec,
+                contract=contract,
+                candidate_tool_specs=assigned_tools,
+                selected_tool_spec=tool_spec,
+                selection_reason=reason,
+                state=loop_state,
+                loop_index=loop_index,
+                tool_index=tool_index,
+                loop_limit=loop_limit,
+                executes_node=executes_node,
+            )
+
+            if executes_node:
+                runner = lambda payload: node_fn(payload["state"])
+            else:
+                runner = lambda payload, tool_spec=tool_spec, loop_index=loop_index: validation_runner_result(current_result, tool_spec, loop_index)
+
+            tool_call = call_agent_tool(
+                agent_id=agent_id,
+                tool_name=str(tool_spec["name"]),
+                payload={"state": loop_state, "agent_decision": pre_decision},
+                runner=runner,
+                node_name=node_name,
+            )
+
+            current_result = dict(tool_call.result)
+            pre_decisions.append(pre_decision)
+            all_audit_logs.extend(tool_call.audit_logs)
+            loop_tool_names.append(str(tool_spec.get("name")))
+            loop_observations.append(tool_call.observation)
+            tool_call_records.append(
+                {
+                    "node_name": node_name,
+                    "agent_id": agent_id,
+                    "capability": pre_decision.get("capability"),
+                    "loop_index": loop_index,
+                    "tool_index": tool_index,
+                    "candidate_tools": pre_decision.get("candidate_tools", []),
+                    "assigned_tools": pre_decision.get("assigned_tools", []),
+                    "tool_name": pre_decision.get("selected_tool"),
+                    "tool_description": pre_decision.get("tool_description"),
+                    "tool_purpose": pre_decision.get("selected_tool_purpose"),
+                    "tool_uses_llm": pre_decision.get("selected_tool_uses_llm"),
+                    "executes_node": executes_node,
+                    "planner_mode": "expert_agent_supervisor_loop",
+                    "planner_used_llm": False,
+                    "selection_reason": pre_decision.get("selection_reason"),
+                    "observation": tool_call.observation,
+                }
+            )
+
+        post_processed_result, post_decision = apply_post_decision(current_result, pre_decisions[-1], {**state, **current_result})
+        current_result = post_processed_result
+        post_decision = {
+            **post_decision,
+            "loop_index": loop_index,
+            "loop_limit": loop_limit,
+            "assigned_tools_executed": loop_tool_names,
+            "agent_loop_mode": "expert_agent_supervisor_loop",
+            "extra_loop_enabled": extra_loop_enabled,
+            "settings_note": settings_note,
+        }
+        post_decisions.append(post_decision)
+        loop_iterations.append(
+            {
+                "node_name": node_name,
+                "agent_id": agent_id,
+                "loop_index": loop_index,
+                "loop_limit": loop_limit,
+                "assigned_tools_executed": loop_tool_names,
+                "observation_count": len(loop_observations),
+                "post_decision": post_decision,
+            }
+        )
+
+        if not agent_needs_next_loop(node_name, post_decision, current_result, loop_index):
+            break
+
+    last_post_decision = post_decisions[-1] if post_decisions else {}
+    loop_requests = list(current_result.get("agent_loop_requests", []))
+    if (
+        not extra_loop_enabled
+        and last_post_decision
+        and agent_needs_next_loop(node_name, last_post_decision, current_result, DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS - 1)
+        and len(loop_iterations) >= DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS
+    ):
+        loop_requests.append(
+            build_extra_loop_request(
+                node_name=node_name,
+                agent_id=agent_id,
+                post_decision=last_post_decision,
+                state=state,
+                loop_limit=DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS,
+            )
+        )
+
+    merged = dict(current_result)
     existing_audit_logs = list(merged.get("audit_logs", []))
     merged["audit_logs"] = [
-        *tool_audit_logs,
+        *all_audit_logs,
         *existing_audit_logs,
-        build_contract_audit_log(node_name, {**contract, "selected_tool_spec": {"name": pre_decision.get("selected_tool")}}),
+        build_contract_audit_log(node_name, {**contract, "selected_tool_spec": emphasized_tool_spec}),
     ]
     merged["agent_contracts"] = list(merged.get("agent_contracts", [])) + [
         {
             **contract,
-            "selected_tool": pre_decision.get("selected_tool"),
-            "candidate_tools": pre_decision.get("candidate_tools", []),
-            "assigned_tools": pre_decision.get("assigned_tools", []),
-            "planner_mode": pre_decision.get("planner_mode"),
-            "planner_used_llm": pre_decision.get("planner_used_llm"),
-            "selected_tool_uses_llm": pre_decision.get("selected_tool_uses_llm"),
-            "tool_observation": tool_observation,
-            "post_decision": post_decision,
+            "selected_tool": emphasized_tool_spec.get("name"),
+            "candidate_tools": tool_names(assigned_tools),
+            "assigned_tools": [summarize_assigned_tool(tool) for tool in assigned_tools],
+            "agent_loop_mode": "expert_agent_supervisor_loop",
+            "loop_limit": loop_limit,
+            "loop_iterations": loop_iterations,
+            "post_decision": last_post_decision,
         }
     ]
-    merged["agent_tool_calls"] = list(merged.get("agent_tool_calls", [])) + [
-        {
-            "node_name": node_name,
-            "agent_id": pre_decision.get("agent_id"),
-            "capability": pre_decision.get("capability"),
-            "candidate_tools": pre_decision.get("candidate_tools", []),
-            "assigned_tools": pre_decision.get("assigned_tools", []),
-            "tool_name": pre_decision.get("selected_tool"),
-            "tool_description": pre_decision.get("tool_description"),
-            "tool_uses_llm": pre_decision.get("selected_tool_uses_llm"),
-            "planner_mode": pre_decision.get("planner_mode"),
-            "planner_used_llm": pre_decision.get("planner_used_llm"),
-            "selection_reason": pre_decision.get("selection_reason"),
-            "observation": tool_observation,
-        }
-    ]
-    merged["agent_decisions"] = list(merged.get("agent_decisions", [])) + [pre_decision, post_decision]
+    merged["agent_tool_calls"] = list(merged.get("agent_tool_calls", [])) + tool_call_records
+    merged["agent_decisions"] = list(merged.get("agent_decisions", [])) + pre_decisions + post_decisions
+    merged["agent_loop_iterations"] = list(merged.get("agent_loop_iterations", [])) + loop_iterations
+    if loop_requests:
+        merged["agent_loop_requests"] = loop_requests
     return merged
 
 
 def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, Any]]) -> Callable[[StateT], dict[str, Any]]:
-    """Run a graph node through the assigned expert Agent.
+    """Run a graph node through the top-level expert-agent supervisor loop.
 
-    Flow:
-    1. Resolve the expert Agent and its assigned tool specs from registry.py.
-    2. Ask the Agent LLM planner to choose exactly one assigned tool.
-    3. Validate and execute that tool through call_agent_tool permission checks.
-    4. Ask the Agent post-tool reflector for next-action intent.
-    5. Apply deterministic safety calibration and record all decisions.
+    The top-level supervisor resolves the owning Expert Agent, gives it only the
+    tools assigned in AgentSpec.tool_specs for the node, executes those assigned
+    tools in order, and lets deterministic post-decision rules patch the state.
+    The loop runs at most two times by default. A third loop requires explicit
+    command/state opt-in via --allow-agent-extra-loop.
     """
 
     def _node(state: StateT) -> dict[str, Any]:
@@ -488,67 +699,24 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
         if len(candidate_tool_specs) > 3:
             raise ValueError(f"Too many candidate tools for node '{node_name}': {len(candidate_tool_specs)}")
 
-        fallback_tool_spec, fallback_reason = select_tool_spec(
+        emphasized_tool_spec, emphasized_reason = select_tool_spec(
             node_name=node_name,
             agent_spec=agent_spec,
             contract=contract,
             candidate_tool_specs=candidate_tool_specs,
             state=state,
         )
-        state_summary = summarize_state_for_agent(state)
-        planner_result = plan_agent_tool_selection(
-            agent_spec=agent_spec,
-            contract=contract,
-            candidate_tool_specs=candidate_tool_specs,
-            fallback_tool_spec=fallback_tool_spec,
-            fallback_reason=fallback_reason,
-            state_summary=state_summary,
-        )
-        selected_tool_spec = planner_result["selected_tool_spec"]
 
-        pre_decision = build_agent_tool_decision(
+        return run_agent_tool_loop(
             node_name=node_name,
-            agent_spec=agent_spec,
-            contract=contract,
-            candidate_tool_specs=candidate_tool_specs,
-            selected_tool_spec=selected_tool_spec,
-            selection_reason=str(planner_result.get("reason") or fallback_reason),
+            node_fn=node_fn,
             state=state,
-            planner_result=planner_result,
-        )
-
-        tool_call = call_agent_tool(
-            agent_id=agent_id,
-            tool_name=str(selected_tool_spec["name"]),
-            payload={"state": state, "agent_decision": pre_decision},
-            runner=lambda payload: node_fn(payload["state"]),
-            node_name=node_name,
-        )
-
-        llm_post_decision = plan_agent_post_decision(
             agent_spec=agent_spec,
             contract=contract,
-            selected_tool_spec=selected_tool_spec,
-            tool_observation=tool_call.observation,
-            state_summary=state_summary,
-        )
-        post_processed_result, post_decision = apply_post_decision(tool_call.result, pre_decision, state)
-        post_decision = {
-            **post_decision,
-            "agent_post_planner": llm_post_decision,
-            "post_planner_mode": llm_post_decision.get("planner_mode"),
-            "post_planner_used_llm": llm_post_decision.get("planner_used_llm"),
-        }
-
-        return merge_agent_execution_result(
-            node_name=node_name,
-            base_result=post_processed_result,
-            contract={**contract, "candidate_tool_specs": candidate_tool_specs, "selected_tool_spec": selected_tool_spec},
-            tool_audit_logs=tool_call.audit_logs,
-            tool_observation=tool_call.observation,
-            pre_decision=pre_decision,
-            post_decision=post_decision,
+            candidate_tool_specs=candidate_tool_specs,
+            emphasized_tool_spec=emphasized_tool_spec,
+            emphasized_reason=emphasized_reason,
         )
 
-    _node.__name__ = f"expert_executed_{node_name}"
+    _node.__name__ = f"expert_supervised_{node_name}"
     return _node
