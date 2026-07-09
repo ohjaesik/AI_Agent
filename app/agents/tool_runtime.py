@@ -32,6 +32,12 @@ def compact_json(value: Any, max_chars: int = 900) -> str:
     return text if len(text) <= max_chars else text[:max_chars] + "..."
 
 
+def is_langgraph_interrupt(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    module = type(exc).__module__.lower()
+    return "interrupt" in name and "langgraph" in module
+
+
 def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     state = payload.get("state") if isinstance(payload, dict) else None
     if not isinstance(state, dict):
@@ -128,8 +134,10 @@ def call_agent_tool(
             },
         )
         return ToolCallResult(result=result, audit_logs=[start_log, success_log], observation=observation)
-    except Exception as exc:
-        failed_log = build_tool_audit_log(
+    except BaseException as exc:
+        if is_langgraph_interrupt(exc):
+            raise
+        build_tool_audit_log(
             node_name=node_name,
             agent_id=agent_id,
             tool_name=tool_name,
