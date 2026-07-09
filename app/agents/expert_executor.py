@@ -99,10 +99,10 @@ def select_tool_spec(
     candidate_tool_specs: list[dict[str, Any]],
     state: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    """Select the primary execution tool for deterministic fallback and trace readability.
+    """Select the emphasized tool for trace readability.
 
     The Supervisor loop still runs the assigned tool set. This selector only identifies
-    the first tool that carries the actual node execution result.
+    which assigned tool carries the Agent's main decision emphasis.
     """
     if not candidate_tool_specs:
         raise ValueError(f"No candidate tool specs for node: {node_name}")
@@ -194,7 +194,6 @@ def build_agent_tool_decision(
 
 
 def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[int], set[int]]:
-    """Split severe evidence-insufficient candidates from ordinary review cases."""
     insufficient_ids: set[int] = set()
     review_ids: set[int] = set()
 
@@ -461,10 +460,7 @@ def apply_post_decision(result: dict[str, Any], decision: dict[str, Any], state:
     }
 
 
-def agent_needs_next_loop(node_name: str, post_decision: dict[str, Any], result: dict[str, Any], loop_index: int) -> bool:
-    if loop_index >= DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS:
-        return False
-
+def agent_loop_condition(node_name: str, post_decision: dict[str, Any], result: dict[str, Any]) -> bool:
     if node_name in {"agent_evaluator", "llm_critic"}:
         if int(post_decision.get("additional_evidence_required_count") or 0) > 0 and not result.get("replan_request"):
             return True
@@ -473,6 +469,10 @@ def agent_needs_next_loop(node_name: str, post_decision: dict[str, Any], result:
         return True
 
     return False
+
+
+def agent_needs_next_loop(node_name: str, post_decision: dict[str, Any], result: dict[str, Any], loop_index: int, loop_limit: int) -> bool:
+    return loop_index < loop_limit and agent_loop_condition(node_name, post_decision, result)
 
 
 def build_extra_loop_request(
@@ -621,7 +621,7 @@ def run_agent_tool_loop(
             }
         )
 
-        if not agent_needs_next_loop(node_name, post_decision, current_result, loop_index):
+        if not agent_needs_next_loop(node_name, post_decision, current_result, loop_index, loop_limit):
             break
 
     last_post_decision = post_decisions[-1] if post_decisions else {}
@@ -629,8 +629,8 @@ def run_agent_tool_loop(
     if (
         not extra_loop_enabled
         and last_post_decision
-        and agent_needs_next_loop(node_name, last_post_decision, current_result, DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS - 1)
         and len(loop_iterations) >= DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS
+        and agent_loop_condition(node_name, last_post_decision, current_result)
     ):
         loop_requests.append(
             build_extra_loop_request(
