@@ -33,6 +33,28 @@ def test_agent_evaluator_downgrades_low_evidence_recommended_candidate():
     assert updated["agent_evaluation"]["requires_additional_evidence"] is True
 
 
+def test_evaluator_returns_tool_permissions_not_agent_registry():
+    state = {
+        "priority_ranking": {"items": [], "summary": {"total_candidates": 0}},
+        "retrieved_contexts": {},
+        "evidence_items": [],
+    }
+
+    result = evaluate_agent_outputs(state)
+
+    assert "agent_registry" not in result
+    assert "agent_tool_permissions" in result
+    assert {row["agent_id"] for row in result["agent_tool_permissions"]} == {
+        "company_onboarding_agent",
+        "context_evidence_agent",
+        "process_diagnosis_agent",
+        "business_case_agent",
+        "governance_compliance_agent",
+        "evaluation_critic_agent",
+        "delivery_orchestration_agent",
+    }
+
+
 def test_zero_evidence_coverage_is_evidence_insufficient_even_with_rationale():
     state = {
         "priority_ranking": {
