@@ -180,5 +180,5 @@ The state should contain:
 ## Tests
 
 ```bash
-pytest tests/test_agent_runtime_contract.py tests/test_agent_registry.py tests/test_agent_evaluator.py
+pytest tests/test_agent_runtime.py tests/test_agent_evaluator.py
 ```
