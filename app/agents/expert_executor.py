@@ -6,6 +6,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, TypeVar
 
+from app.agents.llm_planner import plan_agent_post_decision, plan_agent_tool_selection
 from app.agents.registry import get_agent_spec, get_tool_specs_for_node
 from app.agents.runtime import build_agent_contract, build_contract_audit_log, get_agent_binding_for_node
 from app.agents.tool_runtime import call_agent_tool
@@ -51,6 +52,11 @@ def select_tool_spec(
     candidate_tool_specs: list[dict[str, Any]],
     state: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
+    """Deterministic fallback selector.
+
+    The Expert Agent first receives these assigned candidates from AgentSpec.tool_specs.
+    The LLM planner may choose another assigned candidate, but never a tool outside this list.
+    """
     if not candidate_tool_specs:
         raise ValueError(f"No candidate tool specs for node: {node_name}")
 
@@ -65,7 +71,7 @@ def select_tool_spec(
         (
             node_name == "priority_ranking" and (review_count > 0 or blocked_count > 0) and "candidate_status_calibrator" in by_name,
             "candidate_status_calibrator",
-            "governance or review-required candidates exist, so the Business Case Agent selected a status calibration tool instead of only ranking by score.",
+            "governance or review-required candidates exist, so deterministic fallback selected a status calibration tool instead of only ranking by score.",
         ),
         (
             node_name == "agent_evaluator" and "evidence_replan_decider" in by_name,
@@ -75,12 +81,12 @@ def select_tool_spec(
         (
             node_name == "llm_critic" and additional_evidence_count > 0 and "critic_replan_decider" in by_name,
             "critic_replan_decider",
-            "previous evaluation found evidence gaps, so the critic must produce a replan or human-review routing decision.",
+            "previous evaluation found evidence gaps, so deterministic fallback selected a replan/human-review routing tool.",
         ),
         (
             node_name == "poc_delivery_planner" and review_count == len(priority_items) and priority_items and "poc_candidate_guard" in by_name,
             "poc_candidate_guard",
-            "all candidates require review, so the Delivery Agent must guard PoC selection before planning.",
+            "all candidates require review, so deterministic fallback selected a PoC selection guard.",
         ),
         (
             node_name == "report_writer" and state.get("agent_decisions") and "delivery_decision_summarizer" in by_name,
@@ -95,7 +101,7 @@ def select_tool_spec(
 
     default_tool = candidate_tool_specs[0]
     return default_tool, (
-        f"The {agent_spec.get('name')} selected the primary tool because node '{node_name}' "
+        f"The {agent_spec.get('name')} fallback policy selected the primary assigned tool because node '{node_name}' "
         f"implements capability '{contract.get('capability')}' and no stronger routing condition was detected."
     )
 
@@ -109,6 +115,7 @@ def build_agent_tool_decision(
     selected_tool_spec: dict[str, Any],
     selection_reason: str,
     state: dict[str, Any],
+    planner_result: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "phase": "pre_tool_selection",
@@ -118,9 +125,14 @@ def build_agent_tool_decision(
         "capability": contract.get("capability"),
         "node_role": contract.get("node_role"),
         "candidate_tools": tool_names(candidate_tool_specs),
+        "assigned_tools": planner_result.get("assigned_tools", []),
         "selected_tool": selected_tool_spec.get("name"),
+        "selected_tool_uses_llm": bool(planner_result.get("selected_tool_uses_llm")),
         "tool_description": selected_tool_spec.get("description"),
         "selection_reason": selection_reason,
+        "planner_mode": planner_result.get("planner_mode"),
+        "planner_used_llm": bool(planner_result.get("planner_used_llm")),
+        "planner_risk_note": planner_result.get("risk_note"),
         "role_prompt": agent_spec.get("role_prompt", ""),
         "task_instructions": agent_spec.get("task_instructions", []),
         "state_summary": summarize_state_for_agent(state),
@@ -417,6 +429,10 @@ def merge_agent_execution_result(
             **contract,
             "selected_tool": pre_decision.get("selected_tool"),
             "candidate_tools": pre_decision.get("candidate_tools", []),
+            "assigned_tools": pre_decision.get("assigned_tools", []),
+            "planner_mode": pre_decision.get("planner_mode"),
+            "planner_used_llm": pre_decision.get("planner_used_llm"),
+            "selected_tool_uses_llm": pre_decision.get("selected_tool_uses_llm"),
             "tool_observation": tool_observation,
             "post_decision": post_decision,
         }
@@ -427,8 +443,12 @@ def merge_agent_execution_result(
             "agent_id": pre_decision.get("agent_id"),
             "capability": pre_decision.get("capability"),
             "candidate_tools": pre_decision.get("candidate_tools", []),
+            "assigned_tools": pre_decision.get("assigned_tools", []),
             "tool_name": pre_decision.get("selected_tool"),
             "tool_description": pre_decision.get("tool_description"),
+            "tool_uses_llm": pre_decision.get("selected_tool_uses_llm"),
+            "planner_mode": pre_decision.get("planner_mode"),
+            "planner_used_llm": pre_decision.get("planner_used_llm"),
             "selection_reason": pre_decision.get("selection_reason"),
             "observation": tool_observation,
         }
@@ -438,7 +458,15 @@ def merge_agent_execution_result(
 
 
 def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, Any]]) -> Callable[[StateT], dict[str, Any]]:
-    """Run a graph node through an expert Agent with up to 3 candidate tools and post-decision calibration."""
+    """Run a graph node through the assigned expert Agent.
+
+    Flow:
+    1. Resolve the expert Agent and its assigned tool specs from registry.py.
+    2. Ask the Agent LLM planner to choose exactly one assigned tool.
+    3. Validate and execute that tool through call_agent_tool permission checks.
+    4. Ask the Agent post-tool reflector for next-action intent.
+    5. Apply deterministic safety calibration and record all decisions.
+    """
 
     def _node(state: StateT) -> dict[str, Any]:
         binding = get_agent_binding_for_node(node_name)
@@ -460,13 +488,23 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
         if len(candidate_tool_specs) > 3:
             raise ValueError(f"Too many candidate tools for node '{node_name}': {len(candidate_tool_specs)}")
 
-        selected_tool_spec, selection_reason = select_tool_spec(
+        fallback_tool_spec, fallback_reason = select_tool_spec(
             node_name=node_name,
             agent_spec=agent_spec,
             contract=contract,
             candidate_tool_specs=candidate_tool_specs,
             state=state,
         )
+        state_summary = summarize_state_for_agent(state)
+        planner_result = plan_agent_tool_selection(
+            agent_spec=agent_spec,
+            contract=contract,
+            candidate_tool_specs=candidate_tool_specs,
+            fallback_tool_spec=fallback_tool_spec,
+            fallback_reason=fallback_reason,
+            state_summary=state_summary,
+        )
+        selected_tool_spec = planner_result["selected_tool_spec"]
 
         pre_decision = build_agent_tool_decision(
             node_name=node_name,
@@ -474,8 +512,9 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
             contract=contract,
             candidate_tool_specs=candidate_tool_specs,
             selected_tool_spec=selected_tool_spec,
-            selection_reason=selection_reason,
+            selection_reason=str(planner_result.get("reason") or fallback_reason),
             state=state,
+            planner_result=planner_result,
         )
 
         tool_call = call_agent_tool(
@@ -486,7 +525,20 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
             node_name=node_name,
         )
 
+        llm_post_decision = plan_agent_post_decision(
+            agent_spec=agent_spec,
+            contract=contract,
+            selected_tool_spec=selected_tool_spec,
+            tool_observation=tool_call.observation,
+            state_summary=state_summary,
+        )
         post_processed_result, post_decision = apply_post_decision(tool_call.result, pre_decision, state)
+        post_decision = {
+            **post_decision,
+            "agent_post_planner": llm_post_decision,
+            "post_planner_mode": llm_post_decision.get("planner_mode"),
+            "post_planner_used_llm": llm_post_decision.get("planner_used_llm"),
+        }
 
         return merge_agent_execution_result(
             node_name=node_name,
