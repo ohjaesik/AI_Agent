@@ -114,8 +114,12 @@ def summarize_tool_for_planner(tool_spec: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def assigned_tool_names(candidate_tool_specs: list[dict[str, Any]]) -> set[str]:
-    return {str(tool.get("name")) for tool in candidate_tool_specs if tool.get("name")}
+def safe_get_planner_settings() -> tuple[bool, float, str | None]:
+    try:
+        settings = get_settings()
+        return bool(settings.agent_llm_planner_enabled), float(settings.agent_llm_planner_timeout_seconds), None
+    except Exception as exc:
+        return False, 3.0, f"settings unavailable: {type(exc).__name__}: {exc}"
 
 
 def fallback_selection(
@@ -145,13 +149,13 @@ def plan_agent_tool_selection(
     fallback_reason: str,
     state_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.agent_llm_planner_enabled:
+    planner_enabled, timeout_seconds, settings_error = safe_get_planner_settings()
+    if not planner_enabled:
         return fallback_selection(
             fallback_tool_spec=fallback_tool_spec,
             candidate_tool_specs=candidate_tool_specs,
-            reason=fallback_reason,
-            mode="deterministic_planner_disabled",
+            reason=settings_error or fallback_reason,
+            mode="deterministic_planner_disabled" if not settings_error else "settings_unavailable_fallback",
         )
 
     candidates_by_name = {str(tool.get("name")): tool for tool in candidate_tool_specs if tool.get("name")}
@@ -165,7 +169,7 @@ def plan_agent_tool_selection(
 
     try:
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", USER_PROMPT)])
-        llm = get_chat_model(temperature=0.0, timeout=settings.agent_llm_planner_timeout_seconds)
+        llm = get_chat_model(temperature=0.0, timeout=timeout_seconds)
         messages = prompt.format_messages(
             agent=compact_json(
                 {
@@ -227,19 +231,19 @@ def plan_agent_post_decision(
     tool_observation: dict[str, Any],
     state_summary: dict[str, Any],
 ) -> dict[str, Any]:
-    settings = get_settings()
-    if not settings.agent_llm_planner_enabled:
+    planner_enabled, timeout_seconds, settings_error = safe_get_planner_settings()
+    if not planner_enabled:
         return {
-            "planner_mode": "deterministic_planner_disabled",
+            "planner_mode": "deterministic_planner_disabled" if not settings_error else "settings_unavailable_fallback",
             "planner_used_llm": False,
             "decision": "pass",
             "changed_output_intent": False,
-            "reason": "LLM post-decision planner disabled.",
+            "reason": settings_error or "LLM post-decision planner disabled.",
         }
 
     try:
         prompt = ChatPromptTemplate.from_messages([("system", POST_SYSTEM_PROMPT), ("human", POST_USER_PROMPT)])
-        llm = get_chat_model(temperature=0.0, timeout=settings.agent_llm_planner_timeout_seconds)
+        llm = get_chat_model(temperature=0.0, timeout=timeout_seconds)
         messages = prompt.format_messages(
             agent=compact_json(
                 {
