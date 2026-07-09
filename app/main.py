@@ -119,7 +119,22 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("agent_registry:", len(result.get("agent_registry", [])))
     print("agent_contracts:", len(result.get("agent_contracts", [])))
     print("agent_tool_calls:", len(result.get("agent_tool_calls", [])))
+    print("agent_loop_iterations:", len(result.get("agent_loop_iterations", [])))
+    print("agent_loop_requests:", len(result.get("agent_loop_requests", [])))
     print("report_sections:", len(result.get("report_data", {}).get("sections", [])))
+
+
+def print_agent_loop_requests(result: dict[str, Any]) -> None:
+    requests = result.get("agent_loop_requests", []) or []
+    if not requests:
+        return
+
+    print("\n=== Agent Loop Requests ===")
+    for idx, request in enumerate(requests, start=1):
+        print(f"{idx}. node={request.get('node_name')} agent={request.get('agent_id')}")
+        print(f"   reason={request.get('reason')}")
+        print(f"   command={request.get('command')}")
+        print("   default_action=skip_extra_loop_and_continue")
 
 
 def build_cli_human_decision(
@@ -155,6 +170,7 @@ def run_demo(
     review_comment: str | None = None,
     verbose: bool = False,
     state_output_path: str | None = None,
+    allow_agent_extra_loop: bool = False,
 ) -> dict[str, Any]:
     resolved = resolve_ids(project_id=project_id, company_id=company_id)
     resolved_project_id = resolved["project_id"]
@@ -187,6 +203,10 @@ def run_demo(
         "agent_registry": get_agent_registry(),
         "agent_contracts": [],
         "agent_tool_calls": [],
+        "agent_decisions": [],
+        "agent_loop_iterations": [],
+        "agent_loop_requests": [],
+        "agent_supervisor_extra_loop_enabled": allow_agent_extra_loop,
         "audit_logs": [],
         "errors": [],
     }
@@ -195,6 +215,7 @@ def run_demo(
     print(f"project_id={resolved_project_id}, company_id={resolved_company_id}")
     print(f"thread_id={thread_id}")
     print(f"report_status={normalized_report_status}")
+    print(f"allow_agent_extra_loop={allow_agent_extra_loop}")
 
     result = graph.invoke(initial_state, config=config)
 
@@ -235,6 +256,7 @@ def run_demo(
             print("-", error)
 
     print_report_generation_summary(result)
+    print_agent_loop_requests(result)
 
     print("\n=== Top Candidates ===")
     for item in result.get("priority_ranking", {}).get("items", [])[:5]:
@@ -269,6 +291,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--thread-id", type=str, default="ax-planner-cli")
     parser.add_argument("--auto-approve", action="store_true")
+    parser.add_argument("--allow-agent-extra-loop", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--report-title", type=str, default=None)
     parser.add_argument("--report-author", type=str, default=None)
@@ -298,4 +321,5 @@ if __name__ == "__main__":
         review_comment=args.review_comment,
         verbose=args.verbose,
         state_output_path=args.state_output_path,
+        allow_agent_extra_loop=args.allow_agent_extra_loop,
     )
