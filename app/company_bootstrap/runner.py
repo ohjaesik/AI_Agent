@@ -22,6 +22,7 @@ class BootstrapGraphResult:
     workflow_mode: str = "bootstrap_supervisor_graph"
     idempotency: dict[str, Any] | None = None
     agent_trace: list[dict[str, Any]] | None = None
+    agent_contracts: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +37,7 @@ class BootstrapGraphResult:
             "workflow_mode": self.workflow_mode,
             "idempotency": self.idempotency or {},
             "agent_trace": self.agent_trace or [],
+            "agent_contracts": self.agent_contracts or [],
         }
 
 
@@ -68,6 +70,7 @@ def run_bootstrap_supervisor_graph(
         "reset_company_chunks": reset_company_chunks,
         "warnings": [],
         "audit_logs": [],
+        "agent_contracts": [],
         "errors": [],
     }
     config = {"configurable": {"thread_id": thread_id}}
@@ -92,4 +95,5 @@ def run_bootstrap_supervisor_graph(
         workflow_mode="bootstrap_supervisor_graph",
         idempotency=payload.get("idempotency", {}),
         agent_trace=list(result_state.get("audit_logs", [])),
+        agent_contracts=list(result_state.get("agent_contracts", [])),
     )
