@@ -123,6 +123,8 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("agent_loop_requests:", len(result.get("agent_loop_requests", [])))
     print("agent_supervisor_steps:", len(result.get("agent_supervisor_steps", [])))
     print("agent_handoffs:", len(result.get("agent_handoffs", [])))
+    print("agent_llm_calls:", len(result.get("agent_llm_calls", [])))
+    print("agent_commands:", len(result.get("agent_commands", [])))
     print("agent_packages:", len([key for key in result if key.endswith("_package")]))
     print("report_sections:", len(result.get("report_data", {}).get("sections", [])))
 
@@ -140,6 +142,22 @@ def print_agent_handoff_summary(result: dict[str, Any]) -> None:
         )
 
 
+def print_agent_llm_summary(result: dict[str, Any]) -> None:
+    calls = result.get("agent_llm_calls", []) or []
+    if not calls:
+        return
+
+    used_count = sum(1 for call in calls if call.get("llm_used"))
+    print("\n=== Agent LLM Commands ===")
+    print(f"llm_used={used_count}/{len(calls)}")
+    for idx, call in enumerate(calls[-12:], start=max(1, len(calls) - 11)):
+        print(
+            f"{idx}. {call.get('kind')} | agent={call.get('agent_id')} | "
+            f"stage={call.get('stage_name')} | llm_used={call.get('llm_used')} | "
+            f"mode={call.get('mode')} | reason={call.get('reason')}"
+        )
+
+
 def print_agent_loop_requests(result: dict[str, Any]) -> None:
     requests = result.get("agent_loop_requests", []) or []
     if not requests:
@@ -147,7 +165,8 @@ def print_agent_loop_requests(result: dict[str, Any]) -> None:
 
     print("\n=== Agent Loop Requests ===")
     for idx, request in enumerate(requests, start=1):
-        print(f"{idx}. node={request.get('node_name')} agent={request.get('agent_id')}")
+        node_or_stage = request.get("node_name") or request.get("stage_name")
+        print(f"{idx}. node_or_stage={node_or_stage} agent={request.get('agent_id')}")
         print(f"   reason={request.get('reason')}")
         print(f"   command={request.get('command')}")
         print("   default_action=skip_extra_loop_and_continue")
@@ -224,6 +243,8 @@ def run_demo(
         "agent_loop_requests": [],
         "agent_supervisor_steps": [],
         "agent_handoffs": [],
+        "agent_llm_calls": [],
+        "agent_commands": [],
         "agent_supervisor_extra_loop_enabled": allow_agent_extra_loop,
         "audit_logs": [],
         "errors": [],
@@ -275,6 +296,7 @@ def run_demo(
 
     print_report_generation_summary(result)
     print_agent_handoff_summary(result)
+    print_agent_llm_summary(result)
     print_agent_loop_requests(result)
 
     print("\n=== Top Candidates ===")
