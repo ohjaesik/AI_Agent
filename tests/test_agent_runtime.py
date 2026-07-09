@@ -150,7 +150,7 @@ def test_delivery_orchestration_agent_uses_human_review_gate() -> None:
     assert get_tool_spec_for_node("delivery_orchestration_agent", "docx_generator")["name"] == "docx_exporter"
 
 
-def test_expert_executor_runs_node_through_tool_call() -> None:
+def test_expert_executor_runs_assigned_tool_loop() -> None:
     def sample_node(state: dict) -> dict:
         return {"data_readiness": {"summary": {"total_processes": 1}}, "audit_logs": []}
 
@@ -161,13 +161,19 @@ def test_expert_executor_runs_node_through_tool_call() -> None:
     assert result["agent_contracts"][0]["agent_id"] == "process_diagnosis_agent"
     assert result["agent_contracts"][0]["selected_tool"] == "data_readiness_scorer"
     assert result["agent_contracts"][0]["candidate_tools"] == ["data_readiness_scorer", "data_gap_detector"]
+    assert result["agent_contracts"][0]["agent_loop_mode"] == "expert_agent_supervisor_loop"
     assert result["agent_tool_calls"][0]["tool_name"] == "data_readiness_scorer"
+    assert result["agent_tool_calls"][1]["tool_name"] == "data_gap_detector"
+    assert result["agent_tool_calls"][0]["executes_node"] is True
+    assert result["agent_tool_calls"][1]["executes_node"] is False
+    assert result["agent_tool_calls"][0]["planner_used_llm"] is False
+    assert result["agent_loop_iterations"][0]["assigned_tools_executed"] == ["data_readiness_scorer", "data_gap_detector"]
     assert [log["status"] for log in result["audit_logs"]][:2] == [
         "agent_tool_call_started",
         "agent_tool_call_succeeded",
     ]
-    assert result["agent_decisions"][0]["phase"] == "pre_tool_selection"
-    assert result["agent_decisions"][1]["phase"] == "post_tool_observation"
+    assert result["agent_decisions"][0]["phase"] == "agent_tool_loop"
+    assert result["agent_decisions"][-1]["phase"] == "post_tool_observation"
 
 
 def test_evaluation_critic_distinguishes_insufficient_review_and_recommended() -> None:
@@ -208,7 +214,9 @@ def test_evaluation_critic_distinguishes_insufficient_review_and_recommended() -
     wrapped = expert_executed_node("agent_evaluator", sample_node)
     result = wrapped({"project_id": 1, "company_id": 1, "priority_ranking": {"items": [{"process_id": 1}]}})
 
-    assert result["agent_tool_calls"][0]["tool_name"] == "evidence_replan_decider"
+    called_tools = [item["tool_name"] for item in result["agent_tool_calls"]]
+    assert called_tools[:3] == ["evidence_quality_gate", "review_status_calibrator", "evidence_replan_decider"]
+    assert result["agent_contracts"][0]["selected_tool"] == "evidence_replan_decider"
     assert result["priority_ranking"]["items"][0]["status"] == "evidence_insufficient"
     assert result["priority_ranking"]["items"][1]["status"] == "human_review_required"
     assert result["priority_ranking"]["items"][2]["status"] == "recommended"
