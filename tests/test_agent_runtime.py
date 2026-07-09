@@ -170,26 +170,37 @@ def test_expert_executor_runs_node_through_tool_call() -> None:
     assert result["agent_decisions"][1]["phase"] == "post_tool_observation"
 
 
-def test_evaluation_critic_post_decision_changes_candidate_status() -> None:
+def test_evaluation_critic_distinguishes_insufficient_from_review_required() -> None:
     def sample_node(state: dict) -> dict:
         return {
             "priority_ranking": {
                 "items": [
-                    {"process_id": 1, "status": "recommended", "candidate_agent_name": "Weak Evidence Agent"},
-                    {"process_id": 2, "status": "recommended", "candidate_agent_name": "Needs Review Agent"},
+                    {"process_id": 1, "status": "recommended", "candidate_agent_name": "Severe Gap Agent"},
+                    {"process_id": 2, "status": "recommended", "candidate_agent_name": "Weak Evidence Agent"},
+                    {"process_id": 3, "status": "recommended", "candidate_agent_name": "Review Agent"},
                 ],
-                "summary": {"recommended_count": 2},
+                "summary": {"recommended_count": 3},
             },
             "agent_evaluation": {
                 "items": [
                     {
                         "process_id": 1,
+                        "candidate_agent_name": "Severe Gap Agent",
+                        "requires_additional_evidence": True,
+                        "predicted_status": "evidence_insufficient",
+                        "evidence_coverage": 0.0,
+                        "confidence_score": 0.30,
+                    },
+                    {
+                        "process_id": 2,
                         "candidate_agent_name": "Weak Evidence Agent",
                         "requires_additional_evidence": True,
                         "predicted_status": "evidence_insufficient",
-                    }
+                        "evidence_coverage": 0.35,
+                        "confidence_score": 0.72,
+                    },
                 ],
-                "summary": {"additional_evidence_required_count": 1},
+                "summary": {"additional_evidence_required_count": 2},
             },
             "audit_logs": [],
         }
@@ -198,7 +209,11 @@ def test_evaluation_critic_post_decision_changes_candidate_status() -> None:
     result = wrapped({"project_id": 1, "company_id": 1, "priority_ranking": {"items": [{"process_id": 1}]}})
 
     assert result["agent_tool_calls"][0]["tool_name"] == "evidence_replan_decider"
-    assert result["priority_ranking"]["items"][0]["status_before_agent_decision"] == "recommended"
     assert result["priority_ranking"]["items"][0]["status"] == "evidence_insufficient"
-    assert result["agent_evaluation"]["agent_decision"]["decision"] == "request_replan_or_human_review"
+    assert result["priority_ranking"]["items"][1]["status"] == "human_review_required"
+    assert result["priority_ranking"]["items"][2]["status"] == "human_review_required"
+    assert result["priority_ranking"]["summary"]["evidence_insufficient_count"] == 1
+    assert result["priority_ranking"]["summary"]["human_review_required_count"] == 2
+    assert result["agent_evaluation"]["agent_decision"]["insufficient_process_ids"] == [1]
+    assert result["agent_evaluation"]["agent_decision"]["review_process_ids"] == [2]
     assert result["agent_decisions"][-1]["changed_output"] is True
