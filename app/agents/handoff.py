@@ -16,17 +16,29 @@ AGENT_STAGE_ORDER = [
     "delivery_orchestration_agent",
 ]
 
+AGENT_TO_PACKAGE = {
+    "context_evidence_agent": "context_evidence_package",
+    "process_diagnosis_agent": "process_diagnosis_package",
+    "governance_compliance_agent": "governance_package",
+    "business_case_agent": "business_case_package",
+    "evaluation_critic_agent": "evaluation_package",
+    "delivery_orchestration_agent": "delivery_package",
+}
+
 NODE_TO_PACKAGE = {
+    "load_project_data": "context_evidence_package",
     "retrieve_context": "context_evidence_package",
     "process_analyzer": "process_diagnosis_package",
     "data_readiness": "process_diagnosis_package",
     "automation_feasibility": "process_diagnosis_package",
     "risk_governance": "governance_package",
     "compliance_assessment": "governance_package",
+    "roi_cost": "business_case_package",
     "priority_ranking": "business_case_package",
     "agent_evaluator": "evaluation_package",
     "llm_critic": "evaluation_package",
     "agent_replan": "evaluation_package",
+    "human_review": "delivery_package",
     "poc_delivery_planner": "delivery_package",
     "report_writer": "delivery_package",
     "docx_generator": "delivery_package",
@@ -69,7 +81,7 @@ AGENT_OUTPUT_KEYS = {
 }
 
 AGENT_INPUT_KEYS = {
-    "context_evidence_agent": ["project_id", "company_id", "agent_replan"],
+    "context_evidence_agent": ["project_id", "company_id", "replan_request"],
     "process_diagnosis_agent": ["business_processes", "retrieved_contexts", "evidence_items"],
     "governance_compliance_agent": ["business_processes", "retrieved_contexts", "evidence_items"],
     "business_case_agent": [
@@ -125,14 +137,14 @@ HANDOFF_RULES = {
     "evaluation_critic_agent": [
         {
             "to_agent": "context_evidence_agent",
-            "target_nodes": ["retrieve_context"],
+            "target_nodes": ["load_project_data", "retrieve_context"],
             "payload_keys": ["replan_request", "agent_evaluation"],
             "reason": "Evidence gaps require bounded re-query and evidence refresh.",
             "condition": "replan_request_present",
         },
         {
             "to_agent": "delivery_orchestration_agent",
-            "target_nodes": ["human_review", "poc_delivery_planner"],
+            "target_nodes": ["human_review", "poc_delivery_planner", "report_writer", "docx_generator"],
             "payload_keys": ["priority_ranking", "agent_evaluation"],
             "reason": "Delivery Orchestration Agent receives validated candidates and human-review requirements.",
         },
@@ -140,7 +152,7 @@ HANDOFF_RULES = {
     "delivery_orchestration_agent": [
         {
             "to_agent": "final_output",
-            "target_nodes": ["docx_generator"],
+            "target_nodes": [],
             "payload_keys": ["human_review", "poc_plan", "report_data", "report_docx_path"],
             "reason": "Final delivery package is ready for artifact export.",
         }
@@ -159,11 +171,12 @@ def should_emit_rule(rule: dict[str, Any], state: dict[str, Any]) -> bool:
     return True
 
 
-def build_agent_package(agent_id: str, state: dict[str, Any], node_name: str) -> dict[str, Any]:
+def build_agent_package(agent_id: str, state: dict[str, Any], produced_by: str, executed_nodes: list[str] | None = None) -> dict[str, Any]:
     output_keys = AGENT_OUTPUT_KEYS.get(agent_id, [])
     return {
         "agent_id": agent_id,
-        "produced_by_node": node_name,
+        "produced_by": produced_by,
+        "executed_nodes": executed_nodes or [],
         "output_keys": present_keys(state, output_keys),
         "input_keys_consumed": present_keys(state, AGENT_INPUT_KEYS.get(agent_id, [])),
         "summary": {
@@ -174,25 +187,39 @@ def build_agent_package(agent_id: str, state: dict[str, Any], node_name: str) ->
             "has_replan_request": bool(state.get("replan_request")),
             "has_human_review": bool(state.get("human_review")),
             "has_report_data": bool(state.get("report_data")),
+            "has_docx": bool(state.get("report_docx_path")),
         },
     }
 
 
-def build_supervisor_step(agent_id: str, node_name: str, state: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
+def build_supervisor_step(
+    agent_id: str,
+    stage_name: str,
+    state: dict[str, Any],
+    contract: dict[str, Any] | None = None,
+    executed_nodes: list[str] | None = None,
+) -> dict[str, Any]:
     return {
         "supervisor_agent_id": SUPERVISOR_AGENT_ID,
         "supervisor_agent_name": SUPERVISOR_AGENT_NAME,
         "delegated_to": agent_id,
-        "delegated_node": node_name,
-        "capability": contract.get("capability"),
-        "task": contract.get("node_role"),
+        "delegated_stage": stage_name,
+        "delegated_nodes": executed_nodes or [],
+        "capability": (contract or {}).get("capability"),
+        "task": (contract or {}).get("node_role") or f"Run {agent_id} stage and produce handoff package.",
         "input_keys": present_keys(state, AGENT_INPUT_KEYS.get(agent_id, [])),
         "expected_output_keys": AGENT_OUTPUT_KEYS.get(agent_id, []),
-        "reason": f"{SUPERVISOR_AGENT_NAME} delegated this stage to {agent_id} based on the agent flow plan.",
+        "reason": f"{SUPERVISOR_AGENT_NAME} delegated this stage to {agent_id} and expects a package for downstream Agents.",
     }
 
 
-def build_handoffs(agent_id: str, node_name: str, state: dict[str, Any], loop_index: int | None = None) -> list[dict[str, Any]]:
+def build_handoffs(
+    agent_id: str,
+    stage_name: str,
+    state: dict[str, Any],
+    loop_index: int | None = None,
+    executed_nodes: list[str] | None = None,
+) -> list[dict[str, Any]]:
     handoffs: list[dict[str, Any]] = []
     for rule in HANDOFF_RULES.get(agent_id, []):
         if not should_emit_rule(rule, state):
@@ -201,7 +228,8 @@ def build_handoffs(agent_id: str, node_name: str, state: dict[str, Any], loop_in
             {
                 "from_agent": agent_id,
                 "to_agent": rule["to_agent"],
-                "source_node": node_name,
+                "source_stage": stage_name,
+                "source_nodes": executed_nodes or [],
                 "target_nodes": rule.get("target_nodes", []),
                 "payload_keys": present_keys(state, rule.get("payload_keys", [])),
                 "declared_payload_keys": rule.get("payload_keys", []),
@@ -222,14 +250,37 @@ def attach_agent_flow_outputs(
     loop_index: int | None = None,
 ) -> dict[str, Any]:
     merged_state = {**state, **result}
-    package_key = NODE_TO_PACKAGE.get(node_name)
-    supervisor_step = build_supervisor_step(agent_id, node_name, merged_state, contract)
-    handoffs = build_handoffs(agent_id, node_name, merged_state, loop_index=loop_index)
+    package_key = NODE_TO_PACKAGE.get(node_name) or AGENT_TO_PACKAGE.get(agent_id)
+    supervisor_step = build_supervisor_step(agent_id, node_name, merged_state, contract, executed_nodes=[node_name])
+    handoffs = build_handoffs(agent_id, node_name, merged_state, loop_index=loop_index, executed_nodes=[node_name])
 
     output = dict(result)
     output["agent_supervisor_steps"] = list(output.get("agent_supervisor_steps", [])) + [supervisor_step]
     if handoffs:
         output["agent_handoffs"] = list(output.get("agent_handoffs", [])) + handoffs
     if package_key:
-        output[package_key] = build_agent_package(agent_id, merged_state, node_name)
+        output[package_key] = build_agent_package(agent_id, merged_state, node_name, executed_nodes=[node_name])
+    return output
+
+
+def attach_agent_stage_outputs(
+    *,
+    state: dict[str, Any],
+    result: dict[str, Any],
+    agent_id: str,
+    stage_name: str,
+    executed_nodes: list[str],
+    loop_index: int | None = None,
+) -> dict[str, Any]:
+    merged_state = {**state, **result}
+    package_key = AGENT_TO_PACKAGE.get(agent_id)
+    supervisor_step = build_supervisor_step(agent_id, stage_name, merged_state, executed_nodes=executed_nodes)
+    handoffs = build_handoffs(agent_id, stage_name, merged_state, loop_index=loop_index, executed_nodes=executed_nodes)
+
+    output = dict(result)
+    output["agent_supervisor_steps"] = list(output.get("agent_supervisor_steps", [])) + [supervisor_step]
+    if handoffs:
+        output["agent_handoffs"] = list(output.get("agent_handoffs", [])) + handoffs
+    if package_key:
+        output[package_key] = build_agent_package(agent_id, merged_state, stage_name, executed_nodes=executed_nodes)
     return output
