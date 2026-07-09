@@ -46,14 +46,18 @@ def embed_query_with_retry(query: str, retries: int = 2) -> list[float]:
     return retry_call(lambda: embeddings.embed_query(query), retries=retries, backoff_seconds=1.0)
 
 
-def get_chat_model(temperature: float = 0.0) -> ChatOpenAI:
+def get_chat_model(temperature: float = 0.0, timeout: float | None = None) -> ChatOpenAI:
     settings = get_settings()
+    kwargs: dict[str, Any] = {}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
 
     return ChatOpenAI(
         model=normalize_blank(settings.vllm_model, DEFAULT_VLLM_MODEL),
         base_url=normalize_blank(settings.vllm_base_url, DEFAULT_VLLM_BASE_URL),
         api_key=normalize_blank(settings.vllm_api_key, DEFAULT_VLLM_API_KEY),
         temperature=temperature,
+        **kwargs,
     )
 
 
