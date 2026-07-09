@@ -65,6 +65,54 @@ python -m app.evaluation.llm_quality_eval \
   --strict
 ```
 
+## 실제 LLM 출력 JSONL 캡처
+
+`llm_quality_eval.py`는 LLM을 직접 호출하지 않고 JSONL case를 검증한다. 실제 모델 출력물을 평가하려면 먼저 워크플로우 실행 결과 state를 JSON으로 저장한 뒤 `capture_llm_quality_cases.py`로 JSONL을 만든다.
+
+예시:
+
+```python
+import json
+from pathlib import Path
+
+final_state = graph.invoke(input_state)
+Path("outputs/workflow_state_real.json").write_text(
+    json.dumps(final_state, ensure_ascii=False, indent=2, default=str),
+    encoding="utf-8",
+)
+```
+
+저장한 state에서 LLM 품질 케이스를 추출한다.
+
+```bash
+python -m app.evaluation.capture_llm_quality_cases \
+  --state outputs/workflow_state_real.json \
+  --output outputs/llm_quality_cases_real.jsonl \
+  --case-prefix gemma_real
+```
+
+그 다음 추출된 JSONL을 평가한다.
+
+```bash
+python -m app.evaluation.llm_quality_eval \
+  --case-path outputs/llm_quality_cases_real.jsonl \
+  --strict \
+  --min-pass-rate 0.90 \
+  --min-json-parse-success-rate 0.95 \
+  --min-schema-valid-rate 0.90 \
+  --min-fallback-free-rate 0.70
+```
+
+모델 교체 전후를 regression 기준으로 비교하려면 현재 LLM Critic verdict를 expected verdict로 고정할 수 있다.
+
+```bash
+python -m app.evaluation.capture_llm_quality_cases \
+  --state outputs/workflow_state_real.json \
+  --output outputs/llm_quality_cases_baseline.jsonl \
+  --case-prefix baseline_gemma \
+  --freeze-current-verdict
+```
+
 ## 케이스 형식
 
 기본 케이스 파일은 `tests/data/llm_quality_cases.jsonl`에 둔다. 각 줄은 하나의 JSON object다.
@@ -130,11 +178,11 @@ python -m app.evaluation.llm_quality_eval \
 ## 테스트
 
 ```bash
-pytest tests/test_llm_quality_eval.py
+pytest tests/test_llm_quality_eval.py tests/test_capture_llm_quality_cases.py
 ```
 
 전체 품질 평가와 함께 돌릴 경우:
 
 ```bash
-pytest tests/test_agent_quality_eval.py tests/test_llm_quality_eval.py
+pytest tests/test_agent_quality_eval.py tests/test_llm_quality_eval.py tests/test_capture_llm_quality_cases.py
 ```
