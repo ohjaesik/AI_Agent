@@ -343,6 +343,36 @@ export default function App() {
                   📊 <strong>대시보드 홈</strong>: 현재 진행 중인 AX 전환 프로젝트의 요약 정보, 기업 현황, RAG 지식베이스 데이터 상태 및 실시간 시스템 이력 로그를 한눈에 모니터링합니다.
                 </p>
               </div>
+
+              {/* 프로젝트 소개 및 가치 정의 카드 */}
+              <div className="col-12 card project-goal-card">
+                <div className="card-header">
+                  <h3 className="card-title">🎯 프로젝트 개요 및 기획 목표 (AX Delivery Planner)</h3>
+                </div>
+                <div style={{ fontSize: '13px', lineHeight: '1.6', color: 'var(--text-secondary)', padding: '4px 0' }}>
+                  <p style={{ marginBottom: '12px' }}>
+                    많은 제조기업들이 <strong>"AI Agent를 도입하고 싶지만, 어떤 부서의 어떤 업무에 우선적으로 적용해야 할지"</strong> 객관적인 진단 기준이 없어 주관적인 판단이나 파편화된 PoC 개발에 머무르는 문제를 풀기 위한 <strong>기회형 Multi-Agent 분석 솔루션</strong>입니다.
+                  </p>
+                  <p style={{ marginBottom: '12px' }}>
+                    <strong>AX Delivery Planner</strong>는 기업의 사내 표준업무절차서(SOP), 시스템 사용자 가이드, 공시 보고서 데이터를 <strong>RAG 기반으로 분석</strong>하여 AI 도입 타당성 및 ROI를 객관적으로 평가하고, 최종 **PoC 도입 우선순위 추천과 실행 계획서(DOCX)**를 도출합니다.
+                  </p>
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '16px' }}>
+                    <div style={{ flex: '1', minWidth: '250px', padding: '14px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)' }}>
+                      <strong>👥 주 권장 사용자</strong>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                        IT기획팀, AX/DX 추진실, 생산혁신팀, 현업 부서장 및 안전·보안 거버넌스 담당 임원진
+                      </div>
+                    </div>
+                    <div style={{ flex: '1', minWidth: '250px', padding: '14px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)' }}>
+                      <strong>⚖️ AI 협업 가치 (Human-in-the-Loop)</strong>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
+                        AI는 RAG 기반 근거 수집 및 정량 평가를 수립하고, 최종 순위 조정 및 의사결정 권한은 사람이 통제합니다.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="col-8 card">
                 <div className="card-header">
                   <h3 className="card-title">진행 중인 진단 정보</h3>
@@ -362,7 +392,7 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  <div style={{ padding: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', fontSize: '14px' }}>
+                  <div style={{ padding: '16px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', fontSize: '13px' }}>
                     <p><strong>설명:</strong> 부서별 업무 표준서(SOP), 사내 IT 매뉴얼, 공시 보고서 데이터를 RAG와 연동하여 AI Agent PoC의 최우선 도입 순위를 다각도로 분석하고 평가 보고서를 생성하는 워크플로우를 관제합니다.</p>
                   </div>
                 </div>
@@ -389,6 +419,53 @@ export default function App() {
                     <span>정보보안 및 거버넌스 필터</span>
                     <span className="badge badge-success" style={{ fontWeight: 'bold' }}>정상 가동</span>
                   </div>
+                </div>
+              </div>
+
+              {/* 평가 가중치 정보 시각화 */}
+              <div className="col-12 card">
+                <div className="card-header">
+                  <h3 className="card-title">📊 정량적 도입 타당성 평가 기준 (가중치 설계 모델)</h3>
+                </div>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
+                  각 업무 프로세스의 도입 가치 평가를 위해 다중 에이전트들이 아래의 정량적 평가 로직에 의거하여 실시간 점수를 산출합니다.
+                </p>
+                <div className="weight-grid">
+                  <div className="weight-item">
+                    <span className="weight-label">💡 기대효과</span>
+                    <span className="weight-val">35%</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>수익 증대, 절감 시간</span>
+                  </div>
+                  <div className="weight-item">
+                    <span className="weight-label">📁 데이터 접근성</span>
+                    <span className="weight-val">20%</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>가용성, 인프라 품질</span>
+                  </div>
+                  <div className="weight-item">
+                    <span className="weight-label">🔁 반복성·정형화</span>
+                    <span className="weight-val">15%</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>규칙 기반 업무 빈도</span>
+                  </div>
+                  <div className="weight-item">
+                    <span className="weight-label">🛠️ 구현 용이성</span>
+                    <span className="weight-val">15%</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>기술적 난이도, 연동성</span>
+                  </div>
+                  <div className="weight-item">
+                    <span className="weight-label">🙋 현업 수용성</span>
+                    <span className="weight-val">10%</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>사용자 요구도</span>
+                  </div>
+                  <div className="weight-item" style={{ border: '1px dashed #f87171' }}>
+                    <span className="weight-label" style={{ color: '#f87171' }}>⚠️ 리스크 감점</span>
+                    <span className="weight-val" style={{ color: '#f87171' }}>-25%</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>보안 위험, 구축 비용</span>
+                  </div>
+                </div>
+                <div style={{ marginTop: '16px', padding: '12px 16px', borderRadius: '6px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-color)', fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <strong>🔒 거버넌스 룰 (Governance Policy)</strong>
+                  <span style={{ color: 'var(--text-secondary)' }}>• <strong>위험도 점수 4 이상</strong>: 보안 규제 심사 대상 ➔ 반드시 관리자 수동 승인(Human Review) 필수</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>• <strong>데이터 접근성 점수 2 이하</strong>: 해당 PoC 보류 판정 및 사내 데이터 정비 작업 선행 지침 부여</span>
                 </div>
               </div>
 
@@ -737,7 +814,7 @@ export default function App() {
                           <label className="form-label">최종 도입 추천 에이전트 (우선순위 순)</label>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             {(analysisResult.top_candidates || []).map((c: any, index: number) => (
-                              <div key={index} style={{ padding: '10px 14px', borderRadius: '6px', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', fontSize: '13px', display: 'flex', justify: 'space-between' }}>
+                              <div key={index} style={{ padding: '10px 14px', borderRadius: '6px', backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', fontSize: '13px', display: 'flex', justifyContent: 'space-between' }}>
                                 <span><strong>#{index + 1}순위</strong> {c.candidate_agent_name || c.name || `프로세스 ID ${c.process_id}`}</span>
                                 <span className="badge badge-info">종합 타당성 점수: {(c.score ?? c.confidence_score ?? 0).toFixed(2)} / 5.0</span>
                               </div>
@@ -758,6 +835,73 @@ export default function App() {
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                               <strong>DART 기업공시 분석:</strong>
                               <span className="badge badge-success">연동 완료</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ROI 시뮬레이션 카드 */}
+                      <div className="roi-box">
+                        <h4 style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px 0' }}>📈 PoC 도입 대비 예상 ROI 시뮬레이션</h4>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                          기존 수작업 방식과 비교하여 AI Agent 보조 방식을 적용했을 때 발생하는 예상 프로세스 기획 비용 절감률 데이터 시뮬레이션입니다.
+                        </p>
+                        <div className="roi-bar-wrapper">
+                          <div className="roi-bar-item">
+                            <span className="roi-bar-label">기존 수작업</span>
+                            <div className="roi-bar-track">
+                              <div className="roi-bar-fill before" style={{ width: '100%' }}>343만 원 (100%)</div>
+                            </div>
+                          </div>
+                          <div className="roi-bar-item">
+                            <span className="roi-bar-label">에이전트 보조</span>
+                            <div className="roi-bar-track">
+                              <div className="roi-bar-fill after" style={{ width: '31.5%' }}>108만 원 (31.5%)</div>
+                            </div>
+                          </div>
+                        </div>
+                        <p style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--color-success)', marginTop: '12px', marginBottom: 0 }}>
+                          🎉 절감 효과: 과제 도출당 평균 약 235만 원 절감 (약 68.5% 효율화 증대 기대)
+                        </p>
+                      </div>
+
+                      {/* PoC 로드맵 실행계획 카드 */}
+                      <div className="card" style={{ marginTop: '16px' }}>
+                        <div className="card-header">
+                          <h3 className="card-title">🚀 최종 PoC 실행계획 및 추진 로드맵 (초안)</h3>
+                        </div>
+                        <div className="roadmap-timeline">
+                          <div className="roadmap-step">
+                            <div className="roadmap-dot">1</div>
+                            <div className="roadmap-content">
+                              <div className="roadmap-step-title">1단계: MVP 개발 및 데이터 연동 (1~2개월)</div>
+                              <div className="roadmap-step-desc">
+                                • <strong>주관 부서</strong>: IT기획팀 및 생산혁신팀<br />
+                                • <strong>대상 데이터</strong>: 선정된 1~2위 후보군(예: SOP 번역/검색 및 정비일지 요약) 관련 DB API 및 지식 전처리 연동<br />
+                                • <strong>평가 지표 (KPI)</strong>: RAG 정보 추출 매칭 정확도 90% 이상 확보
+                              </div>
+                            </div>
+                          </div>
+                          <div className="roadmap-step">
+                            <div className="roadmap-dot">2</div>
+                            <div className="roadmap-content">
+                              <div className="roadmap-step-title">2단계: 현업 부서 파일럿 가동 및 검증 (3개월)</div>
+                              <div className="roadmap-step-desc">
+                                • <strong>주관 부서</strong>: 설비정비팀, 품질관리팀 등 현업 파일럿 부서<br />
+                                • <strong>수행 내용</strong>: 현장 실무자가 실제 보조 에이전트를 모니터링 모드로 사용하며 이상 동작 및 보완 의견 반영<br />
+                                • <strong>평가 지표 (KPI)</strong>: 업무 처리 평균 소요 시간 50% 이상 단축 검증
+                              </div>
+                            </div>
+                          </div>
+                          <div className="roadmap-step">
+                            <div className="roadmap-dot">3</div>
+                            <div className="roadmap-content">
+                              <div className="roadmap-step-title">3단계: 규제 심사 승인 및 전사 배포 (4개월)</div>
+                              <div className="roadmap-step-desc">
+                                • <strong>주관 부서</strong>: 보안거버넌스팀, 최고경영진<br />
+                                • <strong>수행 내용</strong>: 정보유출 모니터링 룰셋 확정, RBAC 접근 권한 세팅 완료 후 프로덕션 배포 가동<br />
+                                • <strong>평가 지표 (KPI)</strong>: 보안 위반 사고 0건 달성 및 사용자 만족도 4.5/5.0 이상 달성
+                              </div>
                             </div>
                           </div>
                         </div>
