@@ -37,10 +37,7 @@ class Settings(BaseSettings):
     external_web_max_results: int = Field(default=3, alias="EXTERNAL_WEB_MAX_RESULTS")
 
     # Replan loop guard. 0 disables replan and routes evidence gaps directly to Human Review.
-    # Keep this opt-in for MVP/demo runs because one replan re-runs retrieval and downstream analysis nodes.
-    agent_replan_max_attempts: int = Field(default=0, alias="AGENT_REPLAN_MAX_ATTEMPTS")
-    agent_replan_max_items: int = Field(default=3, alias="AGENT_REPLAN_MAX_ITEMS")
-    agent_replan_max_new_sources: int = Field(default=1, alias="AGENT_REPLAN_MAX_NEW_SOURCES")
+    agent_replan_max_attempts: int = Field(default=1, alias="AGENT_REPLAN_MAX_ATTEMPTS")
 
     # API protection. If APP_JWT_SECRET is set, Bearer JWT is supported.
     app_api_key: str | None = Field(default=None, alias="APP_API_KEY")
