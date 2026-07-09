@@ -128,12 +128,7 @@ def build_agent_tool_decision(
 
 
 def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[int], set[int]]:
-    """Return severe insufficient ids and weaker review-needed ids.
-
-    evidence_insufficient should be rare. It is reserved for nearly missing evidence
-    or a combined low-evidence/low-confidence signal. Ordinary weak evidence routes
-    to human_review_required instead of being treated as insufficient.
-    """
+    """Split severe evidence-insufficient candidates from ordinary review cases."""
     insufficient_ids: set[int] = set()
     review_ids: set[int] = set()
 
@@ -146,6 +141,7 @@ def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[i
         confidence_score = as_float(item.get("confidence_score"), 0.0)
         predicted_status = str(item.get("predicted_status") or "")
         requires_additional_evidence = bool(item.get("requires_additional_evidence"))
+        requires_human_review = bool(item.get("requires_human_review"))
         critic = item.get("llm_critic") or {}
         critic_verdict = str(critic.get("critic_verdict") or "")
 
@@ -155,7 +151,7 @@ def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[i
 
         if severe_evidence_gap or (explicit_insufficient and severe_low_confidence):
             insufficient_ids.add(process_id)
-        elif requires_additional_evidence or explicit_insufficient or critic_verdict in {"needs_review", "revise"}:
+        elif requires_additional_evidence or requires_human_review or explicit_insufficient or critic_verdict in {"needs_review", "revise"}:
             review_ids.add(process_id)
 
     review_ids -= insufficient_ids
@@ -267,7 +263,7 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
                 item["agent_decision_status"] = "replan_or_human_review_required"
                 item["agent_decision_reason"] = "Evaluation & Critic Agent found a severe evidence gap for this candidate."
                 adjusted_count += 1
-            elif process_id in review_ids or previous_status == "recommended":
+            elif process_id in review_ids:
                 item.setdefault("status_before_agent_decision", previous_status)
                 item["status"] = "human_review_required"
                 item["agent_decision_status"] = "human_review_required"
@@ -279,10 +275,10 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
         summary["evidence_insufficient_count"] = len(insufficient_ids)
         summary["human_review_required_count"] = ranking.get("summary", {}).get("human_review_required_count", 0)
         summary["agent_decision_adjusted_count"] = adjusted_count
-        summary["agent_decision_applied"] = True
+        summary["agent_decision_applied"] = bool(adjusted_count)
         evaluation["summary"] = summary
         evaluation["agent_decision"] = {
-            "decision": "request_replan_or_human_review",
+            "decision": "request_replan_or_human_review" if adjusted_count else "pass_through",
             "reason": "Severe evidence gaps are routed to evidence_insufficient; weaker evidence or critic concerns are routed to human_review_required.",
             "insufficient_process_ids": sorted(insufficient_ids),
             "review_process_ids": sorted(review_ids),
@@ -310,7 +306,7 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
         "evidence_insufficient_count": len(insufficient_ids),
         "review_required_count": len(review_ids),
         "additional_evidence_required_count": len(insufficient_ids | review_ids),
-        "reason": "The critic now distinguishes severe evidence insufficiency from ordinary human-review cases.",
+        "reason": "The critic distinguishes severe evidence insufficiency from ordinary human-review cases without changing unflagged recommended candidates.",
     }
     return result, post_decision
 
