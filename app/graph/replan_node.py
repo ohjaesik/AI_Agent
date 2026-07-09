@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.agents.tool_guard import assert_tools_allowed
 from app.company_bootstrap.idempotency import upsert_source_documents
 from app.company_bootstrap.public_web_search import discover_public_web_sources
 from app.company_bootstrap.source_discovery import discover_official_sources
@@ -236,10 +235,6 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
     node_name = "agent_replan"
 
     try:
-        assert_tools_allowed(
-            "agent_evaluator_agent",
-            ["agent evaluator", "evidence coverage scorer", "analysis result writer"],
-        )
         current_attempts = current_replan_attempts(state)
         max_attempts = max_replan_attempts()
 
@@ -280,7 +275,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
             "attempt": attempts,
             "max_attempts": max_attempts,
             "mode": "official_domain_plus_opt_in_public_web_discovery",
-            "reason": "Agent Evaluator가 일부 후보의 근거 coverage 또는 confidence 부족을 감지했다.",
+            "reason": "Evaluation & Critic Agent가 일부 후보의 근거 coverage 또는 confidence 부족을 감지했다.",
             "items": replan_items,
             "source_collection": source_collection,
             "route_after_replan": route_after_replan,
