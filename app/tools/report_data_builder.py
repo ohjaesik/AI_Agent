@@ -32,6 +32,23 @@ def renumber_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def is_agent_evaluation_section(section: dict[str, Any]) -> bool:
+    heading = str(section.get("heading") or "")
+    normalized = strip_heading_number(heading)
+    return "Agent Evaluation" in normalized or "신뢰도 검증" in normalized
+
+
+def remove_agent_evaluation_sections(report_data: dict[str, Any]) -> dict[str, Any]:
+    sections = list(report_data.get("sections", []) or [])
+    filtered_sections = [section for section in sections if not is_agent_evaluation_section(section)]
+    if len(filtered_sections) == len(sections):
+        return report_data
+
+    copied = dict(report_data)
+    copied["sections"] = renumber_sections(filtered_sections)
+    return copied
+
+
 def build_agent_registry_rows(state: dict[str, Any]) -> list[list[Any]]:
     rows = []
     for agent in state.get("agent_registry", []) or state.get("agent_evaluation", {}).get("agent_registry", []):
@@ -213,37 +230,22 @@ def build_agent_evaluation_section(state: dict[str, Any]) -> dict[str, Any]:
         },
     ])
 
-    return {"heading": "8. Agent Evaluation 및 신뢰도 검증", "blocks": blocks}
+    return {"heading": "Agent Evaluation 및 신뢰도 검증", "blocks": blocks}
 
 
-def insert_agent_evaluation_section(report_data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+def attach_agent_evaluation_metadata(report_data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Keep Agent evaluation details as machine-readable metadata, not a main report chapter."""
+    report_data = remove_agent_evaluation_sections(report_data)
     if not state.get("agent_evaluation"):
         return report_data
 
-    sections = list(report_data.get("sections", []))
-    if any("Agent Evaluation" in str(section.get("heading")) for section in sections):
-        return report_data
-
-    insert_index = None
-    for idx, section in enumerate(sections):
-        heading = str(section.get("heading") or "")
-        if "PoC 실행계획" in heading:
-            insert_index = idx
-            break
-
-    section = build_agent_evaluation_section(state)
-    if insert_index is None:
-        sections.append(section)
-    else:
-        sections.insert(insert_index, section)
-
-    report_data = dict(report_data)
-    report_data["sections"] = renumber_sections(sections)
-    report_data["agent_evaluation"] = state.get("agent_evaluation", {})
-    report_data["agent_registry"] = state.get("agent_registry", [])
-    report_data["agent_decisions"] = state.get("agent_decisions", [])
-    report_data["replan_request"] = state.get("replan_request", {})
-    return report_data
+    copied = dict(report_data)
+    copied["agent_evaluation"] = state.get("agent_evaluation", {})
+    copied["agent_registry"] = state.get("agent_registry", [])
+    copied["agent_decisions"] = state.get("agent_decisions", [])
+    copied["replan_request"] = state.get("replan_request", {})
+    copied["agent_evaluation_appendix"] = build_agent_evaluation_section(state)
+    return copied
 
 
 def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
@@ -254,7 +256,7 @@ def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
     1. Try vLLM/Gemma Report Writer Agent.
     2. If vLLM is unavailable, JSON parsing fails, or citation validation fails,
        the chain returns the deterministic fallback report.
-    3. Append Agent Evaluator/Critic section when available.
+    3. Keep Agent Evaluator/Critic details as metadata, not as a main report chapter.
     """
     report_data = generate_report_data_with_llm(state)
-    return insert_agent_evaluation_section(report_data, state)
+    return attach_agent_evaluation_metadata(report_data, state)
