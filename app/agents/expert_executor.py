@@ -132,7 +132,32 @@ def count_llm_review_needs(agent_evaluation: dict[str, Any]) -> int:
     return int(summary.get("llm_critic_needs_review_count", 0) or 0)
 
 
-def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def build_replan_hint_items(process_ids: set[int], state: dict[str, Any], ranking: dict[str, Any], evaluation: dict[str, Any]) -> list[dict[str, Any]]:
+    ranking_items = ranking.get("items", []) or []
+    evaluation_items = evaluation.get("items", []) or []
+    items = []
+    for process_id in sorted(process_ids):
+        candidate = next((item for item in ranking_items if int(item.get("process_id") or 0) == process_id), {})
+        eval_item = next((item for item in evaluation_items if int(item.get("process_id") or 0) == process_id), {})
+        items.append(
+            {
+                "process_id": process_id,
+                "candidate_agent_name": candidate.get("candidate_agent_name") or eval_item.get("candidate_agent_name"),
+                "process_name": candidate.get("process_name"),
+                "confidence_score": eval_item.get("confidence_score", 0),
+                "evidence_coverage": eval_item.get("evidence_coverage", 0),
+                "issues": eval_item.get("issues", []),
+                "suggested_actions": [
+                    "공식 URL 또는 내부 문서 추가 수집",
+                    "업무 owner 인터뷰 메모 추가",
+                    "RAG 재색인 후 재평가",
+                ],
+            }
+        )
+    return items
+
+
+def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     ranking = deepcopy(result.get("priority_ranking") or {})
     items = list(ranking.get("items", []) or [])
     adjusted_count = 0
@@ -162,9 +187,9 @@ def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any
     return result, post_decision
 
 
-def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    evaluation = deepcopy(result.get("agent_evaluation") or {})
-    ranking = deepcopy(result.get("priority_ranking") or {})
+def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    evaluation = deepcopy(result.get("agent_evaluation") or state.get("agent_evaluation") or {})
+    ranking = deepcopy(result.get("priority_ranking") or state.get("priority_ranking") or {})
     summary = evaluation.setdefault("summary", {})
     required_ids = evidence_required_ids(evaluation)
     additional_count = int(summary.get("additional_evidence_required_count", 0) or 0)
@@ -200,12 +225,11 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
         }
         result["agent_evaluation"] = evaluation
         result["priority_ranking"] = ranking
-        result.setdefault("replan_request", {})
-        if not result["replan_request"]:
+        if not result.get("replan_request"):
             result["replan_request"] = {
                 "mode": "agent_decision_hint",
                 "reason": "Evaluation & Critic Agent requested replan or human review after observing weak evidence/review signals.",
-                "items": sorted(required_ids),
+                "items": build_replan_hint_items(required_ids, state, ranking, evaluation),
                 "route_after_replan": "human_review",
             }
         changed = True
@@ -224,14 +248,14 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
     return result, post_decision
 
 
-def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     changed = False
     adjusted_count = 0
     node_name = str(decision.get("node_name"))
 
     if node_name == "poc_delivery_planner" and result.get("poc_plan"):
         poc_plan = deepcopy(result.get("poc_plan") or {})
-        ranking_items = ((result.get("priority_ranking") or {}).get("items") or [])
+        ranking_items = ((result.get("priority_ranking") or state.get("priority_ranking") or {}).get("items") or [])
         held_items = [item for item in ranking_items if item.get("status") in {"evidence_insufficient", "excluded"}]
         if held_items:
             poc_plan["agent_decision"] = {
@@ -246,7 +270,7 @@ def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any
 
     if node_name == "report_writer" and result.get("report_data"):
         report_data = deepcopy(result.get("report_data") or {})
-        decisions = result.get("agent_decisions", []) or []
+        decisions = [*(state.get("agent_decisions", []) or []), *(result.get("agent_decisions", []) or [])]
         report_data["agent_decision_summary"] = {
             "decision_count": len(decisions),
             "changed_output_count": sum(1 for item in decisions if item.get("changed_output")),
@@ -268,16 +292,16 @@ def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any
     return result, post_decision
 
 
-def apply_post_decision(result: dict[str, Any], decision: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def apply_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     node_name = str(decision.get("node_name"))
     mutable_result = deepcopy(result)
 
     if node_name == "priority_ranking":
-        return apply_priority_post_decision(mutable_result, decision)
+        return apply_priority_post_decision(mutable_result, decision, state)
     if node_name in {"agent_evaluator", "llm_critic"}:
-        return apply_evaluation_post_decision(mutable_result, decision)
+        return apply_evaluation_post_decision(mutable_result, decision, state)
     if node_name in {"poc_delivery_planner", "report_writer"}:
-        return apply_delivery_post_decision(mutable_result, decision)
+        return apply_delivery_post_decision(mutable_result, decision, state)
 
     return mutable_result, {
         "phase": "post_tool_observation",
@@ -381,7 +405,7 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
             node_name=node_name,
         )
 
-        post_processed_result, post_decision = apply_post_decision(tool_call.result, pre_decision)
+        post_processed_result, post_decision = apply_post_decision(tool_call.result, pre_decision, state)
 
         return merge_agent_execution_result(
             node_name=node_name,
