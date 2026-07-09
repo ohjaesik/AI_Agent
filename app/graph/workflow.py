@@ -7,8 +7,15 @@ from typing import Any
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.agent_llm import (
+    build_agent_llm_call_record,
+    run_agent_command_prompt,
+    run_agent_reflection_prompt,
+)
 from app.agents.expert_executor import expert_executed_node
 from app.agents.handoff import attach_agent_stage_outputs
+from app.agents.registry import get_agent_spec
+from app.core.config import get_settings
 from app.graph.node_worker import workerized_node
 from app.graph.replan_node import should_continue_after_replan, should_replan
 from app.graph.state import AXPlannerState
@@ -34,6 +41,29 @@ AGENT_STAGE_TO_AGENT_ID: dict[str, str] = {
     "delivery_orchestration_agent": "delivery_orchestration_agent",
 }
 
+DEFAULT_AGENT_STAGE_MAX_LOOPS = 2
+
+
+def resolve_agent_stage_loop_limit(state: dict[str, Any]) -> int:
+    try:
+        settings = get_settings()
+        loop_limit = int(settings.agent_supervisor_max_tool_loops or DEFAULT_AGENT_STAGE_MAX_LOOPS)
+    except Exception:
+        loop_limit = DEFAULT_AGENT_STAGE_MAX_LOOPS
+
+    loop_limit = max(1, min(loop_limit, DEFAULT_AGENT_STAGE_MAX_LOOPS))
+    if state.get("agent_supervisor_extra_loop_enabled"):
+        loop_limit += 1
+    return loop_limit
+
+
+def incoming_handoffs_for_agent(state: dict[str, Any], agent_id: str) -> list[dict[str, Any]]:
+    return [
+        handoff
+        for handoff in (state.get("agent_handoffs", []) or [])
+        if handoff.get("to_agent") == agent_id
+    ]
+
 
 def merge_stage_result(accumulator: dict[str, Any], node_result: dict[str, Any]) -> dict[str, Any]:
     """Merge internal node outputs inside an Agent-stage node.
@@ -53,6 +83,8 @@ def merge_stage_result(accumulator: dict[str, Any], node_result: dict[str, Any])
         "agent_loop_requests",
         "agent_supervisor_steps",
         "agent_handoffs",
+        "agent_llm_calls",
+        "agent_commands",
     }
     for key, value in node_result.items():
         if key in list_keys:
@@ -69,37 +101,115 @@ def latest_loop_index(result: dict[str, Any]) -> int | None:
     return iterations[-1].get("loop_index")
 
 
-def expert_agent_stage(stage_name: str):
-    """Create one LangGraph node for one Expert Agent.
+def build_agent_stage_loop_request(stage_name: str, agent_id: str, reflection: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    project_id = state.get("project_id")
+    command = "python -m app.main --auto-approve --allow-agent-extra-loop"
+    if project_id:
+        command += f" --project-id {project_id}"
+    return {
+        "stage_name": stage_name,
+        "agent_id": agent_id,
+        "reason": reflection.get("reason"),
+        "requested_by": "expert_agent_llm_reflection",
+        "requested_extra_loops": 1,
+        "command": command,
+        "default_action": "skip_extra_loop_and_continue",
+    }
 
-    The top-level graph now moves by Agent stage. Each Agent stage runs the old
-    tool-level nodes it owns, produces a package, then hands it off to the next
-    Agent stage through explicit metadata.
+
+def expert_agent_stage(stage_name: str):
+    """Create one LLM-command-driven LangGraph node for one Expert Agent.
+
+    The top-level graph moves by Agent stage. At the start of each stage, the
+    owning Expert Agent receives a prompt with its role, handoff context, assigned
+    internal nodes, and assigned tools. The Agent returns a node command plan, the
+    runtime executes only those assigned nodes/tools, then the Agent receives a
+    reflection prompt and decides whether to hand off or request another bounded loop.
     """
     internal_nodes = AGENT_STAGE_NODES[stage_name]
     agent_id = AGENT_STAGE_TO_AGENT_ID[stage_name]
-    internal_runners = [
-        (node_name, expert_executed_node(node_name, workerized_node(node_name)))
+    agent_spec = get_agent_spec(agent_id) or {"id": agent_id, "name": agent_id}
+    internal_runners = {
+        node_name: expert_executed_node(node_name, workerized_node(node_name))
         for node_name in internal_nodes
-    ]
+    }
 
     def _agent_node(state: dict[str, Any]) -> dict[str, Any]:
         stage_state = dict(state)
         stage_result: dict[str, Any] = {}
-        executed_nodes: list[str] = []
+        executed_nodes_all: list[str] = []
+        loop_limit = resolve_agent_stage_loop_limit(state)
 
-        for node_name, runner in internal_runners:
-            node_result = runner(stage_state)
-            stage_result = merge_stage_result(stage_result, node_result)
-            stage_state = {**stage_state, **node_result}
-            executed_nodes.append(node_name)
+        for stage_loop_index in range(1, loop_limit + 1):
+            command = run_agent_command_prompt(
+                agent_spec=agent_spec,
+                stage_name=stage_name,
+                internal_nodes=internal_nodes,
+                state=stage_state,
+                incoming_handoffs=incoming_handoffs_for_agent(stage_state, agent_id),
+                loop_index=stage_loop_index,
+            )
+            command_record = build_agent_llm_call_record("agent_command", command)
+            stage_result = merge_stage_result(
+                stage_result,
+                {
+                    "agent_llm_calls": [command_record],
+                    "agent_commands": [command],
+                },
+            )
+            stage_state = {
+                **stage_state,
+                "current_agent_command": command,
+                "agent_llm_calls": list(stage_state.get("agent_llm_calls", [])) + [command_record],
+            }
+
+            executed_nodes: list[str] = []
+            for node_name in command.get("node_order", internal_nodes):
+                if node_name not in internal_runners:
+                    continue
+                node_result = internal_runners[node_name](stage_state)
+                stage_result = merge_stage_result(stage_result, node_result)
+                stage_state = {**stage_state, **node_result}
+                executed_nodes.append(node_name)
+                executed_nodes_all.append(node_name)
+
+            reflection = run_agent_reflection_prompt(
+                agent_spec=agent_spec,
+                stage_name=stage_name,
+                agent_command=command,
+                executed_nodes=executed_nodes,
+                state=state,
+                result=stage_result,
+                loop_index=stage_loop_index,
+            )
+            reflection_record = build_agent_llm_call_record("agent_reflection", reflection)
+            stage_result = merge_stage_result(
+                stage_result,
+                {
+                    "agent_llm_calls": [reflection_record],
+                    "agent_commands": [reflection],
+                },
+            )
+            stage_state = {
+                **stage_state,
+                "current_agent_reflection": reflection,
+                "agent_llm_calls": list(stage_state.get("agent_llm_calls", [])) + [reflection_record],
+            }
+
+            if not bool(reflection.get("needs_iteration")):
+                break
+            if stage_loop_index >= loop_limit:
+                requests = list(stage_result.get("agent_loop_requests", []))
+                requests.append(build_agent_stage_loop_request(stage_name, agent_id, reflection, state))
+                stage_result["agent_loop_requests"] = requests
+                break
 
         return attach_agent_stage_outputs(
             state=state,
             result=stage_result,
             agent_id=agent_id,
             stage_name=stage_name,
-            executed_nodes=executed_nodes,
+            executed_nodes=executed_nodes_all,
             loop_index=latest_loop_index(stage_result),
         )
 
