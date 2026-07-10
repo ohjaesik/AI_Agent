@@ -180,8 +180,6 @@ def expert_agent_stage(stage_name: str):
                     "agent_model_decisions": [supervisor_assignment, *supervisor_retry_assignments, command_model_assignment],
                     "agent_supervisor_delegations": [supervisor_delegation],
                     "agent_llm_calls": [supervisor_call_record],
-                    "current_supervisor_delegation": supervisor_delegation,
-                    "supervisor_approval_policy": supervisor_delegation.get("human_approval_policy", {}),
                 },
             )
             stage_state = {
@@ -288,7 +286,7 @@ def expert_agent_stage(stage_name: str):
                 break
 
         return attach_agent_stage_outputs(
-            state=state,
+            state=stage_state,
             result=stage_result,
             agent_id=agent_id,
             stage_name=stage_name,
