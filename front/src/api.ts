@@ -75,6 +75,7 @@ export interface AnalysisResponse {
   interrupt?: string;
   report_docx_path?: string;
   generation?: Record<string, any>;
+  report_data?: Record<string, any>;
   citation_validation?: Record<string, any>;
   top_candidates?: Array<any>;
   compliance_summary?: Record<string, any>;

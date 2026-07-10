@@ -225,6 +225,7 @@ def run_analysis(project_id: int | None = None, company_id: int | None = None, a
             "access": {"user_id": access.user_id, "role": access.role},
             "report_docx_path": result.get("report_docx_path"),
             "generation": result.get("report_data", {}).get("generation", {}),
+            "report_data": result.get("report_data"),
             "citation_validation": result.get("report_data", {}).get("citation_validation", {}),
             "top_candidates": result.get("priority_ranking", {}).get("items", [])[:5],
             "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),

@@ -187,7 +187,7 @@ export default function App() {
         setAnalysisResult(res);
 
         if (res.status === 'interrupted') {
-          addLog('Analysis interrupted: Waiting for Human Review (HITL).', 'warning');
+          addLog('Analysis interrupted: Waiting for Human Review (HITL).', 'info');
           
           try {
             const rawInterrupt = res.interrupt || '';
@@ -250,7 +250,7 @@ export default function App() {
     };
 
     api.applyReviewToRanking(payload)
-      .then((res) => {
+      .then(() => {
         setSubmittingReview(false);
         setReviewResultMsg('Review applied successfully!');
         addLog('Human review applied to ranking output.', 'success');
@@ -623,7 +623,7 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', marginTop: '12px' }}>
                     {searchResults.map((chunk, index) => (
                       <div key={index} style={{ padding: '8px 12px', borderRadius: '6px', backgroundColor: 'var(--bg-tertiary)', fontSize: '12px' }}>
-                        <div style={{ display: 'flex', justify: 'space-between', marginBottom: '4px', fontWeight: 'bold' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px', fontWeight: 'bold' }}>
                           <span>문서 ID: {chunk.document_id || '알 수 없음'}</span>
                           <span className="badge badge-info">매칭 스코어: {(chunk.score || 0).toFixed(4)}</span>
                         </div>
@@ -911,56 +911,68 @@ export default function App() {
                       <div id="report-preview-sheet" className="document-preview-container">
                         <label className="form-label">📄 최종 보고서 실시간 인쇄 미리보기 (Preview)</label>
                         <div className="document-preview">
-                          <div className="preview-header">
-                            <span className="preview-tag">AX 사전 진단 최종 보고서</span>
-                            <h4 className="preview-title">Hanbit Precision Manufacturing AX 전환 후보 진단 및 AI PoC 로드맵 보고서</h4>
-                            <div className="preview-meta">
-                              작성일자: {new Date().toLocaleDateString()} | 작성 주체: AX Planner Multi-Agent System
-                            </div>
-                          </div>
-
-                          <div className="preview-section">
-                            <h5 className="preview-section-title">I. 서론 및 진단 배경</h5>
-                            <p className="preview-p">
-                              본 보고서는 자동차 전장 및 금속 가공 부품을 생산하는 중견 제조기업인 Hanbit Precision Manufacturing의 업무 효율성 제고와 AX(AI Transformation) 전환 타당성을 사내 표준업무절차서(SOP) 및 시스템 데이터(MES, ERP, QMS 등)를 기반으로 분석한 결과입니다.
-                            </p>
-                          </div>
-
-                          <div className="preview-section">
-                            <h5 className="preview-section-title">II. 보고서 상세 목차</h5>
-                            <ul className="preview-toc-list">
-                              <li>1. 기업 개요 및 AX 추진 전략 방향성</li>
-                              <li>2. 대상 부서별 업무 프로세스 분석 (12개 핵심 공정 대상)</li>
-                              <li>3. RAG 기반 관련 규정 매칭 결과 및 타당성 분석</li>
-                              <li>4. AI Agent PoC 과제 우선순위 평가 기준 및 도출 결과 (Top 5 추천)</li>
-                              <li>5. 정보보안성, ESG 및 사내 규제 거버넌스 준수 여부 검토</li>
-                              <li>6. 결론 및 성공적인 구축을 위한 연도별 로드맵</li>
-                            </ul>
-                          </div>
-
-                          <div className="preview-section">
-                            <h5 className="preview-section-title">III. 도출된 AI Agent PoC 우선순위 추천 내역</h5>
-                            <p className="preview-p">
-                              총 12개의 후보 프로세스 중, 데이터 준비도(Data Readiness), 자동화 가능성(Automation Feasibility), 예상 ROI(투자 대비 효과) 및 리스크 노출도를 모델 연산하여 최종 선정된 상위 5개의 AI PoC 과제 목록은 다음과 같습니다.
-                            </p>
-                            
-                            {(analysisResult.top_candidates || []).map((c: any, index: number) => (
-                              <div key={index} className="preview-candidate-row">
-                                <span><strong>#{index + 1}순위:</strong> {c.candidate_agent_name || c.name || `프로세스 ID ${c.process_id}`}</span>
-                                <span>타당성 점수: {(c.score ?? c.confidence_score ?? 0).toFixed(2)} / 5.0</span>
+                          {analysisResult.report_data ? (
+                            <>
+                              <div className="preview-header">
+                                <span className="preview-tag">
+                                  {analysisResult.report_data.status === 'draft' ? 'AX 사전 진단 초안 보고서' : 'AX 사전 진단 최종 보고서'}
+                                </span>
+                                <h4 className="preview-title">{analysisResult.report_data.title}</h4>
+                                <div className="preview-meta">
+                                  작성일자: {analysisResult.report_data.date} {analysisResult.report_data.author ? `| 작성자: ${analysisResult.report_data.author}` : ''} | 분석 주체: AX Planner Multi-Agent System
+                                </div>
                               </div>
-                            ))}
-                          </div>
 
-                          <div className="preview-section">
-                            <h5 className="preview-section-title">IV. 보안 및 ESG 거버넌스 종합 검토의견</h5>
-                            <p className="preview-p">
-                              - <strong>ESG 및 환경안전 규제성 검토</strong>: 안전관리팀 위험요인 점검표 및 화학 물질 관리 대장에 근거하여 ESG 평가 지표에 완전 적합(PASSED) 판정을 획득하였습니다.
-                            </p>
-                            <p className="preview-p">
-                              - <strong>보안 및 권한 필터링</strong>: restricted 등급 및 confidential 등급에 대외 정보 누출 위험성을 제거하기 위해 Multi-Agent Tool Guard가 작동 중이며, 최종 결과물에는 민감 기밀 정보가 필터링되었습니다.
-                            </p>
-                          </div>
+                              {(analysisResult.report_data.sections || []).map((section: any, sIdx: number) => (
+                                <div key={sIdx} className="preview-section" style={{ marginBottom: '24px' }}>
+                                  <h5 className="preview-section-title" style={{ fontSize: '15px', fontWeight: '700', borderBottom: '1px solid #e2e8f0', paddingBottom: '6px', color: '#1e293b', marginTop: '16px', marginBottom: '12px' }}>
+                                    {section.heading}
+                                  </h5>
+                                  {(section.blocks || []).map((block: any, bIdx: number) => {
+                                    if (block.type === 'paragraph') {
+                                      return (
+                                        <p key={bIdx} className="preview-p" style={{ fontSize: '13px', lineHeight: '1.6', color: '#334155', marginBottom: '10px', textAlign: 'justify', wordBreak: 'keep-all' }}>
+                                          {block.text}
+                                        </p>
+                                      );
+                                    } else if (block.type === 'table') {
+                                      return (
+                                        <div key={bIdx} style={{ overflowX: 'auto', width: '100%', marginBottom: '14px', marginTop: '8px' }}>
+                                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: `${block.font_size || 8}pt` }}>
+                                            <thead>
+                                              <tr style={{ backgroundColor: '#f8fafc', borderTop: '1px solid #cbd5e1', borderBottom: '1px solid #cbd5e1' }}>
+                                                {(block.headers || []).map((header: string, hIdx: number) => (
+                                                  <th key={hIdx} style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 'bold', border: '1px solid #e2e8f0', color: '#334155' }}>
+                                                    {header}
+                                                  </th>
+                                                ))}
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {(block.rows || []).map((row: any[], rIdx: number) => (
+                                                <tr key={rIdx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                                  {row.map((cell: any, cIdx: number) => (
+                                                    <td key={cIdx} style={{ padding: '6px 8px', border: '1px solid #e2e8f0', color: '#475569', whiteSpace: 'pre-wrap' }}>
+                                                      {cell}
+                                                    </td>
+                                                  ))}
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      );
+                                    }
+                                    return null;
+                                  })}
+                                </div>
+                              ))}
+                            </>
+                          ) : (
+                            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                              <p>보고서 데이터가 비어 있거나 로드되지 않았습니다.</p>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
