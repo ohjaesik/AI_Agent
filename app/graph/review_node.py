@@ -7,6 +7,7 @@ from typing import Any
 
 from langgraph.types import interrupt
 
+from app.core.config import get_settings
 from app.db.crud import save_human_review, write_audit_log
 from app.db.database import SessionLocal
 from app.graph.state import AXPlannerState
@@ -33,8 +34,78 @@ def append_audit(
     ]
 
 
+def priority_status_counts(state: AXPlannerState) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in (state.get("priority_ranking", {}) or {}).get("items", []) or []:
+        status = str(item.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def human_approval_need(state: AXPlannerState) -> dict[str, Any]:
+    """사람 승인이 정말 필요한지 판단한다.
+
+    Supervisor LLM은 기본적으로 자동 실행을 선호하지만, 아래 조건은 자동으로
+    넘기면 안 된다. 이 함수는 최소 승인 원칙을 적용해 필요한 경우에만
+    LangGraph interrupt를 발생시키도록 한다.
+    """
+
+    settings = get_settings()
+    supervisor_policy = state.get("supervisor_approval_policy") or {}
+    status_counts = priority_status_counts(state)
+    compliance_summary = (state.get("compliance_assessment") or {}).get("summary", {}) or {}
+    evaluation_summary = (state.get("agent_evaluation") or {}).get("summary", {}) or {}
+
+    reasons: list[str] = []
+    if bool(supervisor_policy.get("requires_human_approval")):
+        reasons.append("Supervisor LLM이 현재 단계에 사람 승인이 필요하다고 판단했다.")
+    if status_counts.get("human_review_required", 0) > 0:
+        reasons.append("후보 중 human_review_required 상태가 있다.")
+    if status_counts.get("evidence_insufficient", 0) > 0:
+        reasons.append("후보 중 evidence_insufficient 상태가 있어 추가 근거 또는 보류 판단이 필요하다.")
+    if int(compliance_summary.get("blocked_count", 0) or 0) > 0:
+        reasons.append("규제/거버넌스 screening에서 blocked 후보가 있다.")
+    if int(compliance_summary.get("enhanced_review_count", 0) or 0) > 0:
+        reasons.append("고영향 가능성 후보가 있어 책임자 검토가 필요하다.")
+    if int(compliance_summary.get("sensitive_review_count", 0) or 0) > 0:
+        reasons.append("민감정보/기밀정보 가능성 후보가 있어 보안 owner 검토가 필요하다.")
+    if int(evaluation_summary.get("additional_evidence_required_count", 0) or 0) > 0:
+        reasons.append("Evaluator가 추가 근거 필요 후보를 감지했다.")
+
+    if not settings.supervisor_minimal_human_approval:
+        reasons.append("SUPERVISOR_MINIMAL_HUMAN_APPROVAL=false 설정으로 명시적 Human Review를 유지한다.")
+
+    return {
+        "required": bool(reasons),
+        "reasons": reasons,
+        "supervisor_policy": supervisor_policy,
+        "status_counts": status_counts,
+        "compliance_summary": compliance_summary,
+        "evaluation_summary": evaluation_summary,
+    }
+
+
+def build_supervisor_auto_decision(state: AXPlannerState, approval_need: dict[str, Any]) -> dict[str, Any]:
+    """Human Review가 필요하지 않은 경우 Supervisor Agent가 자동 승인 기록을 남긴다."""
+
+    return {
+        "decision": "approve",
+        "reviewer_name": "AX Delivery Supervisor Agent",
+        "comment": (
+            "Supervisor LLM 최소 승인 정책에 따라 현재 후보군에는 사람 승인 gate가 필요하지 않다고 판단했다. "
+            "민감/고영향/근거부족/blocked 신호가 생기면 자동 승인하지 않고 Human Review로 전환한다."
+        ),
+        "edited_payload": None,
+        "review_channel": "supervisor_auto_approval",
+        "approval_need": approval_need,
+        "supervisor_delegation": state.get("current_supervisor_delegation", {}),
+    }
+
+
 def human_review_node(state: AXPlannerState) -> dict[str, Any]:
     node_name = "human_review"
+
+    approval_need = human_approval_need(state)
 
     review_payload = {
         "message": "AX 도입 우선순위 결과를 검토하고 approve/edit/reject 중 하나를 선택하세요.",
@@ -51,9 +122,14 @@ def human_review_node(state: AXPlannerState) -> dict[str, Any]:
         "risk_summary": state.get("risk_governance", {}).get("summary", {}),
         "evidence_count": len(state.get("evidence_items", [])),
         "used_source_count": len(state.get("used_sources", [])),
+        "approval_need": approval_need,
+        "supervisor_delegation": state.get("current_supervisor_delegation", {}),
     }
 
-    human_decision = interrupt(review_payload)
+    if approval_need["required"]:
+        human_decision = interrupt(review_payload)
+    else:
+        human_decision = build_supervisor_auto_decision(state, approval_need)
 
     if not isinstance(human_decision, dict):
         human_decision = {

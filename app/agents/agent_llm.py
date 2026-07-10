@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.model_router import compact_model_assignment
 from app.agents.registry import get_tool_specs_for_node
 from app.core.config import get_settings
 from app.core.llm import get_chat_model, invoke_chat_with_retry
@@ -19,6 +20,7 @@ You receive a delegated task from the Supervisor Agent, inspect the handoff cont
 
 Rules:
 - Use only the assigned internal nodes and assigned tools shown in the prompt.
+- Follow the Supervisor Agent delegation, node order, tool priorities, and approval policy unless it conflicts with safety controls.
 - Do not invent tools, APIs, files, or data.
 - Keep the decision grounded in the provided state summary and handoff payload.
 - Return JSON only.
@@ -209,6 +211,7 @@ def fallback_agent_command(
     stage_name: str,
     internal_nodes: list[str],
     reason: str,
+    model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "agent_id": agent_id,
@@ -230,6 +233,7 @@ def fallback_agent_command(
         "needs_iteration": False,
         "risk_note": reason,
         "reason": reason,
+        "model_selection": compact_model_assignment(model_assignment),
     }
 
 
@@ -241,10 +245,14 @@ def run_agent_command_prompt(
     state: dict[str, Any],
     incoming_handoffs: list[dict[str, Any]] | None = None,
     loop_index: int = 1,
+    model_assignment: dict[str, Any] | None = None,
+    supervisor_delegation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     agent_id = str(agent_spec.get("id") or stage_name)
     try:
-        llm = get_chat_model(temperature=0.0, timeout=safe_settings_timeout())
+        # Supervisor 모델 라우터가 선택한 provider/model을 그대로 사용한다.
+        # 선택 정보는 trace에 남기되, API key 같은 비밀값은 포함하지 않는다.
+        llm = get_chat_model(temperature=0.0, timeout=safe_settings_timeout(), model_assignment=model_assignment)
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", COMMAND_PROMPT)])
         messages = prompt.format_messages(
             delegation=compact_json(
@@ -253,8 +261,9 @@ def run_agent_command_prompt(
                     "delegated_to": agent_id,
                     "stage_name": stage_name,
                     "loop_index": loop_index,
+                    "supervisor_delegation": supervisor_delegation or {},
                 },
-                max_chars=1200,
+                max_chars=3600,
             ),
             agent_contract=compact_json(
                 {
@@ -281,6 +290,7 @@ def run_agent_command_prompt(
             "llm_used": True,
             "mode": "expert_agent_llm_command",
             "loop_index": loop_index,
+            "model_selection": compact_model_assignment(model_assignment),
             **payload,
         }
     except Exception as exc:
@@ -289,6 +299,7 @@ def run_agent_command_prompt(
             stage_name=stage_name,
             internal_nodes=internal_nodes,
             reason=f"Agent LLM command failed: {type(exc).__name__}: {exc}",
+            model_assignment=model_assignment,
         )
 
 
@@ -297,6 +308,7 @@ def fallback_agent_reflection(
     agent_id: str,
     stage_name: str,
     reason: str,
+    model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "agent_id": agent_id,
@@ -309,6 +321,7 @@ def fallback_agent_reflection(
         "handoff_plan": {},
         "quality_checks": ["LLM reflection unavailable; deterministic handoff continues."],
         "risk_note": reason,
+        "model_selection": compact_model_assignment(model_assignment),
     }
 
 
@@ -321,10 +334,14 @@ def run_agent_reflection_prompt(
     state: dict[str, Any],
     result: dict[str, Any],
     loop_index: int = 1,
+    model_assignment: dict[str, Any] | None = None,
+    supervisor_delegation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     agent_id = str(agent_spec.get("id") or stage_name)
     try:
-        llm = get_chat_model(temperature=0.0, timeout=safe_settings_timeout())
+        # Reflection도 command와 같은 라우터 정책을 따른다. 다만 result가
+        # 포함된 뒤 다시 계산하면 산출물 크기까지 반영할 수 있다.
+        llm = get_chat_model(temperature=0.0, timeout=safe_settings_timeout(), model_assignment=model_assignment)
         prompt = ChatPromptTemplate.from_messages([("system", REFLECT_SYSTEM_PROMPT), ("human", REFLECT_PROMPT)])
         messages = prompt.format_messages(
             delegation=compact_json(
@@ -333,8 +350,9 @@ def run_agent_reflection_prompt(
                     "delegated_to": agent_id,
                     "stage_name": stage_name,
                     "loop_index": loop_index,
+                    "supervisor_delegation": supervisor_delegation or {},
                 },
-                max_chars=1200,
+                max_chars=3600,
             ),
             agent_contract=compact_json(
                 {
@@ -360,6 +378,7 @@ def run_agent_reflection_prompt(
             "llm_used": True,
             "mode": "expert_agent_llm_reflection",
             "loop_index": loop_index,
+            "model_selection": compact_model_assignment(model_assignment),
             **payload,
         }
     except Exception as exc:
@@ -367,6 +386,7 @@ def run_agent_reflection_prompt(
             agent_id=agent_id,
             stage_name=stage_name,
             reason=f"Agent LLM reflection failed: {type(exc).__name__}: {exc}",
+            model_assignment=model_assignment,
         )
 
 
@@ -384,4 +404,5 @@ def build_agent_llm_call_record(kind: str, payload: dict[str, Any]) -> dict[str,
         "reason": payload.get("reason") or payload.get("agent_intent"),
         "handoff_plan": payload.get("handoff_plan", {}),
         "risk_note": payload.get("risk_note"),
+        "model_selection": payload.get("model_selection", {}),
     }

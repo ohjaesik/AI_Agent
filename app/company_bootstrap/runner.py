@@ -27,6 +27,9 @@ class BootstrapGraphResult:
     agent_decisions: list[dict[str, Any]] | None = None
     agent_loop_iterations: list[dict[str, Any]] | None = None
     agent_loop_requests: list[dict[str, Any]] | None = None
+    agent_llm_calls: list[dict[str, Any]] | None = None
+    agent_model_decisions: list[dict[str, Any]] | None = None
+    agent_supervisor_delegations: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -46,6 +49,9 @@ class BootstrapGraphResult:
             "agent_decisions": self.agent_decisions or [],
             "agent_loop_iterations": self.agent_loop_iterations or [],
             "agent_loop_requests": self.agent_loop_requests or [],
+            "agent_llm_calls": self.agent_llm_calls or [],
+            "agent_model_decisions": self.agent_model_decisions or [],
+            "agent_supervisor_delegations": self.agent_supervisor_delegations or [],
         }
 
 
@@ -84,6 +90,9 @@ def run_bootstrap_supervisor_graph(
         "agent_decisions": [],
         "agent_loop_iterations": [],
         "agent_loop_requests": [],
+        "agent_llm_calls": [],
+        "agent_model_decisions": [],
+        "agent_supervisor_delegations": [],
         "agent_supervisor_extra_loop_enabled": allow_agent_extra_loop,
         "errors": [],
     }
@@ -114,4 +123,7 @@ def run_bootstrap_supervisor_graph(
         agent_decisions=list(result_state.get("agent_decisions", [])),
         agent_loop_iterations=list(result_state.get("agent_loop_iterations", [])),
         agent_loop_requests=list(result_state.get("agent_loop_requests", [])),
+        agent_llm_calls=list(result_state.get("agent_llm_calls", [])),
+        agent_model_decisions=list(result_state.get("agent_model_decisions", [])),
+        agent_supervisor_delegations=list(result_state.get("agent_supervisor_delegations", [])),
     )

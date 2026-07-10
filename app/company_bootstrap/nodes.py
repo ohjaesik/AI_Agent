@@ -198,6 +198,7 @@ def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
 
         discovery_mode = discovered_process_specs[0].get("discovery_mode") if discovered_process_specs else None
         discovery_warning = discovered_process_specs[0].get("discovery_warning") if discovered_process_specs else None
+        discovery_model_selection = discovered_process_specs[0].get("discovery_model_selection") if discovered_process_specs else None
         if discovery_warning:
             warnings.append(discovery_warning)
 
@@ -243,6 +244,16 @@ def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
             "process_ids": [process.id for process in processes],
             "project_id": project.id if project else None,
             "discovery_mode": discovery_mode,
+            "agent_model_decisions": [
+                {
+                    "agent_id": "company_onboarding_agent",
+                    "stage_name": node_name,
+                    "call_kind": "process_discovery_llm",
+                    **discovery_model_selection,
+                }
+            ]
+            if isinstance(discovery_model_selection, dict)
+            else [],
             "warnings": warnings,
             "result": result,
             "audit_logs": audit(

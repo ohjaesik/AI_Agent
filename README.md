@@ -437,7 +437,23 @@ EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIM=1536
 VLLM_BASE_URL=http://localhost:8000/v1
 VLLM_API_KEY=EMPTY
-VLLM_MODEL=google/gemma-2-9b-it
+VLLM_MODEL=gemma-4-e4b-it
+
+# Supervisor-driven model routing
+ANTHROPIC_API_KEY=OPTIONAL_ANTHROPIC_KEY
+MODEL_ROUTER_ENABLED=true
+MODEL_ROUTER_ENABLE_VLLM=true
+MODEL_ROUTER_ENABLE_OPENAI=true
+MODEL_ROUTER_ENABLE_ANTHROPIC=true
+SUPERVISOR_MODEL_PROVIDER=openai
+SUPERVISOR_MODEL_NAME=gpt-4.1
+SUPERVISOR_LLM_ENABLED=true
+SUPERVISOR_MINIMAL_HUMAN_APPROVAL=true
+OPENAI_HIGH_MODEL=gpt-4.1
+OPENAI_BALANCED_MODEL=gpt-4.1-mini
+OPENAI_FAST_MODEL=gpt-4.1-nano
+ANTHROPIC_HIGH_MODEL=claude-3-5-sonnet-latest
+ANTHROPIC_FAST_MODEL=claude-3-5-haiku-latest
 DART_API_KEY=OPTIONAL_OPEN_DART_KEY
 APP_API_KEY=OPTIONAL_LOCAL_API_KEY
 APP_ENV=local
@@ -446,6 +462,10 @@ AGENT_TOOL_SANDBOX_MODE=direct
 AGENT_SUPERVISOR_MAX_TOOL_LOOPS=2
 AGENT_SUPERVISOR_EXTRA_LOOP_ENABLED=false
 ```
+
+모델 라우터는 Supervisor Agent가 각 LLM 호출마다 입력 자료량, 후보 업무 수, 근거 수, 예상 출력량, 예상 처리 시간, 모델 품질 점수, context window, 1M token당 입력/출력 비용을 계산해 `agent_model_decisions` trace에 선택 근거를 남긴다. `SUPERVISOR_LLM_ENABLED=true`이면 Supervisor Agent도 실제 LLM으로 실행되어 각 Expert Agent에게 자율성 수준, node 순서, tool 우선순위, 사람 승인 gate를 위임하고 `agent_supervisor_delegations` trace에 남긴다. Supervisor Agent 자체는 `SUPERVISOR_MODEL_PROVIDER`와 `SUPERVISOR_MODEL_NAME`의 상위 모델을 우선 사용하고, 나머지 Expert Agent와 LLM 도구는 가격 대비 효율 점수가 가장 높은 모델을 자동 선택한다. vLLM은 항상 `.env`의 `VLLM_MODEL`과 `VLLM_BASE_URL`을 사용한다.
+
+`SUPERVISOR_MINIMAL_HUMAN_APPROVAL=true`이면 Human Review node는 무조건 멈추지 않는다. Supervisor LLM 정책과 실제 상태를 함께 보고, 민감/고영향/blocked 후보, 심각한 근거 부족, final commitment처럼 사람이 승인해야 하는 경우에만 interrupt를 발생시킨다. 일반적인 근거 검색, 점수 계산, LLM Critic, 보고서 초안, DOCX export는 Supervisor 자동 승인 기록을 남기고 계속 진행한다.
 
 ### 7.3 Initialize DB
 

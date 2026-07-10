@@ -6,7 +6,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, TypeVar
 
-from app.agents.registry import get_agent_spec, get_tool_specs_for_node
+from app.agents.registry import MAX_TOOL_CANDIDATES_PER_NODE, get_agent_spec, get_tool_specs_for_node
 from app.agents.runtime import build_agent_contract, build_contract_audit_log, get_agent_binding_for_node
 from app.agents.tool_runtime import call_agent_tool
 from app.core.config import get_settings
@@ -696,7 +696,7 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
         candidate_tool_specs = get_tool_specs_for_node(agent_id, node_name)
         if not candidate_tool_specs:
             raise ValueError(f"No tool_specs entry for agent '{agent_id}' and node '{node_name}'")
-        if len(candidate_tool_specs) > 3:
+        if len(candidate_tool_specs) > MAX_TOOL_CANDIDATES_PER_NODE:
             raise ValueError(f"Too many candidate tools for node '{node_name}': {len(candidate_tool_specs)}")
 
         emphasized_tool_spec, emphasized_reason = select_tool_spec(

@@ -11,7 +11,7 @@ from app.core.retry import retry_call
 
 DEFAULT_VLLM_BASE_URL = "http://localhost:8000/v1"
 DEFAULT_VLLM_API_KEY = "EMPTY"
-DEFAULT_VLLM_MODEL = "google/gemma-2-9b-it"
+DEFAULT_VLLM_MODEL = "gemma-4-e4b-it"
 
 
 def normalize_blank(value: str | None, default: str) -> str:
@@ -46,14 +46,54 @@ def embed_query_with_retry(query: str, retries: int = 2) -> list[float]:
     return retry_call(lambda: embeddings.embed_query(query), retries=retries, backoff_seconds=1.0)
 
 
-def get_chat_model(temperature: float = 0.0, timeout: float | None = None) -> ChatOpenAI:
+def get_chat_model(
+    temperature: float = 0.0,
+    timeout: float | None = None,
+    model_assignment: dict[str, Any] | None = None,
+) -> Any:
+    """LLM chat client를 생성한다.
+
+    기본값은 기존 동작과 동일하게 .env의 vLLM OpenAI-compatible endpoint를
+    사용한다. model_assignment가 들어오면 Supervisor 모델 라우터가 고른
+    provider/model 조합을 따른다.
+    """
+
     settings = get_settings()
     kwargs: dict[str, Any] = {}
     if timeout is not None:
         kwargs["timeout"] = timeout
 
+    provider = str((model_assignment or {}).get("provider") or "vllm").lower()
+    model_name = str((model_assignment or {}).get("model") or "").strip()
+
+    if provider == "openai":
+        return ChatOpenAI(
+            model=normalize_blank(model_name, settings.openai_high_model),
+            api_key=settings.openai_api_key,
+            temperature=temperature,
+            **kwargs,
+        )
+
+    if provider == "anthropic":
+        try:
+            from langchain_anthropic import ChatAnthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "Anthropic 모델이 선택되었지만 langchain-anthropic 패키지가 설치되어 있지 않습니다. "
+                "requirements.txt 설치를 다시 확인하세요."
+            ) from exc
+
+        return ChatAnthropic(
+            model=normalize_blank(model_name, settings.anthropic_high_model),
+            api_key=settings.anthropic_api_key,
+            temperature=temperature,
+            **kwargs,
+        )
+
+    # vLLM은 OpenAI-compatible endpoint로 호출한다. 모델명/base_url/api_key는
+    # 모두 .env의 VLLM_* 값을 기준으로 두어 로컬 모델 교체가 코드 변경 없이 가능하다.
     return ChatOpenAI(
-        model=normalize_blank(settings.vllm_model, DEFAULT_VLLM_MODEL),
+        model=normalize_blank(model_name or settings.vllm_model, DEFAULT_VLLM_MODEL),
         base_url=normalize_blank(settings.vllm_base_url, DEFAULT_VLLM_BASE_URL),
         api_key=normalize_blank(settings.vllm_api_key, DEFAULT_VLLM_API_KEY),
         temperature=temperature,
@@ -61,5 +101,5 @@ def get_chat_model(temperature: float = 0.0, timeout: float | None = None) -> Ch
     )
 
 
-def invoke_chat_with_retry(llm: ChatOpenAI, messages: list[Any], retries: int = 2) -> Any:
+def invoke_chat_with_retry(llm: Any, messages: list[Any], retries: int = 2) -> Any:
     return retry_call(lambda: llm.invoke(messages), retries=retries, backoff_seconds=1.0)

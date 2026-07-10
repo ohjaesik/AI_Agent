@@ -14,7 +14,9 @@ from app.agents.agent_llm import (
 )
 from app.agents.expert_executor import expert_executed_node
 from app.agents.handoff import attach_agent_stage_outputs
+from app.agents.model_router import SUPERVISOR_AGENT_ID, select_agent_model
 from app.agents.registry import get_agent_spec
+from app.agents.supervisor_llm import build_supervisor_llm_call_record, run_supervisor_delegation_prompt
 from app.core.config import get_settings
 from app.graph.node_worker import workerized_node
 from app.graph.replan_node import should_continue_after_replan, should_replan
@@ -85,6 +87,8 @@ def merge_stage_result(accumulator: dict[str, Any], node_result: dict[str, Any])
         "agent_handoffs",
         "agent_llm_calls",
         "agent_commands",
+        "agent_model_decisions",
+        "agent_supervisor_delegations",
     }
     for key, value in node_result.items():
         if key in list_keys:
@@ -141,6 +145,54 @@ def expert_agent_stage(stage_name: str):
         loop_limit = resolve_agent_stage_loop_limit(state)
 
         for stage_loop_index in range(1, loop_limit + 1):
+            # 실제 LangGraph에는 별도 Supervisor LLM 노드가 없지만, 모델
+            # 선택 정책의 책임 주체는 Supervisor다. 따라서 먼저 Supervisor
+            # 자신의 상위 모델 배정을 trace에 남기고, 이어서 위임받은
+            # Expert Agent의 command/reflection 모델을 수식으로 선택한다.
+            supervisor_assignment = select_agent_model(
+                agent_id=SUPERVISOR_AGENT_ID,
+                stage_name=stage_name,
+                call_kind="supervisor_delegation",
+                state=stage_state,
+            )
+            supervisor_delegation = run_supervisor_delegation_prompt(
+                agent_spec=agent_spec,
+                stage_name=stage_name,
+                internal_nodes=internal_nodes,
+                state=stage_state,
+                incoming_handoffs=incoming_handoffs_for_agent(stage_state, agent_id),
+                loop_index=stage_loop_index,
+                model_assignment=supervisor_assignment,
+            )
+            supervisor_delegation["loop_index"] = stage_loop_index
+            supervisor_call_record = build_supervisor_llm_call_record(supervisor_delegation)
+
+            command_model_assignment = select_agent_model(
+                agent_id=agent_id,
+                stage_name=stage_name,
+                call_kind="agent_command",
+                state={**stage_state, "current_supervisor_delegation": supervisor_delegation},
+            )
+            stage_result = merge_stage_result(
+                stage_result,
+                {
+                    "agent_model_decisions": [supervisor_assignment, command_model_assignment],
+                    "agent_supervisor_delegations": [supervisor_delegation],
+                    "agent_llm_calls": [supervisor_call_record],
+                },
+            )
+            stage_state = {
+                **stage_state,
+                "current_supervisor_model_assignment": supervisor_assignment,
+                "current_supervisor_delegation": supervisor_delegation,
+                "supervisor_approval_policy": supervisor_delegation.get("human_approval_policy", {}),
+                "current_agent_model_assignment": command_model_assignment,
+                "agent_model_decisions": list(stage_state.get("agent_model_decisions", []))
+                + [supervisor_assignment, command_model_assignment],
+                "agent_supervisor_delegations": list(stage_state.get("agent_supervisor_delegations", [])) + [supervisor_delegation],
+                "agent_llm_calls": list(stage_state.get("agent_llm_calls", [])) + [supervisor_call_record],
+            }
+
             command = run_agent_command_prompt(
                 agent_spec=agent_spec,
                 stage_name=stage_name,
@@ -148,6 +200,8 @@ def expert_agent_stage(stage_name: str):
                 state=stage_state,
                 incoming_handoffs=incoming_handoffs_for_agent(stage_state, agent_id),
                 loop_index=stage_loop_index,
+                model_assignment=command_model_assignment,
+                supervisor_delegation=supervisor_delegation,
             )
             command_record = build_agent_llm_call_record("agent_command", command)
             stage_result = merge_stage_result(
@@ -173,6 +227,24 @@ def expert_agent_stage(stage_name: str):
                 executed_nodes.append(node_name)
                 executed_nodes_all.append(node_name)
 
+            reflection_model_assignment = select_agent_model(
+                agent_id=agent_id,
+                stage_name=stage_name,
+                call_kind="agent_reflection",
+                state={**stage_state, **stage_result},
+            )
+            stage_result = merge_stage_result(
+                stage_result,
+                {
+                    "agent_model_decisions": [reflection_model_assignment],
+                },
+            )
+            stage_state = {
+                **stage_state,
+                "current_agent_model_assignment": reflection_model_assignment,
+                "agent_model_decisions": list(stage_state.get("agent_model_decisions", [])) + [reflection_model_assignment],
+            }
+
             reflection = run_agent_reflection_prompt(
                 agent_spec=agent_spec,
                 stage_name=stage_name,
@@ -181,6 +253,8 @@ def expert_agent_stage(stage_name: str):
                 state=state,
                 result=stage_result,
                 loop_index=stage_loop_index,
+                model_assignment=reflection_model_assignment,
+                supervisor_delegation=supervisor_delegation,
             )
             reflection_record = build_agent_llm_call_record("agent_reflection", reflection)
             stage_result = merge_stage_result(

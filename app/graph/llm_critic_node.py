@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.llm_critic import apply_llm_critic_to_evaluation
+from app.agents.model_router import select_agent_model
 from app.agents.tool_guard import assert_tools_allowed
 from app.db.crud import save_analysis_result, write_audit_log
 from app.db.database import SessionLocal
@@ -20,9 +21,18 @@ def llm_critic_node(state: AXPlannerState) -> dict[str, Any]:
             "evaluation_critic_agent",
             ["LLM critic", "quality gate"],
         )
+        # LLM Critic 내부 호출은 후보 수, 평가 결과, 근거량을 기준으로
+        # Supervisor 모델 라우터가 고른 모델을 사용한다.
+        model_assignment = select_agent_model(
+            agent_id="evaluation_critic_agent",
+            stage_name=node_name,
+            call_kind="tool_llm_critic",
+            state=state,
+        )
         result = apply_llm_critic_to_evaluation(
             priority_ranking=state.get("priority_ranking", {}) or {},
             agent_evaluation=state.get("agent_evaluation", {}) or {},
+            model_assignment=model_assignment,
         )
         agent_evaluation = result.get("agent_evaluation", {})
         priority_ranking = result.get("priority_ranking", {})
@@ -51,11 +61,16 @@ def llm_critic_node(state: AXPlannerState) -> dict[str, Any]:
         return {
             "agent_evaluation": agent_evaluation,
             "priority_ranking": priority_ranking,
+            "agent_model_decisions": [model_assignment],
             "audit_logs": append_audit(
                 state,
                 node_name,
                 "success",
-                payload=agent_evaluation.get("summary", {}),
+                payload={
+                    **(agent_evaluation.get("summary", {}) or {}),
+                    "model_provider": model_assignment.get("provider"),
+                    "model": model_assignment.get("model"),
+                },
             ),
         }
 

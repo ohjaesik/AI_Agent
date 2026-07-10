@@ -77,7 +77,7 @@ def test_agent_specs_include_prompt_contract_and_tool_specs(agent: dict) -> None
 
 
 @pytest.mark.parametrize("node_name", ALL_BOUND_NODES)
-def test_each_node_has_at_most_three_candidate_tools(node_name: str) -> None:
+def test_each_node_has_bounded_candidate_tools(node_name: str) -> None:
     agent_id = get_agent_id_for_node(node_name)
 
     assert agent_id is not None

@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.model_router import compact_model_assignment, select_agent_model
 from app.core.llm import get_chat_model, invoke_chat_with_retry
 
 ALLOWED_DEPARTMENTS = {
@@ -289,6 +290,20 @@ def discover_company_process_specs(
     if not official_sources or not allowed_labels:
         return add_fallback_metadata(fallback_processes, "No official source labels are available.")
 
+    # Process Discovery Agent는 공식자료의 양과 source 수에 따라 모델을 고른다.
+    # bootstrap 단계에는 메인 graph state가 없으므로 필요한 값만 임시 state로
+    # 구성해 동일한 Supervisor 라우팅 수식을 재사용한다.
+    model_assignment = select_agent_model(
+        agent_id="company_onboarding_agent",
+        stage_name="process_discovery_agent",
+        call_kind="process_discovery_llm",
+        state={
+            "official_sources": official_sources,
+            "documents": official_sources,
+            "business_processes": fallback_processes,
+        },
+    )
+
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", SYSTEM_PROMPT),
@@ -297,7 +312,7 @@ def discover_company_process_specs(
     )
 
     try:
-        llm = get_chat_model(temperature=0.1)
+        llm = get_chat_model(temperature=0.1, model_assignment=model_assignment)
         messages = prompt.format_messages(
             company_name=company_name,
             allowed_labels="\n".join(allowed_labels),
@@ -305,13 +320,22 @@ def discover_company_process_specs(
         )
         response = invoke_chat_with_retry(llm, messages)
         payload = extract_json_object(str(response.content))
-        return validate_processes(
+        processes = validate_processes(
             payload=payload,
             allowed_labels=allowed_labels,
             fallback_processes=fallback_processes,
         )
+        for process in processes:
+            process["discovery_model_selection"] = compact_model_assignment(model_assignment)
+        return processes
     except Exception as exc:
-        return add_fallback_metadata(
+        processes = add_fallback_metadata(
             fallback_processes,
-            f"LLM process discovery failed: {type(exc).__name__}: {exc}",
+            (
+                f"LLM process discovery failed: {type(exc).__name__}: {exc} "
+                f"(model={model_assignment.get('provider')}/{model_assignment.get('model')})"
+            ),
         )
+        for process in processes:
+            process["discovery_model_selection"] = compact_model_assignment(model_assignment)
+        return processes

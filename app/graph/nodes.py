@@ -767,6 +767,7 @@ def report_writer_node(state: AXPlannerState) -> dict[str, Any]:
 
     try:
         result = build_report_data(state)
+        model_selection = (result.get("generation") or {}).get("model_selection") or {}
 
         with SessionLocal() as db:
             save_analysis_result(
@@ -778,6 +779,16 @@ def report_writer_node(state: AXPlannerState) -> dict[str, Any]:
 
         return {
             "report_data": result,
+            "agent_model_decisions": [
+                {
+                    "agent_id": "delivery_orchestration_agent",
+                    "stage_name": node_name,
+                    "call_kind": "report_writer",
+                    **model_selection,
+                }
+            ]
+            if model_selection
+            else [],
             "audit_logs": append_audit(
                 state,
                 node_name,
@@ -786,6 +797,8 @@ def report_writer_node(state: AXPlannerState) -> dict[str, Any]:
                     "section_count": len(result.get("sections", [])),
                     "reference_count": len(result.get("references", [])),
                     "evidence_count": len(state.get("evidence_items", [])),
+                    "model_provider": model_selection.get("provider"),
+                    "model": model_selection.get("model"),
                 },
             ),
         }

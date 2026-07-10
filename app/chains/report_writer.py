@@ -9,7 +9,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.core.config import get_settings
+from app.agents.model_router import compact_model_assignment, select_agent_model
 from app.core.llm import get_chat_model, invoke_chat_with_retry
 from app.tools.citation_validator import find_citation_labels, validate_report_citations
 from app.tools.deterministic_report_data_builder import build_report_data as build_deterministic_report_data
@@ -268,13 +268,21 @@ def apply_llm_paragraphs(base_report_data: dict[str, Any], llm_payload: dict[str
             block["text"] = rewritten_paragraphs[paragraph_index]
             paragraph_index += 1
 
-    report_data["generation"] = {"mode": "vllm_report_writer", "warnings": llm_payload.get("warnings", [])}
+    report_data["generation"] = {"mode": "routed_report_writer", "warnings": llm_payload.get("warnings", [])}
     return report_data
 
 
-def build_fallback_report_data(state: dict[str, Any], reason: str) -> dict[str, Any]:
+def build_fallback_report_data(
+    state: dict[str, Any],
+    reason: str,
+    model_assignment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     report_data = build_deterministic_report_data(state)
-    report_data["generation"] = {"mode": "deterministic_fallback", "reason": reason}
+    report_data["generation"] = {
+        "mode": "deterministic_fallback",
+        "reason": reason,
+        "model_selection": compact_model_assignment(model_assignment),
+    }
     return report_data
 
 
@@ -283,14 +291,26 @@ def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
     evidence_items = state.get("evidence_items", [])
     allowed_citation_labels = build_allowed_citation_labels(evidence_items, state=state)
 
+    # Report Writer는 출력량이 크고 citation 품질이 중요하므로 별도 call_kind로
+    # 모델을 다시 선택한다. 이 선택 결과는 보고서 metadata와 graph trace에 남는다.
+    model_assignment = select_agent_model(
+        agent_id="delivery_orchestration_agent",
+        stage_name="report_writer",
+        call_kind="report_writer",
+        state=state,
+    )
+
     if not evidence_items or not allowed_citation_labels:
-        return build_fallback_report_data(state, reason="No evidence items or citation labels are available.")
+        return build_fallback_report_data(
+            state,
+            reason="No evidence items or citation labels are available.",
+            model_assignment=model_assignment,
+        )
 
     prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", USER_PROMPT)])
-    settings = get_settings()
 
     try:
-        llm = get_chat_model(temperature=0.2)
+        llm = get_chat_model(temperature=0.2, model_assignment=model_assignment)
         messages = prompt.format_messages(
             allowed_citation_labels=compact_json(allowed_citation_labels, max_chars=3000),
             company_profile=compact_json(state.get("company_profile", {}), max_chars=1200),
@@ -302,16 +322,26 @@ def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
         response = invoke_chat_with_retry(llm, messages)
         llm_payload = extract_json_object(str(response.content))
         report_data = apply_llm_paragraphs(base_report_data, llm_payload)
-        report_data["generation"]["model"] = settings.vllm_model
+        report_data["generation"]["provider"] = model_assignment.get("provider")
+        report_data["generation"]["model"] = model_assignment.get("model")
+        report_data["generation"]["model_selection"] = compact_model_assignment(model_assignment)
         report_data = enforce_citation_coverage(report_data, allowed_citation_labels, evidence_items)
 
         validation = validate_report_citations(report_data=report_data, evidence_items=evidence_items)
         report_data["citation_validation"] = validation
 
         if not validation.get("valid"):
-            return build_fallback_report_data(state, reason=f"Invalid citation labels from LLM: {validation.get('invalid_labels')}")
+            return build_fallback_report_data(
+                state,
+                reason=f"Invalid citation labels from LLM: {validation.get('invalid_labels')}",
+                model_assignment=model_assignment,
+            )
 
         return report_data
 
     except Exception as exc:
-        return build_fallback_report_data(state, reason=f"LLM report writer failed: {type(exc).__name__}: {exc}")
+        return build_fallback_report_data(
+            state,
+            reason=f"LLM report writer failed: {type(exc).__name__}: {exc}",
+            model_assignment=model_assignment,
+        )

@@ -125,6 +125,8 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("agent_handoffs:", len(result.get("agent_handoffs", [])))
     print("agent_llm_calls:", len(result.get("agent_llm_calls", [])))
     print("agent_commands:", len(result.get("agent_commands", [])))
+    print("agent_model_decisions:", len(result.get("agent_model_decisions", [])))
+    print("agent_supervisor_delegations:", len(result.get("agent_supervisor_delegations", [])))
     print("agent_packages:", len([key for key in result if key.endswith("_package")]))
     print("report_sections:", len(result.get("report_data", {}).get("sections", [])))
 
@@ -245,6 +247,8 @@ def run_demo(
         "agent_handoffs": [],
         "agent_llm_calls": [],
         "agent_commands": [],
+        "agent_model_decisions": [],
+        "agent_supervisor_delegations": [],
         "agent_supervisor_extra_loop_enabled": allow_agent_extra_loop,
         "audit_logs": [],
         "errors": [],

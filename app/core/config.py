@@ -24,7 +24,54 @@ class Settings(BaseSettings):
     # vLLM OpenAI-compatible endpoint
     vllm_base_url: str = Field(default="http://localhost:8000/v1", alias="VLLM_BASE_URL")
     vllm_api_key: str = Field(default="EMPTY", alias="VLLM_API_KEY")
-    vllm_model: str = Field(default="google/gemma-2-9b-it", alias="VLLM_MODEL")
+    vllm_model: str = Field(default="gemma-4-e4b-it", alias="VLLM_MODEL")
+
+    # External LLM provider keys. OPENAI_API_KEY is already used for embeddings;
+    # ANTHROPIC_API_KEY is optional and only used when the model router selects Claude.
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+
+    # Supervisor-driven model routing. The router keeps vLLM as the default local
+    # path, but can select GPT/Claude models when their keys are configured.
+    model_router_enabled: bool = Field(default=True, alias="MODEL_ROUTER_ENABLED")
+    model_router_enable_vllm: bool = Field(default=True, alias="MODEL_ROUTER_ENABLE_VLLM")
+    model_router_enable_openai: bool = Field(default=True, alias="MODEL_ROUTER_ENABLE_OPENAI")
+    model_router_enable_anthropic: bool = Field(default=True, alias="MODEL_ROUTER_ENABLE_ANTHROPIC")
+    model_router_target_seconds: float = Field(default=45.0, alias="MODEL_ROUTER_TARGET_SECONDS")
+    model_router_cost_sensitivity: float = Field(default=0.35, alias="MODEL_ROUTER_COST_SENSITIVITY")
+
+    # The Supervisor Agent is treated as the highest-risk orchestration role, so
+    # it is pinned to this upper-tier model whenever the configured provider is available.
+    supervisor_model_provider: str = Field(default="openai", alias="SUPERVISOR_MODEL_PROVIDER")
+    supervisor_model_name: str = Field(default="gpt-4.1", alias="SUPERVISOR_MODEL_NAME")
+    supervisor_llm_enabled: bool = Field(default=True, alias="SUPERVISOR_LLM_ENABLED")
+    supervisor_minimal_human_approval: bool = Field(default=True, alias="SUPERVISOR_MINIMAL_HUMAN_APPROVAL")
+
+    # Model candidates used by the cost/performance router. Prices are USD per
+    # one million tokens and can be updated without code changes.
+    openai_high_model: str = Field(default="gpt-4.1", alias="OPENAI_HIGH_MODEL")
+    openai_balanced_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_BALANCED_MODEL")
+    openai_fast_model: str = Field(default="gpt-4.1-nano", alias="OPENAI_FAST_MODEL")
+    openai_high_input_cost_per_million: float = Field(default=2.00, alias="OPENAI_HIGH_INPUT_COST_PER_MILLION")
+    openai_high_output_cost_per_million: float = Field(default=8.00, alias="OPENAI_HIGH_OUTPUT_COST_PER_MILLION")
+    openai_balanced_input_cost_per_million: float = Field(default=0.40, alias="OPENAI_BALANCED_INPUT_COST_PER_MILLION")
+    openai_balanced_output_cost_per_million: float = Field(default=1.60, alias="OPENAI_BALANCED_OUTPUT_COST_PER_MILLION")
+    openai_fast_input_cost_per_million: float = Field(default=0.10, alias="OPENAI_FAST_INPUT_COST_PER_MILLION")
+    openai_fast_output_cost_per_million: float = Field(default=0.40, alias="OPENAI_FAST_OUTPUT_COST_PER_MILLION")
+
+    anthropic_high_model: str = Field(default="claude-3-5-sonnet-latest", alias="ANTHROPIC_HIGH_MODEL")
+    anthropic_fast_model: str = Field(default="claude-3-5-haiku-latest", alias="ANTHROPIC_FAST_MODEL")
+    anthropic_high_input_cost_per_million: float = Field(default=3.00, alias="ANTHROPIC_HIGH_INPUT_COST_PER_MILLION")
+    anthropic_high_output_cost_per_million: float = Field(default=15.00, alias="ANTHROPIC_HIGH_OUTPUT_COST_PER_MILLION")
+    anthropic_fast_input_cost_per_million: float = Field(default=0.80, alias="ANTHROPIC_FAST_INPUT_COST_PER_MILLION")
+    anthropic_fast_output_cost_per_million: float = Field(default=4.00, alias="ANTHROPIC_FAST_OUTPUT_COST_PER_MILLION")
+
+    # Local vLLM is normally treated as zero marginal API cost. The quality/speed
+    # values let the router compare it fairly with paid API models.
+    vllm_input_cost_per_million: float = Field(default=0.0, alias="VLLM_INPUT_COST_PER_MILLION")
+    vllm_output_cost_per_million: float = Field(default=0.0, alias="VLLM_OUTPUT_COST_PER_MILLION")
+    vllm_quality_score: float = Field(default=0.62, alias="VLLM_QUALITY_SCORE")
+    vllm_speed_score: float = Field(default=0.72, alias="VLLM_SPEED_SCORE")
+    vllm_context_window_tokens: int = Field(default=8192, alias="VLLM_CONTEXT_WINDOW_TOKENS")
 
     # Expert Agent loop controls. Extra loops require an explicit CLI/state command.
     agent_supervisor_max_tool_loops: int = Field(default=2, alias="AGENT_SUPERVISOR_MAX_TOOL_LOOPS")

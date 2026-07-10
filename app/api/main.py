@@ -229,6 +229,8 @@ def run_analysis(project_id: int | None = None, company_id: int | None = None, a
             "citation_validation": result.get("report_data", {}).get("citation_validation", {}),
             "top_candidates": result.get("priority_ranking", {}).get("items", [])[:5],
             "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),
+            "model_decisions": result.get("agent_model_decisions", [])[-10:],
+            "supervisor_delegations": result.get("agent_supervisor_delegations", [])[-10:],
             "errors": result.get("errors", []),
         }
     except Exception as exc:

@@ -8,6 +8,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.model_router import compact_model_assignment
 from app.core.llm import get_chat_model, invoke_chat_with_retry
 
 SYSTEM_PROMPT = """
@@ -115,7 +116,12 @@ def calibrate_critic_verdict(candidate: dict[str, Any], evaluation: dict[str, An
     return critic
 
 
-def fallback_critic(candidate: dict[str, Any], evaluation: dict[str, Any], reason: str) -> dict[str, Any]:
+def fallback_critic(
+    candidate: dict[str, Any],
+    evaluation: dict[str, Any],
+    reason: str,
+    model_assignment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     verdict = deterministic_verdict(candidate, evaluation)
     adjustment = -0.05 if verdict == "insufficient_evidence" else 0.0
     return {
@@ -126,13 +132,20 @@ def fallback_critic(candidate: dict[str, Any], evaluation: dict[str, Any], reaso
         "review_questions": [],
         "critic_mode": "deterministic_fallback",
         "critic_calibrated": False,
+        "model_selection": compact_model_assignment(model_assignment),
     }
 
 
-def run_llm_critic(candidate: dict[str, Any], evaluation: dict[str, Any]) -> dict[str, Any]:
+def run_llm_critic(
+    candidate: dict[str, Any],
+    evaluation: dict[str, Any],
+    model_assignment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", USER_PROMPT)])
-        llm = get_chat_model(temperature=0.0)
+        # LLM Critic은 Evaluation Agent 내부 도구지만 실제 모델은
+        # Supervisor 라우터가 계산한 가격 대비 효율 결과를 따른다.
+        llm = get_chat_model(temperature=0.0, model_assignment=model_assignment)
         messages = prompt.format_messages(
             candidate=compact_json(candidate),
             evaluation=compact_json(evaluation),
@@ -146,13 +159,18 @@ def run_llm_critic(candidate: dict[str, Any], evaluation: dict[str, Any]) -> dic
             "missing_evidence": payload.get("missing_evidence") if isinstance(payload.get("missing_evidence"), list) else [],
             "review_questions": payload.get("review_questions") if isinstance(payload.get("review_questions"), list) else [],
             "critic_mode": "llm_critic",
+            "model_selection": compact_model_assignment(model_assignment),
         }
         return calibrate_critic_verdict(candidate, evaluation, critic)
     except Exception as exc:
-        return fallback_critic(candidate, evaluation, f"{type(exc).__name__}: {exc}")
+        return fallback_critic(candidate, evaluation, f"{type(exc).__name__}: {exc}", model_assignment=model_assignment)
 
 
-def apply_llm_critic_to_evaluation(priority_ranking: dict[str, Any], agent_evaluation: dict[str, Any]) -> dict[str, Any]:
+def apply_llm_critic_to_evaluation(
+    priority_ranking: dict[str, Any],
+    agent_evaluation: dict[str, Any],
+    model_assignment: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     evaluation_map = {
         int(item.get("process_id") or 0): dict(item)
         for item in agent_evaluation.get("items", [])
@@ -167,7 +185,7 @@ def apply_llm_critic_to_evaluation(priority_ranking: dict[str, Any], agent_evalu
             updated_items.append(candidate)
             continue
 
-        critic = run_llm_critic(candidate, evaluation)
+        critic = run_llm_critic(candidate, evaluation, model_assignment=model_assignment)
         adjusted_confidence = round(
             max(0.0, min(1.0, float(evaluation.get("confidence_score") or 0.0) + float(critic.get("critic_confidence_adjustment") or 0.0))),
             3,

@@ -79,6 +79,8 @@ export interface AnalysisResponse {
   citation_validation?: Record<string, any>;
   top_candidates?: Array<any>;
   compliance_summary?: Record<string, any>;
+  model_decisions?: Array<any>;
+  supervisor_delegations?: Array<any>;
   errors?: Array<any>;
 }
 

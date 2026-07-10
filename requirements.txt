@@ -1,6 +1,7 @@
 langchain
 langchain-core
 langchain-openai
+langchain-anthropic
 langgraph
 langchain-text-splitters
 
