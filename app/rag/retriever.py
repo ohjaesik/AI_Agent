@@ -26,6 +26,7 @@ def search_similar_chunks(
     process_id: int | None = None,
     max_distance: float | None = None,
     user_role: str | None = DEFAULT_ROLE,
+    query_strategy: str = "single_query",
 ) -> list[dict[str, Any]]:
     query_embedding = embed_query(query)
     allowed_levels = allowed_security_levels(user_role)
@@ -88,12 +89,56 @@ def search_similar_chunks(
                 "metadata": row.chunk_metadata,
                 "distance": round(distance_value, 6),
                 "similarity": round(similarity, 6),
+                "retrieval_strategy": query_strategy,
+                "retrieval_query": query,
+                "retrieval_strategy_hits": [
+                    {
+                        "strategy": query_strategy,
+                        "distance": round(distance_value, 6),
+                        "similarity": round(similarity, 6),
+                    }
+                ],
             }
         )
         if len(results) >= top_k:
             break
 
     return results
+
+
+def build_process_retrieval_queries(process: dict[str, Any]) -> list[dict[str, str]]:
+    """근거 누락을 줄이기 위해 업무별 RAG query를 세 가지 관점으로 만든다."""
+
+    name = str(process.get("name") or "")
+    problem = str(process.get("problem") or "")
+    workflow = str(process.get("current_workflow") or "")
+    candidate_agent = str(process.get("candidate_agent_name") or "")
+    target_user = str(process.get("target_user") or "")
+    query_items = [
+        {
+            "strategy": "workflow_full_context",
+            "query": (
+                f"업무명: {name}\n"
+                f"문제: {problem}\n"
+                f"현재 업무 흐름: {workflow}\n"
+                f"후보 Agent: {candidate_agent}"
+            ),
+        },
+        {
+            "strategy": "problem_and_user_intent",
+            "query": (
+                f"{name} 업무의 병목, 반복 작업, 대상 사용자({target_user}) 불편, 문제 정의: {problem}"
+            ),
+        },
+        {
+            "strategy": "automation_evidence_keywords",
+            "query": (
+                f"{name} {candidate_agent} 자동화 가능성 문서 의존도 의사결정 복잡도 데이터 입력 "
+                f"현재 프로세스 근거: {workflow}"
+            ),
+        },
+    ]
+    return [item for item in query_items if item["query"].strip()]
 
 
 def merge_chunk_results(
@@ -112,12 +157,28 @@ def merge_chunk_results(
             existing = merged.get(chunk_id)
 
             if existing is None or float(item.get("distance") or 999) < float(existing.get("distance") or 999):
+                if existing is not None:
+                    item["retrieval_strategy_hits"] = list(existing.get("retrieval_strategy_hits", [])) + list(
+                        item.get("retrieval_strategy_hits", [])
+                    )
                 merged[chunk_id] = item
+            elif existing is not None:
+                existing["retrieval_strategy_hits"] = list(existing.get("retrieval_strategy_hits", [])) + list(
+                    item.get("retrieval_strategy_hits", [])
+                )
 
-    return sorted(
+    results = sorted(
         merged.values(),
         key=lambda item: float(item.get("distance") or 999),
     )[:top_k]
+    for item in results:
+        strategies = [
+            str(hit.get("strategy"))
+            for hit in item.get("retrieval_strategy_hits", []) or []
+            if hit.get("strategy")
+        ]
+        item["retrieval_strategies"] = sorted(set(strategies))
+    return results
 
 
 def retrieve_contexts_for_processes(
@@ -139,38 +200,48 @@ def retrieve_contexts_for_processes(
 
     for process in processes:
         process_id = int(process["id"])
-        query = (
-            f"업무명: {process.get('name', '')}\n"
-            f"문제: {process.get('problem', '')}\n"
-            f"현재 업무 흐름: {process.get('current_workflow', '')}\n"
-            f"후보 Agent: {process.get('candidate_agent_name', '')}"
-        )
+        query_plan = build_process_retrieval_queries(process)[:3]
+        process_specific_groups: list[list[dict[str, Any]]] = []
+        company_wide_groups: list[list[dict[str, Any]]] = []
 
-        process_specific_results = search_similar_chunks(
-            db=db,
-            query=query,
-            company_id=company_id,
-            process_id=process_id,
-            top_k=top_k,
-            user_role=user_role,
-        )
+        for query_item in query_plan:
+            query = query_item["query"]
+            strategy = query_item["strategy"]
+            process_specific_groups.append(
+                search_similar_chunks(
+                    db=db,
+                    query=query,
+                    company_id=company_id,
+                    process_id=process_id,
+                    top_k=top_k,
+                    user_role=user_role,
+                    query_strategy=f"{strategy}:process_specific",
+                )
+            )
+            if include_company_wide:
+                company_wide_groups.append(
+                    search_similar_chunks(
+                        db=db,
+                        query=query,
+                        company_id=company_id,
+                        process_id=None,
+                        top_k=top_k,
+                        user_role=user_role,
+                        query_strategy=f"{strategy}:company_wide",
+                    )
+                )
 
         if include_company_wide:
-            company_wide_results = search_similar_chunks(
-                db=db,
-                query=query,
-                company_id=company_id,
-                process_id=None,
-                top_k=top_k,
-                user_role=user_role,
-            )
             contexts[str(process_id)] = merge_chunk_results(
-                process_specific_results,
-                company_wide_results,
+                *process_specific_groups,
+                *company_wide_groups,
                 top_k=top_k,
             )
         else:
-            contexts[str(process_id)] = process_specific_results
+            contexts[str(process_id)] = merge_chunk_results(*process_specific_groups, top_k=top_k)
+
+        for chunk in contexts[str(process_id)]:
+            chunk["retrieval_query_plan"] = query_plan
 
     return contexts
 

@@ -164,6 +164,68 @@ def present_keys(state: dict[str, Any], keys: list[str]) -> list[str]:
     return [key for key in keys if state.get(key) not in (None, {}, [])]
 
 
+def unique_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def selected_tool_trace_for_stage(
+    *,
+    result: dict[str, Any],
+    agent_id: str,
+    executed_nodes: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """현재 Agent stage에서 실제 실행/검증한 tool을 handoff trace용으로 압축한다."""
+
+    node_filter = set(executed_nodes or [])
+    trace: list[dict[str, Any]] = []
+    for call in result.get("agent_tool_calls", []) or []:
+        if call.get("agent_id") != agent_id:
+            continue
+        node_name = str(call.get("node_name") or "")
+        if node_filter and node_name not in node_filter:
+            continue
+        trace.append(
+            {
+                "node_name": node_name,
+                "tool_name": call.get("tool_name"),
+                "tool_purpose": call.get("tool_purpose"),
+                "tool_uses_llm": bool(call.get("tool_uses_llm")),
+                "executes_node": bool(call.get("executes_node")),
+                "selection_reason": call.get("selection_reason"),
+            }
+        )
+    return trace
+
+
+def supervisor_tool_policy_trace(state: dict[str, Any], stage_name: str) -> list[dict[str, Any]]:
+    """Supervisor LLM이 지정한 tool priority도 downstream 감사 로그에 함께 남긴다."""
+
+    delegation = state.get("current_supervisor_delegation") or {}
+    if delegation.get("stage_name") != stage_name:
+        return []
+    trace: list[dict[str, Any]] = []
+    for policy in delegation.get("tool_policy", []) or []:
+        if not isinstance(policy, dict):
+            continue
+        trace.append(
+            {
+                "node_name": policy.get("node_name"),
+                "tool_priorities": policy.get("tool_priorities", []),
+                "autonomy": policy.get("autonomy"),
+                "approval_required": bool(policy.get("approval_required", False)),
+                "instruction": policy.get("instruction"),
+            }
+        )
+    return trace
+
+
 def should_emit_rule(rule: dict[str, Any], state: dict[str, Any]) -> bool:
     condition = rule.get("condition")
     if condition == "replan_request_present":
@@ -173,10 +235,13 @@ def should_emit_rule(rule: dict[str, Any], state: dict[str, Any]) -> bool:
 
 def build_agent_package(agent_id: str, state: dict[str, Any], produced_by: str, executed_nodes: list[str] | None = None) -> dict[str, Any]:
     output_keys = AGENT_OUTPUT_KEYS.get(agent_id, [])
+    selected_tool_trace = selected_tool_trace_for_stage(result=state, agent_id=agent_id, executed_nodes=executed_nodes)
     return {
         "agent_id": agent_id,
         "produced_by": produced_by,
         "executed_nodes": executed_nodes or [],
+        "selected_tools": unique_preserve_order([str(item.get("tool_name") or "") for item in selected_tool_trace]),
+        "selected_tool_trace": selected_tool_trace,
         "output_keys": present_keys(state, output_keys),
         "input_keys_consumed": present_keys(state, AGENT_INPUT_KEYS.get(agent_id, [])),
         "summary": {
@@ -198,13 +263,19 @@ def build_supervisor_step(
     state: dict[str, Any],
     contract: dict[str, Any] | None = None,
     executed_nodes: list[str] | None = None,
+    selected_tool_trace: list[dict[str, Any]] | None = None,
+    supervisor_tool_policy: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    selected_tool_trace = selected_tool_trace or []
     return {
         "supervisor_agent_id": SUPERVISOR_AGENT_ID,
         "supervisor_agent_name": SUPERVISOR_AGENT_NAME,
         "delegated_to": agent_id,
         "delegated_stage": stage_name,
         "delegated_nodes": executed_nodes or [],
+        "selected_tools": unique_preserve_order([str(item.get("tool_name") or "") for item in selected_tool_trace]),
+        "selected_tool_trace": selected_tool_trace,
+        "supervisor_tool_policy": supervisor_tool_policy or [],
         "capability": (contract or {}).get("capability"),
         "task": (contract or {}).get("node_role") or f"Run {agent_id} stage and produce handoff package.",
         "input_keys": present_keys(state, AGENT_INPUT_KEYS.get(agent_id, [])),
@@ -219,8 +290,12 @@ def build_handoffs(
     state: dict[str, Any],
     loop_index: int | None = None,
     executed_nodes: list[str] | None = None,
+    selected_tool_trace: list[dict[str, Any]] | None = None,
+    supervisor_tool_policy: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     handoffs: list[dict[str, Any]] = []
+    selected_tool_trace = selected_tool_trace or []
+    selected_tools = unique_preserve_order([str(item.get("tool_name") or "") for item in selected_tool_trace])
     for rule in HANDOFF_RULES.get(agent_id, []):
         if not should_emit_rule(rule, state):
             continue
@@ -233,6 +308,9 @@ def build_handoffs(
                 "target_nodes": rule.get("target_nodes", []),
                 "payload_keys": present_keys(state, rule.get("payload_keys", [])),
                 "declared_payload_keys": rule.get("payload_keys", []),
+                "selected_tools": selected_tools,
+                "selected_tool_trace": selected_tool_trace,
+                "supervisor_tool_policy": supervisor_tool_policy or [],
                 "handoff_reason": rule.get("reason"),
                 "loop_index": loop_index,
             }
@@ -251,8 +329,26 @@ def attach_agent_flow_outputs(
 ) -> dict[str, Any]:
     merged_state = {**state, **result}
     package_key = NODE_TO_PACKAGE.get(node_name) or AGENT_TO_PACKAGE.get(agent_id)
-    supervisor_step = build_supervisor_step(agent_id, node_name, merged_state, contract, executed_nodes=[node_name])
-    handoffs = build_handoffs(agent_id, node_name, merged_state, loop_index=loop_index, executed_nodes=[node_name])
+    selected_tool_trace = selected_tool_trace_for_stage(result=result, agent_id=agent_id, executed_nodes=[node_name])
+    policy_trace = supervisor_tool_policy_trace(merged_state, node_name)
+    supervisor_step = build_supervisor_step(
+        agent_id,
+        node_name,
+        merged_state,
+        contract,
+        executed_nodes=[node_name],
+        selected_tool_trace=selected_tool_trace,
+        supervisor_tool_policy=policy_trace,
+    )
+    handoffs = build_handoffs(
+        agent_id,
+        node_name,
+        merged_state,
+        loop_index=loop_index,
+        executed_nodes=[node_name],
+        selected_tool_trace=selected_tool_trace,
+        supervisor_tool_policy=policy_trace,
+    )
 
     output = dict(result)
     output["agent_supervisor_steps"] = list(output.get("agent_supervisor_steps", [])) + [supervisor_step]
@@ -274,8 +370,25 @@ def attach_agent_stage_outputs(
 ) -> dict[str, Any]:
     merged_state = {**state, **result}
     package_key = AGENT_TO_PACKAGE.get(agent_id)
-    supervisor_step = build_supervisor_step(agent_id, stage_name, merged_state, executed_nodes=executed_nodes)
-    handoffs = build_handoffs(agent_id, stage_name, merged_state, loop_index=loop_index, executed_nodes=executed_nodes)
+    selected_tool_trace = selected_tool_trace_for_stage(result=result, agent_id=agent_id, executed_nodes=executed_nodes)
+    policy_trace = supervisor_tool_policy_trace(merged_state, stage_name)
+    supervisor_step = build_supervisor_step(
+        agent_id,
+        stage_name,
+        merged_state,
+        executed_nodes=executed_nodes,
+        selected_tool_trace=selected_tool_trace,
+        supervisor_tool_policy=policy_trace,
+    )
+    handoffs = build_handoffs(
+        agent_id,
+        stage_name,
+        merged_state,
+        loop_index=loop_index,
+        executed_nodes=executed_nodes,
+        selected_tool_trace=selected_tool_trace,
+        supervisor_tool_policy=policy_trace,
+    )
 
     output = dict(result)
     output["agent_supervisor_steps"] = list(output.get("agent_supervisor_steps", [])) + [supervisor_step]

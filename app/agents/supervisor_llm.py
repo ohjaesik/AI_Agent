@@ -8,7 +8,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.agents.model_router import SUPERVISOR_AGENT_ID, compact_model_assignment
+from app.agents.model_router import SUPERVISOR_AGENT_ID, compact_model_assignment, select_escalation_model
 from app.agents.registry import get_tool_specs_for_node
 from app.core.config import get_settings
 from app.core.llm import get_chat_model, invoke_chat_with_retry
@@ -118,6 +118,29 @@ def safe_settings_timeout(default: float = 10.0) -> float:
         return default
 
 
+def safe_retry_count(default: int = 2) -> int:
+    try:
+        settings = get_settings()
+        return max(0, int(getattr(settings, "supervisor_llm_retry_count", default) or default))
+    except Exception:
+        return default
+
+
+def safe_retry_timeout_multiplier(default: float = 1.8) -> float:
+    try:
+        settings = get_settings()
+        return max(1.0, float(getattr(settings, "supervisor_llm_retry_timeout_multiplier", default) or default))
+    except Exception:
+        return default
+
+
+def is_timeout_exception(exc: Exception) -> bool:
+    """Provider별 timeout 예외 이름이 달라 문자열까지 함께 본다."""
+
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return "timeout" in text or "timed out" in text or "readtimeout" in text
+
+
 def assigned_work_for_nodes(agent_id: str, internal_nodes: list[str]) -> list[dict[str, Any]]:
     """Supervisor가 볼 수 있는 stage별 tool catalog를 만든다."""
 
@@ -205,6 +228,8 @@ def fallback_supervisor_delegation(
     internal_nodes: list[str],
     reason: str,
     model_assignment: dict[str, Any] | None = None,
+    retry_attempts: list[dict[str, Any]] | None = None,
+    model_retry_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Supervisor LLM이 실패해도 자율 workflow가 멈추지 않게 하는 위임장."""
 
@@ -236,6 +261,8 @@ def fallback_supervisor_delegation(
         "risk_note": reason,
         "reason": reason,
         "model_selection": compact_model_assignment(model_assignment),
+        "retry_attempts": retry_attempts or [],
+        "model_retry_assignments": model_retry_assignments or [],
     }
 
 
@@ -260,6 +287,8 @@ def normalize_supervisor_delegation(
     stage_name: str,
     internal_nodes: list[str],
     model_assignment: dict[str, Any] | None,
+    retry_attempts: list[dict[str, Any]] | None = None,
+    model_retry_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """LLM 응답을 런타임이 믿고 쓸 수 있는 형태로 정규화한다."""
 
@@ -310,6 +339,8 @@ def normalize_supervisor_delegation(
         "route_hint": route_hint,
         "risk_note": str(payload.get("risk_note") or ""),
         "model_selection": compact_model_assignment(model_assignment),
+        "retry_attempts": retry_attempts or [],
+        "model_retry_assignments": model_retry_assignments or [],
     }
 
 
@@ -326,6 +357,8 @@ def run_supervisor_delegation_prompt(
     """상위 Supervisor LLM을 실제로 호출해 Expert Agent 위임장을 만든다."""
 
     agent_id = str(agent_spec.get("id") or stage_name)
+    retry_attempts: list[dict[str, Any]] = []
+    model_retry_assignments: list[dict[str, Any]] = []
     try:
         settings = get_settings()
         if not settings.supervisor_llm_enabled:
@@ -337,54 +370,117 @@ def run_supervisor_delegation_prompt(
                 model_assignment=model_assignment,
             )
 
-        llm = get_chat_model(temperature=0.0, timeout=safe_settings_timeout(), model_assignment=model_assignment)
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", DELEGATION_PROMPT)])
-        messages = prompt.format_messages(
-            workflow_goal=compact_json(
-                {
-                    "supervisor_agent_id": SUPERVISOR_AGENT_ID,
-                    "objective": state.get("user_request"),
-                    "policy": "autonomous multi-agent delivery planning with minimal human approval",
-                    "loop_index": loop_index,
-                },
-                max_chars=1200,
-            ),
-            stage_context=compact_json(
-                {
-                    "stage_name": stage_name,
-                    "delegated_to": agent_id,
-                    "internal_nodes": internal_nodes,
-                    "loop_index": loop_index,
-                },
-                max_chars=1200,
-            ),
-            agent_contract=compact_json(
-                {
-                    "id": agent_spec.get("id"),
-                    "name": agent_spec.get("name"),
-                    "purpose": agent_spec.get("purpose"),
-                    "role_prompt": agent_spec.get("role_prompt"),
-                    "task_instructions": agent_spec.get("task_instructions", []),
-                    "quality_checks": agent_spec.get("quality_checks", []),
-                    "output_contract": agent_spec.get("output_contract", []),
-                    "controls": agent_spec.get("controls", []),
-                    "human_review_required": agent_spec.get("human_review_required", False),
-                },
-                max_chars=5200,
-            ),
-            assigned_work=compact_json(assigned_work_for_nodes(agent_id, internal_nodes), max_chars=5200),
-            handoff_context=compact_json(incoming_handoffs or [], max_chars=3000),
-            state_summary=compact_json(summarize_state_for_supervisor(state), max_chars=3600),
-            model_assignment=compact_json(compact_model_assignment(model_assignment), max_chars=1200),
-        )
-        response = invoke_chat_with_retry(llm, messages, retries=0)
-        payload = extract_json_object(str(response.content))
-        return normalize_supervisor_delegation(
-            payload=payload,
+        attempt_model_assignment = model_assignment
+        max_attempts = safe_retry_count() + 1
+        base_timeout = safe_settings_timeout()
+        timeout_multiplier = safe_retry_timeout_multiplier()
+
+        for attempt_index in range(1, max_attempts + 1):
+            timeout_seconds = round(base_timeout * (timeout_multiplier ** (attempt_index - 1)), 3)
+            messages = prompt.format_messages(
+                workflow_goal=compact_json(
+                    {
+                        "supervisor_agent_id": SUPERVISOR_AGENT_ID,
+                        "objective": state.get("user_request"),
+                        "policy": "autonomous multi-agent delivery planning with minimal human approval",
+                        "loop_index": loop_index,
+                        "retry_attempt": attempt_index,
+                    },
+                    max_chars=1200,
+                ),
+                stage_context=compact_json(
+                    {
+                        "stage_name": stage_name,
+                        "delegated_to": agent_id,
+                        "internal_nodes": internal_nodes,
+                        "loop_index": loop_index,
+                    },
+                    max_chars=1200,
+                ),
+                agent_contract=compact_json(
+                    {
+                        "id": agent_spec.get("id"),
+                        "name": agent_spec.get("name"),
+                        "purpose": agent_spec.get("purpose"),
+                        "role_prompt": agent_spec.get("role_prompt"),
+                        "task_instructions": agent_spec.get("task_instructions", []),
+                        "quality_checks": agent_spec.get("quality_checks", []),
+                        "output_contract": agent_spec.get("output_contract", []),
+                        "controls": agent_spec.get("controls", []),
+                        "human_review_required": agent_spec.get("human_review_required", False),
+                    },
+                    max_chars=5200,
+                ),
+                assigned_work=compact_json(assigned_work_for_nodes(agent_id, internal_nodes), max_chars=5200),
+                handoff_context=compact_json(incoming_handoffs or [], max_chars=3000),
+                state_summary=compact_json(summarize_state_for_supervisor(state), max_chars=3600),
+                model_assignment=compact_json(compact_model_assignment(attempt_model_assignment), max_chars=1200),
+            )
+
+            try:
+                llm = get_chat_model(temperature=0.0, timeout=timeout_seconds, model_assignment=attempt_model_assignment)
+                response = invoke_chat_with_retry(llm, messages, retries=0)
+                payload = extract_json_object(str(response.content))
+                retry_attempts.append(
+                    {
+                        "attempt": attempt_index,
+                        "status": "success",
+                        "timeout_seconds": timeout_seconds,
+                        "model_selection": compact_model_assignment(attempt_model_assignment),
+                    }
+                )
+                return normalize_supervisor_delegation(
+                    payload=payload,
+                    agent_id=agent_id,
+                    stage_name=stage_name,
+                    internal_nodes=internal_nodes,
+                    model_assignment=attempt_model_assignment,
+                    retry_attempts=retry_attempts,
+                    model_retry_assignments=model_retry_assignments,
+                )
+            except Exception as exc:
+                error_text = f"{type(exc).__name__}: {exc}"
+                timed_out = is_timeout_exception(exc)
+                retry_attempts.append(
+                    {
+                        "attempt": attempt_index,
+                        "status": "timeout" if timed_out else "failed",
+                        "timeout_seconds": timeout_seconds,
+                        "model_selection": compact_model_assignment(attempt_model_assignment),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    }
+                )
+                if not timed_out or attempt_index >= max_attempts:
+                    return fallback_supervisor_delegation(
+                        agent_id=agent_id,
+                        stage_name=stage_name,
+                        internal_nodes=internal_nodes,
+                        reason=f"Supervisor LLM delegation failed: {error_text}",
+                        model_assignment=attempt_model_assignment,
+                        retry_attempts=retry_attempts,
+                        model_retry_assignments=model_retry_assignments,
+                    )
+
+                attempt_model_assignment = select_escalation_model(
+                    agent_id=SUPERVISOR_AGENT_ID,
+                    stage_name=stage_name,
+                    call_kind="supervisor_delegation",
+                    state=state,
+                    previous_assignment=attempt_model_assignment,
+                    failure_reason=error_text,
+                )
+                model_retry_assignments.append(attempt_model_assignment)
+
+        return fallback_supervisor_delegation(
             agent_id=agent_id,
             stage_name=stage_name,
             internal_nodes=internal_nodes,
-            model_assignment=model_assignment,
+            reason="Supervisor LLM retry loop ended without a response.",
+            model_assignment=attempt_model_assignment,
+            retry_attempts=retry_attempts,
+            model_retry_assignments=model_retry_assignments,
         )
     except Exception as exc:
         return fallback_supervisor_delegation(
@@ -393,6 +489,8 @@ def run_supervisor_delegation_prompt(
             internal_nodes=internal_nodes,
             reason=f"Supervisor LLM delegation failed: {type(exc).__name__}: {exc}",
             model_assignment=model_assignment,
+            retry_attempts=retry_attempts,
+            model_retry_assignments=model_retry_assignments,
         )
 
 
@@ -417,5 +515,6 @@ def build_supervisor_llm_call_record(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "risk_note": payload.get("risk_note"),
         "model_selection": payload.get("model_selection", {}),
+        "retry_attempts": payload.get("retry_attempts", []),
+        "model_retry_assignments": payload.get("model_retry_assignments", []),
     }
-

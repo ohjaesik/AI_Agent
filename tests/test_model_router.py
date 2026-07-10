@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.agents.model_router import SUPERVISOR_AGENT_ID, select_agent_model
+from app.agents.model_router import SUPERVISOR_AGENT_ID, select_agent_model, select_escalation_model
 from app.core.config import get_settings
 
 
@@ -28,6 +28,8 @@ def test_supervisor_uses_configured_upper_model(monkeypatch):
     assert assignment["provider"] == "openai"
     assert assignment["model"] == "gpt-4.1"
     assert assignment["selected_by"] == "supervisor_fixed_upper_model"
+    assert assignment["cost_calculation"]["formula"]
+    assert assignment["cost_calculation"]["total_cost_usd"] == assignment["estimated_cost_usd"]
 
 
 def test_router_falls_back_to_vllm_when_external_providers_are_disabled(monkeypatch):
@@ -74,3 +76,25 @@ def test_router_prefers_stronger_model_for_large_critic_workload(monkeypatch):
     assert assignment["selected_by"] == "supervisor_cost_performance_formula"
     assert assignment["workload_metrics"]["required_quality_score"] >= 0.75
 
+
+def test_timeout_escalation_upgrades_fast_model(monkeypatch):
+    reset_settings(monkeypatch)
+
+    previous = select_agent_model(
+        agent_id="context_evidence_agent",
+        stage_name="context_evidence_agent",
+        call_kind="agent_command",
+        state={"business_processes": [{"id": 1, "name": "test"}]},
+    )
+    escalated = select_escalation_model(
+        agent_id="context_evidence_agent",
+        stage_name="context_evidence_agent",
+        call_kind="agent_command",
+        state={"business_processes": [{"id": 1, "name": "test"}]},
+        previous_assignment=previous,
+        failure_reason="APITimeoutError: Request timed out.",
+    )
+
+    assert escalated["selected_by"] in {"timeout_escalated_model", "timeout_retry_same_upper_model"}
+    assert escalated["cost_calculation"]["total_cost_usd"] == escalated["estimated_cost_usd"]
+    assert escalated["selected_profile"]["quality_score"] >= previous["selected_profile"]["quality_score"]

@@ -165,9 +165,14 @@ def retrieve_context_node(state: AXPlannerState) -> dict[str, Any]:
 
         evidence_items = dedupe_evidence(evidence_items)
         used_sources = build_used_sources(evidence_items)
+        retrieval_query_plan = {
+            process_id: (chunks[0].get("retrieval_query_plan") if chunks else [])
+            for process_id, chunks in contexts.items()
+        }
 
         return {
             "retrieved_contexts": contexts,
+            "retrieval_query_plan": retrieval_query_plan,
             "evidence_items": evidence_items,
             "used_sources": used_sources,
             "audit_logs": append_audit(
@@ -178,6 +183,10 @@ def retrieve_context_node(state: AXPlannerState) -> dict[str, Any]:
                     "context_groups": len(contexts),
                     "evidence_count": len(evidence_items),
                     "used_source_count": len(used_sources),
+                    "query_strategy_count_per_process": {
+                        process_id: len(plan or [])
+                        for process_id, plan in retrieval_query_plan.items()
+                    },
                 },
             ),
         }

@@ -72,6 +72,10 @@ def rag_chunk_to_evidence(
             "contains_sensitive_info": chunk.get("contains_sensitive_info"),
             "distance": chunk.get("distance"),
             "similarity": chunk.get("similarity"),
+            "retrieval_strategy": chunk.get("retrieval_strategy"),
+            "retrieval_strategies": chunk.get("retrieval_strategies", []),
+            "retrieval_strategy_hits": chunk.get("retrieval_strategy_hits", []),
+            "retrieval_query_plan": chunk.get("retrieval_query_plan", []),
         },
     }
 

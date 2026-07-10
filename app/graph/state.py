@@ -54,6 +54,7 @@ class AXPlannerState(TypedDict, total=False):
 
     # RAG / Evidence
     retrieved_contexts: dict[str, list[dict[str, Any]]]
+    retrieval_query_plan: dict[str, list[dict[str, Any]]]
     evidence_items: list[dict[str, Any]]
     used_sources: list[dict[str, Any]]
 

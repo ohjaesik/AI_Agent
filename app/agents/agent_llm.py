@@ -8,7 +8,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from app.agents.model_router import compact_model_assignment
+from app.agents.model_router import compact_model_assignment, select_escalation_model
 from app.agents.registry import get_tool_specs_for_node
 from app.core.config import get_settings
 from app.core.llm import get_chat_model, invoke_chat_with_retry
@@ -138,6 +138,115 @@ def safe_settings_timeout(default: float = 8.0) -> float:
         return default
 
 
+def safe_retry_count(default: int = 1) -> int:
+    try:
+        settings = get_settings()
+        return max(0, int(getattr(settings, "agent_llm_retry_count", default) or default))
+    except Exception:
+        return default
+
+
+def safe_retry_timeout_multiplier(default: float = 1.6) -> float:
+    try:
+        settings = get_settings()
+        return max(1.0, float(getattr(settings, "agent_llm_retry_timeout_multiplier", default) or default))
+    except Exception:
+        return default
+
+
+def is_timeout_exception(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return "timeout" in text or "timed out" in text or "readtimeout" in text
+
+
+class AgentLLMInvocationError(Exception):
+    """LLM 호출 실패와 retry trace를 함께 운반한다."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_attempts: list[dict[str, Any]],
+        model_retry_assignments: list[dict[str, Any]],
+        final_model_assignment: dict[str, Any] | None,
+    ) -> None:
+        super().__init__(message)
+        self.retry_attempts = retry_attempts
+        self.model_retry_assignments = model_retry_assignments
+        self.final_model_assignment = final_model_assignment
+
+
+def invoke_chat_with_timeout_escalation(
+    *,
+    messages: list[Any],
+    model_assignment: dict[str, Any] | None,
+    agent_id: str,
+    stage_name: str,
+    call_kind: str,
+    state: dict[str, Any],
+) -> tuple[Any, dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
+    """timeout이면 모델을 상향/대체해 재시도하고 모든 시도를 trace로 반환한다."""
+
+    retry_attempts: list[dict[str, Any]] = []
+    model_retry_assignments: list[dict[str, Any]] = []
+    attempt_model_assignment = model_assignment
+    max_attempts = safe_retry_count() + 1
+    base_timeout = safe_settings_timeout()
+    timeout_multiplier = safe_retry_timeout_multiplier()
+
+    for attempt_index in range(1, max_attempts + 1):
+        timeout_seconds = round(base_timeout * (timeout_multiplier ** (attempt_index - 1)), 3)
+        try:
+            llm = get_chat_model(temperature=0.0, timeout=timeout_seconds, model_assignment=attempt_model_assignment)
+            response = invoke_chat_with_retry(llm, messages, retries=0)
+            retry_attempts.append(
+                {
+                    "attempt": attempt_index,
+                    "status": "success",
+                    "timeout_seconds": timeout_seconds,
+                    "model_selection": compact_model_assignment(attempt_model_assignment),
+                }
+            )
+            return response, attempt_model_assignment, model_retry_assignments, retry_attempts
+        except Exception as exc:
+            error_text = f"{type(exc).__name__}: {exc}"
+            timed_out = is_timeout_exception(exc)
+            retry_attempts.append(
+                {
+                    "attempt": attempt_index,
+                    "status": "timeout" if timed_out else "failed",
+                    "timeout_seconds": timeout_seconds,
+                    "model_selection": compact_model_assignment(attempt_model_assignment),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+            if not timed_out or attempt_index >= max_attempts:
+                raise AgentLLMInvocationError(
+                    error_text,
+                    retry_attempts=retry_attempts,
+                    model_retry_assignments=model_retry_assignments,
+                    final_model_assignment=attempt_model_assignment,
+                ) from exc
+
+            attempt_model_assignment = select_escalation_model(
+                agent_id=agent_id,
+                stage_name=stage_name,
+                call_kind=call_kind,
+                state=state,
+                previous_assignment=attempt_model_assignment,
+                failure_reason=error_text,
+            )
+            model_retry_assignments.append(attempt_model_assignment)
+
+    raise AgentLLMInvocationError(
+        "Agent LLM retry loop ended without a response.",
+        retry_attempts=retry_attempts,
+        model_retry_assignments=model_retry_assignments,
+        final_model_assignment=attempt_model_assignment,
+    )
+
+
 def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
     return {
         "project_id": state.get("project_id"),
@@ -212,6 +321,8 @@ def fallback_agent_command(
     internal_nodes: list[str],
     reason: str,
     model_assignment: dict[str, Any] | None = None,
+    retry_attempts: list[dict[str, Any]] | None = None,
+    model_retry_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "agent_id": agent_id,
@@ -234,6 +345,8 @@ def fallback_agent_command(
         "risk_note": reason,
         "reason": reason,
         "model_selection": compact_model_assignment(model_assignment),
+        "retry_attempts": retry_attempts or [],
+        "model_retry_assignments": model_retry_assignments or [],
     }
 
 
@@ -250,9 +363,6 @@ def run_agent_command_prompt(
 ) -> dict[str, Any]:
     agent_id = str(agent_spec.get("id") or stage_name)
     try:
-        # Supervisor 모델 라우터가 선택한 provider/model을 그대로 사용한다.
-        # 선택 정보는 trace에 남기되, API key 같은 비밀값은 포함하지 않는다.
-        llm = get_chat_model(temperature=0.0, timeout=safe_settings_timeout(), model_assignment=model_assignment)
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", COMMAND_PROMPT)])
         messages = prompt.format_messages(
             delegation=compact_json(
@@ -281,7 +391,14 @@ def run_agent_command_prompt(
             handoff_context=compact_json(incoming_handoffs or [], max_chars=3000),
             state_summary=compact_json(summarize_state(state), max_chars=3000),
         )
-        response = invoke_chat_with_retry(llm, messages, retries=0)
+        response, final_model_assignment, retry_assignments, retry_attempts = invoke_chat_with_timeout_escalation(
+            messages=messages,
+            model_assignment=model_assignment,
+            agent_id=agent_id,
+            stage_name=stage_name,
+            call_kind="agent_command",
+            state=state,
+        )
         payload = extract_json_object(str(response.content))
         payload["node_order"] = sanitize_node_order(payload.get("node_order"), internal_nodes)
         return {
@@ -290,9 +407,21 @@ def run_agent_command_prompt(
             "llm_used": True,
             "mode": "expert_agent_llm_command",
             "loop_index": loop_index,
-            "model_selection": compact_model_assignment(model_assignment),
+            "model_selection": compact_model_assignment(final_model_assignment),
+            "retry_attempts": retry_attempts,
+            "model_retry_assignments": retry_assignments,
             **payload,
         }
+    except AgentLLMInvocationError as exc:
+        return fallback_agent_command(
+            agent_id=agent_id,
+            stage_name=stage_name,
+            internal_nodes=internal_nodes,
+            reason=f"Agent LLM command failed: {exc}",
+            model_assignment=exc.final_model_assignment,
+            retry_attempts=exc.retry_attempts,
+            model_retry_assignments=exc.model_retry_assignments,
+        )
     except Exception as exc:
         return fallback_agent_command(
             agent_id=agent_id,
@@ -309,6 +438,8 @@ def fallback_agent_reflection(
     stage_name: str,
     reason: str,
     model_assignment: dict[str, Any] | None = None,
+    retry_attempts: list[dict[str, Any]] | None = None,
+    model_retry_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "agent_id": agent_id,
@@ -322,6 +453,8 @@ def fallback_agent_reflection(
         "quality_checks": ["LLM reflection unavailable; deterministic handoff continues."],
         "risk_note": reason,
         "model_selection": compact_model_assignment(model_assignment),
+        "retry_attempts": retry_attempts or [],
+        "model_retry_assignments": model_retry_assignments or [],
     }
 
 
@@ -339,9 +472,6 @@ def run_agent_reflection_prompt(
 ) -> dict[str, Any]:
     agent_id = str(agent_spec.get("id") or stage_name)
     try:
-        # Reflection도 command와 같은 라우터 정책을 따른다. 다만 result가
-        # 포함된 뒤 다시 계산하면 산출물 크기까지 반영할 수 있다.
-        llm = get_chat_model(temperature=0.0, timeout=safe_settings_timeout(), model_assignment=model_assignment)
         prompt = ChatPromptTemplate.from_messages([("system", REFLECT_SYSTEM_PROMPT), ("human", REFLECT_PROMPT)])
         messages = prompt.format_messages(
             delegation=compact_json(
@@ -370,7 +500,14 @@ def run_agent_reflection_prompt(
             result_summary=compact_json(summarize_result(result), max_chars=3600),
             available_output_keys=compact_json(sorted(k for k, v in {**state, **result}.items() if v not in (None, {}, [])), max_chars=2500),
         )
-        response = invoke_chat_with_retry(llm, messages, retries=0)
+        response, final_model_assignment, retry_assignments, retry_attempts = invoke_chat_with_timeout_escalation(
+            messages=messages,
+            model_assignment=model_assignment,
+            agent_id=agent_id,
+            stage_name=stage_name,
+            call_kind="agent_reflection",
+            state={**state, **result},
+        )
         payload = extract_json_object(str(response.content))
         return {
             "agent_id": agent_id,
@@ -378,9 +515,20 @@ def run_agent_reflection_prompt(
             "llm_used": True,
             "mode": "expert_agent_llm_reflection",
             "loop_index": loop_index,
-            "model_selection": compact_model_assignment(model_assignment),
+            "model_selection": compact_model_assignment(final_model_assignment),
+            "retry_attempts": retry_attempts,
+            "model_retry_assignments": retry_assignments,
             **payload,
         }
+    except AgentLLMInvocationError as exc:
+        return fallback_agent_reflection(
+            agent_id=agent_id,
+            stage_name=stage_name,
+            reason=f"Agent LLM reflection failed: {exc}",
+            model_assignment=exc.final_model_assignment,
+            retry_attempts=exc.retry_attempts,
+            model_retry_assignments=exc.model_retry_assignments,
+        )
     except Exception as exc:
         return fallback_agent_reflection(
             agent_id=agent_id,
@@ -405,4 +553,6 @@ def build_agent_llm_call_record(kind: str, payload: dict[str, Any]) -> dict[str,
         "handoff_plan": payload.get("handoff_plan", {}),
         "risk_note": payload.get("risk_note"),
         "model_selection": payload.get("model_selection", {}),
+        "retry_attempts": payload.get("retry_attempts", []),
+        "model_retry_assignments": payload.get("model_retry_assignments", []),
     }

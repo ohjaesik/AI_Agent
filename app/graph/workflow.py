@@ -166,6 +166,7 @@ def expert_agent_stage(stage_name: str):
             )
             supervisor_delegation["loop_index"] = stage_loop_index
             supervisor_call_record = build_supervisor_llm_call_record(supervisor_delegation)
+            supervisor_retry_assignments = list(supervisor_delegation.get("model_retry_assignments", []) or [])
 
             command_model_assignment = select_agent_model(
                 agent_id=agent_id,
@@ -176,9 +177,11 @@ def expert_agent_stage(stage_name: str):
             stage_result = merge_stage_result(
                 stage_result,
                 {
-                    "agent_model_decisions": [supervisor_assignment, command_model_assignment],
+                    "agent_model_decisions": [supervisor_assignment, *supervisor_retry_assignments, command_model_assignment],
                     "agent_supervisor_delegations": [supervisor_delegation],
                     "agent_llm_calls": [supervisor_call_record],
+                    "current_supervisor_delegation": supervisor_delegation,
+                    "supervisor_approval_policy": supervisor_delegation.get("human_approval_policy", {}),
                 },
             )
             stage_state = {
@@ -188,7 +191,7 @@ def expert_agent_stage(stage_name: str):
                 "supervisor_approval_policy": supervisor_delegation.get("human_approval_policy", {}),
                 "current_agent_model_assignment": command_model_assignment,
                 "agent_model_decisions": list(stage_state.get("agent_model_decisions", []))
-                + [supervisor_assignment, command_model_assignment],
+                + [supervisor_assignment, *supervisor_retry_assignments, command_model_assignment],
                 "agent_supervisor_delegations": list(stage_state.get("agent_supervisor_delegations", [])) + [supervisor_delegation],
                 "agent_llm_calls": list(stage_state.get("agent_llm_calls", [])) + [supervisor_call_record],
             }
@@ -204,9 +207,11 @@ def expert_agent_stage(stage_name: str):
                 supervisor_delegation=supervisor_delegation,
             )
             command_record = build_agent_llm_call_record("agent_command", command)
+            command_retry_assignments = list(command.get("model_retry_assignments", []) or [])
             stage_result = merge_stage_result(
                 stage_result,
                 {
+                    "agent_model_decisions": command_retry_assignments,
                     "agent_llm_calls": [command_record],
                     "agent_commands": [command],
                 },
@@ -214,6 +219,7 @@ def expert_agent_stage(stage_name: str):
             stage_state = {
                 **stage_state,
                 "current_agent_command": command,
+                "agent_model_decisions": list(stage_state.get("agent_model_decisions", [])) + command_retry_assignments,
                 "agent_llm_calls": list(stage_state.get("agent_llm_calls", [])) + [command_record],
             }
 
@@ -257,9 +263,11 @@ def expert_agent_stage(stage_name: str):
                 supervisor_delegation=supervisor_delegation,
             )
             reflection_record = build_agent_llm_call_record("agent_reflection", reflection)
+            reflection_retry_assignments = list(reflection.get("model_retry_assignments", []) or [])
             stage_result = merge_stage_result(
                 stage_result,
                 {
+                    "agent_model_decisions": reflection_retry_assignments,
                     "agent_llm_calls": [reflection_record],
                     "agent_commands": [reflection],
                 },
@@ -267,6 +275,7 @@ def expert_agent_stage(stage_name: str):
             stage_state = {
                 **stage_state,
                 "current_agent_reflection": reflection,
+                "agent_model_decisions": list(stage_state.get("agent_model_decisions", [])) + reflection_retry_assignments,
                 "agent_llm_calls": list(stage_state.get("agent_llm_calls", [])) + [reflection_record],
             }
 

@@ -45,6 +45,7 @@ def supervisor_delegated_node(node_name: str, node_fn):
         )
         supervisor_delegation["loop_index"] = 1
         supervisor_call_record = build_supervisor_llm_call_record(supervisor_delegation)
+        supervisor_retry_assignments = list(supervisor_delegation.get("model_retry_assignments", []) or [])
         delegated_state = {
             **state,
             "current_supervisor_model_assignment": supervisor_assignment,
@@ -53,7 +54,10 @@ def supervisor_delegated_node(node_name: str, node_fn):
         }
 
         result = node_runner(delegated_state)
-        result["agent_model_decisions"] = list(result.get("agent_model_decisions", [])) + [supervisor_assignment]
+        result["agent_model_decisions"] = list(result.get("agent_model_decisions", [])) + [
+            supervisor_assignment,
+            *supervisor_retry_assignments,
+        ]
         result["agent_supervisor_delegations"] = list(result.get("agent_supervisor_delegations", [])) + [supervisor_delegation]
         result["agent_llm_calls"] = list(result.get("agent_llm_calls", [])) + [supervisor_call_record]
         return attach_agent_flow_outputs(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.agents.expert_executor import expert_executed_node
-from app.agents.handoff import AGENT_TO_PACKAGE, HANDOFF_RULES
+from app.agents.handoff import AGENT_TO_PACKAGE, HANDOFF_RULES, attach_agent_stage_outputs
 from app.agents.registry import (
     AGENT_REGISTRY,
     MAX_TOOL_CANDIDATES_PER_NODE,
@@ -15,6 +15,7 @@ from app.agents.registry import (
 from app.agents.runtime import build_agent_contract, get_agent_binding_for_node, get_agent_id_for_node
 from app.agents.tool_guard import AgentToolPermissionError, assert_tools_allowed, assert_tool_spec_allowed
 from app.graph.workflow import AGENT_STAGE_NODES, AGENT_STAGE_TO_AGENT_ID
+from app.rag.retriever import build_process_retrieval_queries
 
 
 EXPECTED_AGENT_IDS = {
@@ -192,6 +193,69 @@ def test_expert_executor_runs_assigned_tool_loop() -> None:
     ]
     assert result["agent_decisions"][0]["phase"] == "agent_tool_loop"
     assert result["agent_decisions"][-1]["phase"] == "post_tool_observation"
+
+
+def test_retrieval_query_builder_creates_three_search_strategies() -> None:
+    queries = build_process_retrieval_queries(
+        {
+            "id": 1,
+            "name": "계약 검토",
+            "problem": "반복 검토와 누락 확인이 오래 걸림",
+            "current_workflow": "담당자가 계약서와 내부 규정을 대조한다.",
+            "candidate_agent_name": "Contract Review Agent",
+            "target_user": "법무팀",
+        }
+    )
+
+    assert [item["strategy"] for item in queries] == [
+        "workflow_full_context",
+        "problem_and_user_intent",
+        "automation_evidence_keywords",
+    ]
+    assert all(item["query"] for item in queries)
+
+
+def test_handoff_records_selected_tools_from_stage_result() -> None:
+    result = attach_agent_stage_outputs(
+        state={
+            "business_processes": [{"id": 1}],
+            "retrieved_contexts": {"1": [{"chunk_id": 10}]},
+            "evidence_items": [{"evidence_id": "rag-10"}],
+            "current_supervisor_delegation": {
+                "stage_name": "context_evidence_agent",
+                "tool_policy": [
+                    {
+                        "node_name": "retrieve_context",
+                        "tool_priorities": ["rag_retriever", "evidence_gap_detector"],
+                        "autonomy": "auto_execute",
+                    }
+                ],
+            },
+        },
+        result={
+            "agent_tool_calls": [
+                {
+                    "node_name": "retrieve_context",
+                    "agent_id": "context_evidence_agent",
+                    "tool_name": "rag_retriever",
+                    "tool_purpose": "execute",
+                    "tool_uses_llm": False,
+                    "executes_node": True,
+                    "selection_reason": "primary evidence retrieval",
+                }
+            ]
+        },
+        agent_id="context_evidence_agent",
+        stage_name="context_evidence_agent",
+        executed_nodes=["retrieve_context"],
+        loop_index=1,
+    )
+
+    assert result["agent_handoffs"][0]["selected_tools"] == ["rag_retriever"]
+    assert result["agent_handoffs"][0]["supervisor_tool_policy"][0]["tool_priorities"] == [
+        "rag_retriever",
+        "evidence_gap_detector",
+    ]
 
 
 def test_evaluation_critic_distinguishes_insufficient_review_and_recommended() -> None:

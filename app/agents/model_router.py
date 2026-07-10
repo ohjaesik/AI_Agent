@@ -50,6 +50,7 @@ WORKLOAD_STATE_KEYS = [
     "business_processes",
     "documents",
     "retrieved_contexts",
+    "retrieval_query_plan",
     "evidence_items",
     "used_sources",
     "process_analysis",
@@ -330,12 +331,26 @@ def build_model_profiles() -> list[ModelProfile]:
     ]
 
 
+def estimate_model_cost_breakdown(profile: ModelProfile, metrics: WorkloadMetrics) -> dict[str, Any]:
+    """모델 비용 산식을 trace에 남길 수 있게 입력/출력 비용을 분리한다."""
+
+    input_cost = (metrics.estimated_input_tokens / 1_000_000) * profile.input_cost_per_million
+    output_cost = (metrics.estimated_output_tokens / 1_000_000) * profile.output_cost_per_million
+    total_cost = input_cost + output_cost
+    return {
+        "formula": "(input_tokens / 1_000_000 * input_cost_per_million) + (output_tokens / 1_000_000 * output_cost_per_million)",
+        "estimated_input_tokens": metrics.estimated_input_tokens,
+        "estimated_output_tokens": metrics.estimated_output_tokens,
+        "input_cost_per_million": profile.input_cost_per_million,
+        "output_cost_per_million": profile.output_cost_per_million,
+        "input_cost_usd": round(input_cost, 6),
+        "output_cost_usd": round(output_cost, 6),
+        "total_cost_usd": round(total_cost, 6),
+    }
+
+
 def estimate_model_cost(profile: ModelProfile, metrics: WorkloadMetrics) -> float:
-    return round(
-        (metrics.estimated_input_tokens / 1_000_000) * profile.input_cost_per_million
-        + (metrics.estimated_output_tokens / 1_000_000) * profile.output_cost_per_million,
-        6,
-    )
+    return float(estimate_model_cost_breakdown(profile, metrics)["total_cost_usd"])
 
 
 def score_model(profile: ModelProfile, metrics: WorkloadMetrics, max_candidate_cost: float, cost_sensitivity: float) -> dict[str, Any]:
@@ -383,6 +398,7 @@ def score_model(profile: ModelProfile, metrics: WorkloadMetrics, max_candidate_c
         "utility": round(utility, 6),
         "penalty": round(penalty, 6),
         "estimated_cost_usd": estimated_cost,
+        "cost_calculation": estimate_model_cost_breakdown(profile, metrics),
         "normalized_cost": round(normalized_cost, 6),
         "context_fit": round(context_fit, 4),
         "quality_gap": round(quality_gap, 4),
@@ -415,6 +431,128 @@ def choose_supervisor_profile(profiles: list[ModelProfile]) -> tuple[ModelProfil
     # 이 경로는 보통 오지 않는다. vLLM 후보가 항상 만들어지기 때문이다.
     fallback = profiles[0]
     return fallback, "사용 가능한 모델 후보가 없어 vLLM fallback을 사용한다."
+
+
+def find_profile_for_assignment(profiles: list[ModelProfile], assignment: dict[str, Any] | None) -> ModelProfile | None:
+    """이전 model_assignment에 해당하는 후보 profile을 찾는다."""
+
+    if not assignment:
+        return None
+    provider = str(assignment.get("provider") or "").lower()
+    model = str(assignment.get("model") or "")
+    for profile in profiles:
+        if profile.provider == provider and profile.model == model:
+            return profile
+    return None
+
+
+def select_escalation_model(
+    *,
+    agent_id: str,
+    stage_name: str,
+    call_kind: str,
+    state: dict[str, Any] | None = None,
+    previous_assignment: dict[str, Any] | None = None,
+    failure_reason: str = "",
+) -> dict[str, Any]:
+    """timeout 이후 재시도에 사용할 상향 모델을 고른다.
+
+    일반 Expert Agent는 이전보다 품질 점수가 높은 후보를 우선 선택한다.
+    Supervisor는 이미 상위 모델일 수 있으므로, 같은 모델 반복 대신 가능한
+    다른 고품질 provider를 먼저 보고, 없으면 같은 상위 모델을 더 긴 timeout으로
+    재시도하도록 같은 assignment를 반환한다.
+    """
+
+    settings = get_settings()
+    state = state or {}
+    profiles = build_model_profiles()
+    metrics = estimate_workload(
+        agent_id=agent_id,
+        stage_name=stage_name,
+        call_kind=call_kind,
+        state=state,
+        target_seconds=settings.model_router_target_seconds,
+    )
+    available_profiles = [profile for profile in profiles if profile.available] or [profiles[0]]
+    previous_profile = find_profile_for_assignment(available_profiles, previous_assignment)
+    previous_quality = previous_profile.quality_score if previous_profile else 0.0
+    previous_provider = previous_profile.provider if previous_profile else ""
+    previous_model = previous_profile.model if previous_profile else ""
+
+    total_tokens = metrics.estimated_input_tokens + metrics.estimated_output_tokens
+    fitting_profiles = [
+        profile
+        for profile in available_profiles
+        if total_tokens <= profile.context_window_tokens
+    ] or available_profiles
+
+    upgraded_profiles = [
+        profile
+        for profile in fitting_profiles
+        if profile.quality_score > previous_quality + 0.01
+        and not (profile.provider == previous_provider and profile.model == previous_model)
+    ]
+
+    if agent_id == SUPERVISOR_AGENT_ID and not upgraded_profiles:
+        # Supervisor가 이미 최고 모델이면 같은 등급의 다른 provider를 우선 시도한다.
+        upgraded_profiles = [
+            profile
+            for profile in fitting_profiles
+            if profile.tier == "high"
+            and not (profile.provider == previous_provider and profile.model == previous_model)
+        ]
+
+    if not upgraded_profiles:
+        upgraded_profiles = [
+            profile
+            for profile in fitting_profiles
+            if not (profile.provider == previous_provider and profile.model == previous_model)
+        ]
+
+    if upgraded_profiles:
+        chosen_profile = sorted(
+            upgraded_profiles,
+            key=lambda item: (item.quality_score, item.speed_score, item.context_window_tokens),
+            reverse=True,
+        )[0]
+        selected_by = "timeout_escalated_model"
+        reason = (
+            "이전 LLM 호출이 timeout되어 더 높은 품질 또는 다른 고품질 provider 모델로 재시도한다. "
+            f"실패 원인: {failure_reason}"
+        )
+    else:
+        chosen_profile = previous_profile or sorted(fitting_profiles, key=lambda item: item.quality_score, reverse=True)[0]
+        selected_by = "timeout_retry_same_upper_model"
+        reason = (
+            "사용 가능한 더 높은 모델이 없어 같은 상위 모델을 더 긴 timeout으로 재시도한다. "
+            f"실패 원인: {failure_reason}"
+        )
+
+    return build_assignment(
+        agent_id=agent_id,
+        stage_name=stage_name,
+        call_kind=call_kind,
+        profile=chosen_profile,
+        metrics=metrics,
+        selected_by=selected_by,
+        reason=reason,
+        score_cards=[
+            {
+                "provider": profile.provider,
+                "model": profile.model,
+                "tier": profile.tier,
+                "quality_score": profile.quality_score,
+                "speed_score": profile.speed_score,
+                "estimated_cost_usd": estimate_model_cost(profile, metrics),
+                "cost_calculation": estimate_model_cost_breakdown(profile, metrics),
+            }
+            for profile in sorted(
+                fitting_profiles,
+                key=lambda item: (item.quality_score, item.speed_score),
+                reverse=True,
+            )[:6]
+        ],
+    )
 
 
 def select_agent_model(
@@ -532,6 +670,7 @@ def build_assignment(
         "workload_metrics": metrics.to_dict(),
         "selected_profile": profile.to_public_dict(),
         "estimated_cost_usd": estimate_model_cost(profile, metrics),
+        "cost_calculation": estimate_model_cost_breakdown(profile, metrics),
         "score_cards": score_cards,
     }
 
@@ -547,7 +686,7 @@ def compact_model_assignment(assignment: dict[str, Any] | None) -> dict[str, Any
         "tier": assignment.get("tier"),
         "selected_by": assignment.get("selected_by"),
         "estimated_cost_usd": assignment.get("estimated_cost_usd"),
+        "cost_calculation": assignment.get("cost_calculation", {}),
         "reason": assignment.get("reason"),
         "workload_metrics": assignment.get("workload_metrics", {}),
     }
-

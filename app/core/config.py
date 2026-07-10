@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     supervisor_model_name: str = Field(default="gpt-4.1", alias="SUPERVISOR_MODEL_NAME")
     supervisor_llm_enabled: bool = Field(default=True, alias="SUPERVISOR_LLM_ENABLED")
     supervisor_minimal_human_approval: bool = Field(default=True, alias="SUPERVISOR_MINIMAL_HUMAN_APPROVAL")
+    supervisor_llm_retry_count: int = Field(default=2, alias="SUPERVISOR_LLM_RETRY_COUNT")
+    supervisor_llm_retry_timeout_multiplier: float = Field(default=1.8, alias="SUPERVISOR_LLM_RETRY_TIMEOUT_MULTIPLIER")
+    agent_llm_timeout_seconds: float = Field(default=10.0, alias="AGENT_LLM_TIMEOUT_SECONDS")
+    agent_llm_retry_count: int = Field(default=1, alias="AGENT_LLM_RETRY_COUNT")
+    agent_llm_retry_timeout_multiplier: float = Field(default=1.6, alias="AGENT_LLM_RETRY_TIMEOUT_MULTIPLIER")
 
     # Model candidates used by the cost/performance router. Prices are USD per
     # one million tokens and can be updated without code changes.
