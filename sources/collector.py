@@ -158,7 +158,7 @@ def build_used_sources(evidence_items: list[dict[str, Any]]) -> list[dict[str, A
         if not source_key or source_key in seen:
             continue
 
-        seen.add(source_key)
+        seen.add(source_key) 
 
         sources.append(
             {
