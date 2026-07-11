@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.agents.expert_executor import expert_executed_node
+from app.agents.expert_executor import expert_executed_node, infer_agent_tool_call_status
 from app.agents.handoff import AGENT_TO_PACKAGE, HANDOFF_RULES, attach_agent_stage_outputs
 from app.agents.registry import (
     AGENT_REGISTRY,
@@ -188,6 +188,9 @@ def test_expert_executor_runs_assigned_tool_loop() -> None:
     assert result["agent_tool_calls"][1]["tool_name"] == "data_gap_detector"
     assert result["agent_tool_calls"][0]["executes_node"] is True
     assert result["agent_tool_calls"][1]["executes_node"] is False
+    assert result["agent_tool_calls"][0]["status"] == "success"
+    assert result["agent_tool_calls"][1]["status"] == "diagnose_observed"
+    assert result["agent_tool_validations"][0]["status"] == "diagnose_observed"
     assert result["agent_tool_calls"][0]["planner_used_llm"] is False
     assert result["agent_loop_iterations"][0]["assigned_tools_executed"] == ["data_readiness_scorer", "data_gap_detector"]
     assert [log["status"] for log in result["audit_logs"]][:2] == [
@@ -196,6 +199,41 @@ def test_expert_executor_runs_assigned_tool_loop() -> None:
     ]
     assert result["agent_decisions"][0]["phase"] == "agent_tool_loop"
     assert result["agent_decisions"][-1]["phase"] == "post_tool_observation"
+
+
+def test_agent_tool_call_status_is_explicit_for_ui_debugging() -> None:
+    assert (
+        infer_agent_tool_call_status(
+            executes_node=True,
+            tool_purpose="execute",
+            observation={"errors_returned": 0},
+        )
+        == "success"
+    )
+    assert (
+        infer_agent_tool_call_status(
+            executes_node=False,
+            tool_purpose="validate",
+            observation={"errors_returned": 0},
+        )
+        == "validation_observed"
+    )
+    assert (
+        infer_agent_tool_call_status(
+            executes_node=False,
+            tool_purpose="guard",
+            observation={"errors_returned": 0},
+        )
+        == "guard_observed"
+    )
+    assert (
+        infer_agent_tool_call_status(
+            executes_node=True,
+            tool_purpose="execute",
+            observation={"errors_returned": 2},
+        )
+        == "failed"
+    )
 
 
 def test_retrieval_query_builder_creates_three_search_strategies() -> None:
@@ -303,11 +341,13 @@ def test_evaluation_critic_distinguishes_insufficient_review_and_recommended() -
     assert called_tools[:3] == ["evidence_quality_gate", "review_status_calibrator", "evidence_replan_decider"]
     assert result["agent_contracts"][0]["selected_tool"] == "evidence_replan_decider"
     assert result["priority_ranking"]["items"][0]["status"] == "evidence_insufficient"
-    assert result["priority_ranking"]["items"][1]["status"] == "human_review_required"
+    assert result["priority_ranking"]["items"][1]["status"] == "recommended"
+    assert result["priority_ranking"]["items"][1]["agent_decision_status"] == "auto_replan_required"
     assert result["priority_ranking"]["items"][2]["status"] == "recommended"
     assert result["priority_ranking"]["summary"]["evidence_insufficient_count"] == 1
-    assert result["priority_ranking"]["summary"]["human_review_required_count"] == 1
-    assert result["priority_ranking"]["summary"]["recommended_count"] == 1
+    assert result["priority_ranking"]["summary"]["human_review_required_count"] == 0
+    assert result["priority_ranking"]["summary"]["recommended_count"] == 2
     assert result["agent_evaluation"]["agent_decision"]["insufficient_process_ids"] == [1]
-    assert result["agent_evaluation"]["agent_decision"]["review_process_ids"] == [2]
+    assert result["agent_evaluation"]["agent_decision"]["review_process_ids"] == []
+    assert result["agent_evaluation"]["agent_decision"]["replan_process_ids"] == [2]
     assert result["agent_decisions"][-1]["changed_output"] is True

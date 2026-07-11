@@ -11,7 +11,8 @@ from typing import Any
 
 from app.db.crud import save_analysis_result
 from app.db.database import SessionLocal
-from app.graph.nodes import append_audit, append_error, build_poc_kpis, build_poc_milestones
+from app.graph.audit import append_audit, append_error
+from app.graph.poc_plan import build_poc_kpis, build_poc_milestones
 from app.graph.state import AXPlannerState
 
 

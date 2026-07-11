@@ -71,6 +71,7 @@ class AXPlannerState(TypedDict, total=False):
     agent_registry: list[dict[str, Any]]
     agent_contracts: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_tool_calls: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_tool_validations: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_loop_iterations: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_loop_requests: Annotated[list[dict[str, Any]], merge_unique_dicts]
@@ -90,6 +91,7 @@ class AXPlannerState(TypedDict, total=False):
     supervisor_approval_policy: dict[str, Any]
     supervisor_long_term_goal: dict[str, Any]
     supervisor_autonomy_policy: dict[str, Any]
+    total_cost_summary: dict[str, Any]
     agent_supervisor_extra_loop_enabled: bool
 
     # Agent package artifacts

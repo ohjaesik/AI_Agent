@@ -14,6 +14,7 @@ from typing import Any, TypeVar
 
 from app.agents.registry import get_agent_registry, get_agent_spec, get_tool_spec
 from app.agents.sandbox import SandboxResult, run_sandboxed_command
+from app.agents.tool_names import normalize_tool_name
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -21,12 +22,6 @@ F = TypeVar("F", bound=Callable[..., Any])
 class AgentToolPermissionError(PermissionError):
     """Agent가 허용되지 않은 tool을 요청했을 때 발생시키는 권한 오류다."""
     pass
-
-
-def normalize_tool_name(tool: str) -> str:
-    """tool 이름 비교가 안정적으로 되도록 대소문자/구분자를 정규화한다."""
-    return " ".join(str(tool or "").lower().replace("_", " ").replace("-", " ").split())
-
 
 def get_allowed_tools(agent_id: str) -> set[str]:
     """get_allowed_tools 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""

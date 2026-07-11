@@ -1,274 +1,88 @@
 # app/graph/replan_node.py
 
-"""근거 부족 후보에 대해 bounded replan을 수행하는 node.
+"""근거 부족 후보에 대해 bounded replan을 수행하는 LangGraph node.
 
-공식 도메인 탐색, 선택적 public web search, 신규 문서 색인 후 retrieval로 돌아갈지
-Human Review로 갈지 결정한다.
+정책 판단은 `replan_policy.py`, 실제 source 수집/색인은 `replan_sources.py`에 두고
+이 파일은 graph node로서 실행 순서, DB 저장, audit/error trace만 담당한다.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from app.company_bootstrap.idempotency import upsert_source_documents
-from app.company_bootstrap.public_web_search import discover_public_web_sources
-from app.company_bootstrap.source_discovery import discover_official_sources
-from app.company_bootstrap.url_loader import load_official_url
-from app.core.config import get_settings
 from app.db.crud import save_analysis_result, write_audit_log
 from app.db.database import SessionLocal
-from app.graph.nodes import append_audit, append_error
+from app.graph.audit import append_audit, append_error
+from app.graph.replan_policy import (
+    build_replan_items,
+    build_replan_request,
+    build_stopped_replan_request,
+    current_replan_attempts,
+    decide_replan_route_reason,
+    has_additional_evidence_need,
+    max_replan_attempts,
+    previous_replan_unproductive,
+    should_continue_after_replan,
+    source_collection_productive,
+    stop_reason_before_source_collection,
+)
+from app.graph.replan_sources import collect_discovered_sources, has_replan_source_path
 from app.graph.state import AXPlannerState
-from app.ingestion.service import index_single_document
-
-
-REPLAN_MAX_ITEMS = 5
-
-
-def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
-    """build_replan_items 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
-    items = []
-    ranking_items = {int(item.get("process_id") or 0): item for item in state.get("priority_ranking", {}).get("items", [])}
-
-    for evaluation in state.get("agent_evaluation", {}).get("items", []):
-        if not evaluation.get("requires_additional_evidence"):
-            continue
-        process_id = int(evaluation.get("process_id") or 0)
-        candidate = ranking_items.get(process_id, {})
-        items.append(
-            {
-                "process_id": process_id,
-                "candidate_agent_name": evaluation.get("candidate_agent_name") or candidate.get("candidate_agent_name"),
-                "process_name": candidate.get("process_name"),
-                "evidence_coverage": evaluation.get("evidence_coverage"),
-                "confidence_score": evaluation.get("confidence_score"),
-                "issues": evaluation.get("issues", []),
-                "suggested_actions": [
-                    "관련 공식 URL 자동 탐색 및 수집",
-                    "옵션 활성화 시 public web search 기반 보조 출처 탐색",
-                    "업무 매뉴얼 또는 내부 규정 문서 업로드",
-                    "해당 업무 owner 인터뷰 메모 추가",
-                    "RAG 재색인 후 재평가",
-                ],
-                "requery_terms": [
-                    candidate.get("process_name"),
-                    candidate.get("candidate_agent_name"),
-                    candidate.get("target_user"),
-                    "업무 절차",
-                    "규정",
-                    "SOP",
-                ],
-            }
-        )
-    return items[:REPLAN_MAX_ITEMS]
-
-
-def official_seed_urls(state: AXPlannerState) -> tuple[list[str], set[str]]:
-    """official_seed_urls 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    seed_urls: list[str] = []
-    existing_urls: set[str] = set()
-
-    for source in state.get("used_sources", []) or []:
-        url = source.get("url") or source.get("source_url")
-        if isinstance(url, str) and url.startswith("http"):
-            seed_urls.append(url)
-            existing_urls.add(url)
-
-    for document in state.get("documents", []) or []:
-        url = document.get("source_url") or document.get("url")
-        if isinstance(url, str) and url.startswith("http"):
-            seed_urls.append(url)
-            existing_urls.add(url)
-
-    deduped = []
-    seen = set()
-    for url in seed_urls:
-        if url in seen:
-            continue
-        seen.add(url)
-        deduped.append(url)
-    return deduped, existing_urls
-
-
-def replan_query_terms(state: AXPlannerState, replan_items: list[dict[str, Any]]) -> list[str]:
-    """replan_query_terms 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    terms: list[str] = []
-    for item in replan_items:
-        for key in ("process_name", "candidate_agent_name"):
-            value = item.get(key)
-            if value:
-                terms.append(str(value))
-        terms.extend(str(value) for value in item.get("requery_terms", []) if value)
-    company = state.get("company_profile", {}) or {}
-    if company.get("name"):
-        terms.append(str(company["name"]))
-    seen = set()
-    deduped = []
-    for term in terms:
-        normalized = term.strip()
-        if not normalized or normalized.lower() in seen:
-            continue
-        seen.add(normalized.lower())
-        deduped.append(normalized)
-    return deduped[:12]
-
-
-def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[str, Any]], max_total: int = 3) -> dict[str, Any]:
-    """collect_discovered_sources 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    settings = get_settings()
-    company_id = int(state["company_id"])
-    company_name = str((state.get("company_profile", {}) or {}).get("name") or "")
-    seed_urls, existing_urls = official_seed_urls(state)
-    warnings: list[str] = []
-
-    official_discovered = []
-    if seed_urls:
-        official_discovered = discover_official_sources(seed_urls=seed_urls, existing_urls=existing_urls, max_total=max_total)
-    else:
-        warnings.append("No official seed URL available for same-domain discovery.")
-
-    public_search = discover_public_web_sources(
-        company_name=company_name,
-        query_terms=replan_query_terms(state, replan_items),
-        existing_urls=existing_urls,
-        max_results=settings.external_web_max_results,
-    )
-
-    urls_to_load: list[dict[str, str]] = []
-    for item in official_discovered:
-        urls_to_load.append({"url": item.url, "source_kind": "same_domain_official", "reason": item.reason})
-    for item in public_search.get("results", []):
-        urls_to_load.append({"url": str(item.get("url")), "source_kind": "external_public_web", "reason": str(item.get("provider", "public_web_search"))})
-
-    loaded_docs = []
-    for item in urls_to_load:
-        try:
-            loaded_docs.append(load_official_url(item["url"]))
-        except Exception as exc:
-            warnings.append(f"URL 자동 수집 실패: {item['url']} ({type(exc).__name__}: {exc})")
-
-    created_count = 0
-    updated_count = 0
-    indexed_chunks = 0
-    document_ids: list[int] = []
-    with SessionLocal() as db:
-        if loaded_docs:
-            documents, created_count, updated_count = upsert_source_documents(
-                db=db,
-                company_id=company_id,
-                official_docs=loaded_docs,
-                dart_company=None,
-            )
-            for document in documents:
-                document_ids.append(int(document.id))
-                indexed_chunks += index_single_document(db=db, document=document, reset_existing=True)
-
-    return {
-        "same_domain_discovered": [item.to_dict() for item in official_discovered],
-        "public_web_search": public_search,
-        "loaded": [{"url": doc.url, "title": doc.title} for doc in loaded_docs],
-        "document_ids": document_ids,
-        "created_documents": created_count,
-        "updated_documents": updated_count,
-        "indexed_chunks": indexed_chunks,
-        "warnings": [*warnings, *public_search.get("warnings", [])],
-    }
-
-
-def current_replan_attempts(state: AXPlannerState) -> int:
-    """current_replan_attempts 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    state_attempts = int(state.get("replan_attempts", 0) or 0)
-    request_attempts = int((state.get("replan_request") or {}).get("attempt", 0) or 0)
-    return max(state_attempts, request_attempts)
-
-
-def max_replan_attempts() -> int:
-    """max_replan_attempts 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    return max(int(get_settings().agent_replan_max_attempts or 0), 0)
-
-
-def has_additional_evidence_need(state: AXPlannerState) -> bool:
-    """has_additional_evidence_need 함수. 조건을 검사해 True/False 판단값을 반환한다."""
-    evaluation = state.get("agent_evaluation", {}) or {}
-    summary = evaluation.get("summary", {}) or {}
-    return int(summary.get("additional_evidence_required_count", 0) or 0) > 0
-
-
-def has_replan_source_path(state: AXPlannerState) -> bool:
-    """has_replan_source_path 함수. 조건을 검사해 True/False 판단값을 반환한다."""
-    settings = get_settings()
-    seed_urls, _ = official_seed_urls(state)
-    return bool(seed_urls) or bool(settings.external_web_discovery_enabled)
-
-
-def source_collection_productive(source_collection: dict[str, Any]) -> bool:
-    """source_collection_productive 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    same_domain = source_collection.get("same_domain_discovered") or []
-    public_results = ((source_collection.get("public_web_search") or {}).get("results") or [])
-    loaded = source_collection.get("loaded") or []
-    indexed_chunks = int(source_collection.get("indexed_chunks") or 0)
-    return bool(same_domain or public_results or loaded or indexed_chunks > 0)
-
-
-def previous_replan_unproductive(state: AXPlannerState) -> bool:
-    """previous_replan_unproductive 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    if current_replan_attempts(state) <= 0:
-        return False
-    source_collection = (state.get("replan_request") or {}).get("source_collection") or {}
-    return not source_collection_productive(source_collection)
 
 
 def replan_route_reason(state: AXPlannerState) -> str:
-    """replan_route_reason 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    attempts = current_replan_attempts(state)
-    max_attempts = max_replan_attempts()
+    """evaluation 결과와 replan guard를 보고 route reason을 계산한다."""
 
-    if max_attempts <= 0:
-        return "replan_disabled"
-    if attempts >= max_attempts:
-        return "max_replan_attempts_reached"
-    if not has_additional_evidence_need(state):
-        return "no_additional_evidence_needed"
-    if previous_replan_unproductive(state):
-        return "previous_replan_unproductive"
-    if not has_replan_source_path(state):
-        return "no_replan_source_path"
-    return "route_to_replan"
+    return decide_replan_route_reason(
+        attempts=current_replan_attempts(state),
+        max_attempts_value=max_replan_attempts(),
+        additional_evidence_needed=has_additional_evidence_need(state),
+        previous_unproductive=previous_replan_unproductive(state),
+        has_source_path=has_replan_source_path(state),
+    )
 
 
 def should_replan(state: AXPlannerState) -> str:
     """evaluation 결과와 replan guard를 보고 agent_replan으로 갈지 delivery로 갈지 결정한다."""
+
     return "agent_replan" if replan_route_reason(state) == "route_to_replan" else "human_review"
 
 
-def should_continue_after_replan(state: AXPlannerState) -> str:
-    """replan 후 retrieval로 돌아갈지 Human Review로 갈지 결정한다."""
-    request = state.get("replan_request") or {}
-    route = request.get("route_after_replan")
-    if route in {"retrieve_context", "human_review"}:
-        return str(route)
-    return "retrieve_context"
+def build_replan_audit_payload(
+    *,
+    attempts: int,
+    max_attempts_value: int,
+    route_after_replan: str,
+    stop_reason: str | None,
+    replan_items: list[dict[str, Any]],
+    source_collection: dict[str, Any],
+) -> dict[str, Any]:
+    """DB audit와 in-memory audit에 공통으로 남길 replan 실행 요약을 만든다."""
+
+    return {
+        "attempt": attempts,
+        "max_attempts": max_attempts_value,
+        "route_after_replan": route_after_replan,
+        "stop_reason": stop_reason,
+        "replan_item_count": len(replan_items),
+        "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
+        "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
+        "indexed_chunks": source_collection.get("indexed_chunks", 0),
+    }
 
 
 def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
-    """근거 부족 후보에 대해 공식자료/선택적 public web search 기반 보강 루프를 실행한다."""
+    """공식자료/선택적 public web search 기반 보강 루프를 실행한다."""
+
     node_name = "agent_replan"
 
     try:
         current_attempts = current_replan_attempts(state)
-        max_attempts = max_replan_attempts()
+        max_attempts_value = max_replan_attempts()
+        stop_reason = stop_reason_before_source_collection(current_attempts, max_attempts_value)
 
-        if max_attempts <= 0 or current_attempts >= max_attempts:
-            stop_reason = "replan_disabled" if max_attempts <= 0 else "max_replan_attempts_reached"
-            replan_request = {
-                "attempt": current_attempts,
-                "max_attempts": max_attempts,
-                "mode": "stopped_before_source_collection",
-                "reason": stop_reason,
-                "items": [],
-                "source_collection": {},
-                "route_after_replan": "human_review",
-            }
+        if stop_reason:
+            replan_request = build_stopped_replan_request(current_attempts, max_attempts_value, stop_reason)
             return {
                 "replan_attempts": current_attempts,
                 "replan_request": replan_request,
@@ -276,32 +90,27 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                     state,
                     node_name,
                     "skipped",
-                    payload={"attempt": current_attempts, "max_attempts": max_attempts, "reason": stop_reason},
+                    payload={"attempt": current_attempts, "max_attempts": max_attempts_value, "reason": stop_reason},
                 ),
             }
 
         attempts = current_attempts + 1
         replan_items = build_replan_items(state)
         source_collection = collect_discovered_sources(state, replan_items=replan_items, max_total=3)
-        productive = source_collection_productive(source_collection)
-        route_after_replan = "retrieve_context" if productive and attempts < max_attempts else "human_review"
-        stop_reason = None
-        if attempts >= max_attempts:
-            stop_reason = "max_replan_attempts_reached_after_current_attempt"
-        elif not productive:
-            stop_reason = "replan_unproductive_after_current_attempt"
-
-        replan_request = {
-            "attempt": attempts,
-            "max_attempts": max_attempts,
-            "mode": "official_domain_plus_opt_in_public_web_discovery",
-            "reason": "Evaluation & Critic Agent가 일부 후보의 근거 coverage 또는 confidence 부족을 감지했다.",
-            "items": replan_items,
-            "source_collection": source_collection,
-            "route_after_replan": route_after_replan,
-            "stop_reason": stop_reason,
-            "note": "동일 공식 도메인의 sitemap/link 기반 URL을 자동 수집한다. EXTERNAL_WEB_DISCOVERY_ENABLED=true이면 Brave/SerpAPI 기반 public web search 결과도 보조 출처로 수집한다. 내부 문서 업로드나 인터뷰 메모는 Human Review/API 입력이 필요하다.",
-        }
+        replan_request = build_replan_request(
+            attempts=attempts,
+            max_attempts_value=max_attempts_value,
+            replan_items=replan_items,
+            source_collection=source_collection,
+        )
+        audit_payload = build_replan_audit_payload(
+            attempts=attempts,
+            max_attempts_value=max_attempts_value,
+            route_after_replan=str(replan_request.get("route_after_replan")),
+            stop_reason=replan_request.get("stop_reason"),
+            replan_items=replan_items,
+            source_collection=source_collection,
+        )
 
         with SessionLocal() as db:
             save_analysis_result(
@@ -315,16 +124,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                 project_id=int(state["project_id"]),
                 node_name=node_name,
                 event_type="success",
-                payload={
-                    "attempt": attempts,
-                    "max_attempts": max_attempts,
-                    "route_after_replan": route_after_replan,
-                    "stop_reason": stop_reason,
-                    "replan_item_count": len(replan_items),
-                    "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
-                    "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
-                    "indexed_chunks": source_collection.get("indexed_chunks", 0),
-                },
+                payload=audit_payload,
             )
 
         return {
@@ -334,16 +134,7 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
                 state,
                 node_name,
                 "success",
-                payload={
-                    "attempt": attempts,
-                    "max_attempts": max_attempts,
-                    "route_after_replan": route_after_replan,
-                    "stop_reason": stop_reason,
-                    "replan_item_count": len(replan_items),
-                    "same_domain_url_count": len(source_collection.get("same_domain_discovered", [])),
-                    "public_web_url_count": len(source_collection.get("public_web_search", {}).get("results", [])),
-                    "indexed_chunks": source_collection.get("indexed_chunks", 0),
-                },
+                payload=audit_payload,
             ),
         }
 
@@ -352,3 +143,15 @@ def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
             "errors": append_error(state, node_name, exc),
             "audit_logs": append_audit(state, node_name, "failed"),
         }
+
+
+__all__ = [
+    "agent_replan_node",
+    "build_replan_items",
+    "current_replan_attempts",
+    "has_replan_source_path",
+    "replan_route_reason",
+    "should_continue_after_replan",
+    "should_replan",
+    "source_collection_productive",
+]

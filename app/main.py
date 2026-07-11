@@ -29,6 +29,7 @@ from app.agents.autonomy import (
     build_supervisor_long_term_goal,
     resolve_extra_loop_enabled,
 )
+from app.agents.cost_summary import build_total_cost_summary
 from app.agents.registry import get_agent_registry
 from app.db.crud import resolve_project_selection
 from app.db.database import SessionLocal
@@ -82,6 +83,20 @@ def save_workflow_state(result: dict[str, Any], output_path: str | Path | None) 
         encoding="utf-8",
     )
     return str(path)
+
+
+def attach_cli_observability_summary(result: dict[str, Any]) -> dict[str, Any]:
+    """CLI 저장 직전에 누락될 수 있는 top-level 관찰성 요약을 보강한다.
+
+    정상 완료 시에는 graph의 finalizer가 `total_cost_summary`를 넣는다. 다만 Human
+    Review interrupt처럼 중간 저장되는 state는 finalizer까지 도달하지 않으므로,
+    CLI 출력 JSON에는 항상 같은 키가 존재하도록 한 번 더 보강한다.
+    """
+
+    if "total_cost_summary" not in result:
+        result = dict(result)
+        result["total_cost_summary"] = build_total_cost_summary(list(result.get("agent_model_decisions", []) or []))
+    return result
 
 
 def compact_payload(payload: Any, max_chars: int = 700) -> str:
@@ -164,6 +179,7 @@ def print_state_summary(result: dict[str, Any]) -> None:
     print("agent_llm_calls:", len(result.get("agent_llm_calls", [])))
     print("agent_commands:", len(result.get("agent_commands", [])))
     print("agent_model_decisions:", len(result.get("agent_model_decisions", [])))
+    print("estimated_total_cost_usd:", result.get("total_cost_summary", {}).get("estimated_total_cost_usd"))
     print("agent_supervisor_delegations:", len(result.get("agent_supervisor_delegations", [])))
     print("agent_autonomy_loop_decisions:", len(result.get("agent_autonomy_loop_decisions", [])))
     print("agent_packages:", len([key for key in result if key.endswith("_package")]))
@@ -331,6 +347,7 @@ def run_demo(
         "agent_registry": get_agent_registry(),
         "agent_contracts": [],
         "agent_tool_calls": [],
+        "agent_tool_validations": [],
         "agent_decisions": [],
         "agent_loop_iterations": [],
         "agent_loop_requests": [],
@@ -356,6 +373,7 @@ def run_demo(
     print(f"supervisor_goal={supervisor_long_term_goal.get('objective')}")
 
     result = graph.invoke(initial_state, config=config)
+    result = attach_cli_observability_summary(result)
 
     if "__interrupt__" in result:
         print_interrupt(result)
@@ -380,6 +398,7 @@ def run_demo(
             Command(resume=human_decision),
             config=config,
         )
+        result = attach_cli_observability_summary(result)
 
     saved_path = save_workflow_state(result, state_output_path)
 

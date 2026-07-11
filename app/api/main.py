@@ -322,6 +322,7 @@ def run_analysis(
             "top_candidates": result.get("priority_ranking", {}).get("items", [])[:5],
             "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),
             "model_decisions": result.get("agent_model_decisions", [])[-10:],
+            "total_cost_summary": result.get("total_cost_summary", {}),
             "supervisor_delegations": result.get("agent_supervisor_delegations", [])[-10:],
             "supervisor_autonomy_policy": result.get("supervisor_autonomy_policy", {}),
             "autonomy_loop_decisions": result.get("agent_autonomy_loop_decisions", [])[-10:],

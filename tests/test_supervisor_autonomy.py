@@ -98,4 +98,4 @@ def test_supervisor_loop_decision_does_not_stop_for_cost_without_iteration_need(
 
     assert decision["decision"] == "handoff"
     assert decision["should_iterate"] is False
-    assert "autonomy_cost_budget_reached" in decision["blocking_reasons"]
+    assert "autonomy_cost_budget_reached" not in decision["blocking_reasons"]

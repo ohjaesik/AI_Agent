@@ -268,6 +268,71 @@ def has_value(value: str | None) -> bool:
     return bool(str(value or "").strip())
 
 
+def safe_float(value: Any, default: float) -> float:
+    """env JSON 후보의 숫자 필드를 안전하게 float로 변환한다."""
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_int(value: Any, default: int) -> int:
+    """env JSON 후보의 숫자 필드를 안전하게 int로 변환한다."""
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_openai_extra_model_profiles(openai_available: bool) -> list[ModelProfile]:
+    """`.env`의 추가 GPT 후보 JSON을 ModelProfile 목록으로 변환한다.
+
+    기본 `OPENAI_FAST/BALANCED/HIGH_MODEL` 3종 외에도 더 저렴한 GPT 계열 모델을
+    후보에 넣고 싶을 때 사용한다. 예: mini/nano 등 접근 가능한 모델을 가격표와
+    품질 점수로 등록하면 Supervisor 외 Agent들이 같은 비용/성능 수식으로 비교한다.
+    """
+
+    settings = get_settings()
+    raw_json = str(settings.openai_extra_model_profiles_json or "").strip()
+    if not raw_json:
+        return []
+
+    try:
+        payload = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return []
+
+    if isinstance(payload, dict):
+        payload = payload.get("models", [])
+    if not isinstance(payload, list):
+        return []
+
+    profiles: list[ModelProfile] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        model_name = str(item.get("model") or "").strip()
+        if not model_name:
+            continue
+        profiles.append(
+            ModelProfile(
+                provider="openai",
+                model=model_name,
+                tier=str(item.get("tier") or "custom").strip() or "custom",
+                quality_score=clamp(safe_float(item.get("quality_score"), 0.72)),
+                speed_score=clamp(safe_float(item.get("speed_score"), 0.86)),
+                context_window_tokens=safe_int(item.get("context_window_tokens"), 128_000),
+                input_cost_per_million=max(0.0, safe_float(item.get("input_cost_per_million"), 1.0)),
+                output_cost_per_million=max(0.0, safe_float(item.get("output_cost_per_million"), 4.0)),
+                available=openai_available,
+                unavailable_reason=None if openai_available else "OPENAI_API_KEY missing or MODEL_ROUTER_ENABLE_OPENAI=false",
+            )
+        )
+    return profiles
+
+
 def build_model_profiles() -> list[ModelProfile]:
     """환경설정과 API key 유무를 반영해 모델 후보군을 만든다.
 
@@ -281,7 +346,7 @@ def build_model_profiles() -> list[ModelProfile]:
     anthropic_available = has_value(settings.anthropic_api_key) and settings.model_router_enable_anthropic
     vllm_available = settings.model_router_enable_vllm
 
-    return [
+    profiles = [
         ModelProfile(
             provider="vllm",
             model=settings.vllm_model,
@@ -298,9 +363,9 @@ def build_model_profiles() -> list[ModelProfile]:
             provider="openai",
             model=settings.openai_fast_model,
             tier="fast",
-            quality_score=0.66,
-            speed_score=0.92,
-            context_window_tokens=128_000,
+            quality_score=0.82,
+            speed_score=0.88,
+            context_window_tokens=1_050_000,
             input_cost_per_million=settings.openai_fast_input_cost_per_million,
             output_cost_per_million=settings.openai_fast_output_cost_per_million,
             available=openai_available,
@@ -310,9 +375,9 @@ def build_model_profiles() -> list[ModelProfile]:
             provider="openai",
             model=settings.openai_balanced_model,
             tier="balanced",
-            quality_score=0.78,
-            speed_score=0.82,
-            context_window_tokens=128_000,
+            quality_score=0.91,
+            speed_score=0.72,
+            context_window_tokens=1_050_000,
             input_cost_per_million=settings.openai_balanced_input_cost_per_million,
             output_cost_per_million=settings.openai_balanced_output_cost_per_million,
             available=openai_available,
@@ -322,14 +387,15 @@ def build_model_profiles() -> list[ModelProfile]:
             provider="openai",
             model=settings.openai_high_model,
             tier="high",
-            quality_score=0.91,
-            speed_score=0.64,
-            context_window_tokens=128_000,
+            quality_score=0.97,
+            speed_score=0.58,
+            context_window_tokens=1_050_000,
             input_cost_per_million=settings.openai_high_input_cost_per_million,
             output_cost_per_million=settings.openai_high_output_cost_per_million,
             available=openai_available,
             unavailable_reason=None if openai_available else "OPENAI_API_KEY missing or MODEL_ROUTER_ENABLE_OPENAI=false",
         ),
+        *parse_openai_extra_model_profiles(openai_available),
         ModelProfile(
             provider="anthropic",
             model=settings.anthropic_fast_model,
@@ -355,6 +421,17 @@ def build_model_profiles() -> list[ModelProfile]:
             unavailable_reason=None if anthropic_available else "ANTHROPIC_API_KEY missing or MODEL_ROUTER_ENABLE_ANTHROPIC=false",
         ),
     ]
+
+    # 같은 provider/model이 중복 등록되면 앞쪽 기본 후보를 우선한다.
+    deduped: list[ModelProfile] = []
+    seen: set[tuple[str, str]] = set()
+    for profile in profiles:
+        key = (profile.provider, profile.model)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(profile)
+    return deduped
 
 
 def estimate_model_cost_breakdown(profile: ModelProfile, metrics: WorkloadMetrics) -> dict[str, Any]:
@@ -647,6 +724,20 @@ def select_agent_model(
     if not available_profiles:
         available_profiles = [profiles[0]]
 
+    total_tokens = metrics.estimated_input_tokens + metrics.estimated_output_tokens
+    quality_floor = max(0.0, metrics.required_quality_score - settings.model_router_quality_floor_margin)
+    context_fitting_profiles = [
+        profile
+        for profile in available_profiles
+        if total_tokens <= profile.context_window_tokens
+    ]
+    eligible_profiles = [
+        profile
+        for profile in context_fitting_profiles
+        if profile.quality_score >= quality_floor
+    ]
+    selection_profiles = eligible_profiles or context_fitting_profiles or available_profiles
+
     candidate_costs = [estimate_model_cost(profile, metrics) for profile in available_profiles]
     max_candidate_cost = max(candidate_costs) if candidate_costs else 0.0
     score_cards = [
@@ -658,8 +749,27 @@ def select_agent_model(
         )
         for profile in available_profiles
     ]
+    for card in score_cards:
+        profile = next(
+            item
+            for item in available_profiles
+            if item.provider == card["provider"] and item.model == card["model"]
+        )
+        card["quality_floor"] = round(quality_floor, 4)
+        card["eligible_for_selection"] = profile in selection_profiles
+
+    selection_cards = [card for card in score_cards if card["eligible_for_selection"]] or score_cards
+    selection_cards.sort(
+        key=lambda item: (
+            item["score"],
+            -item["estimated_cost_usd"],
+            item["profile"]["quality_score"],
+        ),
+        reverse=True,
+    )
     score_cards.sort(
         key=lambda item: (
+            item["eligible_for_selection"],
             item["score"],
             -item["estimated_cost_usd"],
             item["profile"]["quality_score"],
@@ -668,7 +778,7 @@ def select_agent_model(
     )
     # 같은 점수라면 비용이 낮은 모델을 우선하도록 `-estimated_cost_usd`를
     # 정렬 key에 넣었다. 그래도 품질 점수는 마지막 tie-breaker로 남긴다.
-    chosen_card = score_cards[0]
+    chosen_card = selection_cards[0]
     chosen_profile = next(
         profile
         for profile in available_profiles
@@ -677,7 +787,8 @@ def select_agent_model(
 
     reason = (
         "Supervisor 모델 라우터가 자료량, 처리 대상 수, 예상 시간, 모델 품질, "
-        "context 적합도, 추정 비용을 비교해 가격 대비 효율 점수가 가장 높은 모델을 선택했다."
+        "context 적합도, 추정 비용을 비교했다. Supervisor가 아닌 호출은 요구 품질 하한을 넘는 "
+        "후보 중 가격 대비 효율 점수가 가장 높은 모델을 선택한다."
     )
     return build_assignment(
         agent_id=agent_id,

@@ -40,3 +40,19 @@ def test_calibrate_critic_overrides_overconservative_review():
     assert calibrated["critic_verdict"] == "pass"
     assert calibrated["critic_calibrated"] is True
     assert calibrated["missing_evidence"] == []
+
+
+def test_deterministic_verdict_routes_moderate_gap_to_replan():
+    candidate = {"status": "recommended", "compliance": {"compliance_level": "standard", "blocked": False}}
+    evaluation = {
+        "confidence_score": 0.71,
+        "evidence_coverage": 0.38,
+        "compliance_alignment": 1.0,
+        "requires_additional_evidence": True,
+        "requires_human_review": False,
+        "zero_evidence_coverage": False,
+        "very_weak_evidence_coverage": False,
+        "issues": [],
+    }
+
+    assert deterministic_verdict(candidate, evaluation) == "needs_replan"

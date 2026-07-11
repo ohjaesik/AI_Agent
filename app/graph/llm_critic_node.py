@@ -14,7 +14,7 @@ from app.agents.model_router import select_agent_model
 from app.agents.tool_guard import assert_tools_allowed
 from app.db.crud import save_analysis_result, write_audit_log
 from app.db.database import SessionLocal
-from app.graph.nodes import append_audit, append_error
+from app.graph.audit import append_audit, append_error
 from app.graph.state import AXPlannerState
 
 

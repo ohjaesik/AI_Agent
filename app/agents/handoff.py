@@ -218,6 +218,7 @@ def selected_tool_trace_for_stage(
                 "node_name": node_name,
                 "tool_name": call.get("tool_name"),
                 "tool_purpose": call.get("tool_purpose"),
+                "status": call.get("status"),
                 "tool_uses_llm": bool(call.get("tool_uses_llm")),
                 "executes_node": bool(call.get("executes_node")),
                 "selection_reason": call.get("selection_reason"),

@@ -13,6 +13,16 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+DEFAULT_OPENAI_EXTRA_MODEL_PROFILES_JSON = (
+    '[{"model":"gpt-4.1-mini","tier":"economy","quality_score":0.74,'
+    '"speed_score":0.94,"context_window_tokens":1048576,'
+    '"input_cost_per_million":0.40,"output_cost_per_million":1.60},'
+    '{"model":"gpt-4.1-nano","tier":"nano","quality_score":0.67,'
+    '"speed_score":0.97,"context_window_tokens":1048576,'
+    '"input_cost_per_million":0.10,"output_cost_per_million":0.40}]'
+)
+
+
 class Settings(BaseSettings):
     """환경변수 기반 설정 모델.
 
@@ -59,14 +69,16 @@ class Settings(BaseSettings):
     model_router_enable_anthropic: bool = Field(default=True, alias="MODEL_ROUTER_ENABLE_ANTHROPIC")
     model_router_target_seconds: float = Field(default=45.0, alias="MODEL_ROUTER_TARGET_SECONDS")
     model_router_cost_sensitivity: float = Field(default=0.35, alias="MODEL_ROUTER_COST_SENSITIVITY")
+    model_router_quality_floor_margin: float = Field(default=0.12, alias="MODEL_ROUTER_QUALITY_FLOOR_MARGIN")
 
     # The Supervisor Agent is treated as the highest-risk orchestration role, so
     # it is pinned to this upper-tier model whenever the configured provider is available.
     # Expert Agent는 cost/performance 수식을 타지만 Supervisor는 품질 우선 고정 정책이다.
     supervisor_model_provider: str = Field(default="openai", alias="SUPERVISOR_MODEL_PROVIDER")
-    supervisor_model_name: str = Field(default="gpt-4.1", alias="SUPERVISOR_MODEL_NAME")
+    supervisor_model_name: str = Field(default="gpt-5.6-sol", alias="SUPERVISOR_MODEL_NAME")
     supervisor_llm_enabled: bool = Field(default=True, alias="SUPERVISOR_LLM_ENABLED")
     supervisor_minimal_human_approval: bool = Field(default=True, alias="SUPERVISOR_MINIMAL_HUMAN_APPROVAL")
+    supervisor_llm_timeout_seconds: float = Field(default=45.0, alias="SUPERVISOR_LLM_TIMEOUT_SECONDS")
     supervisor_llm_retry_count: int = Field(default=2, alias="SUPERVISOR_LLM_RETRY_COUNT")
     supervisor_llm_retry_timeout_multiplier: float = Field(default=1.8, alias="SUPERVISOR_LLM_RETRY_TIMEOUT_MULTIPLIER")
     agent_llm_timeout_seconds: float = Field(default=10.0, alias="AGENT_LLM_TIMEOUT_SECONDS")
@@ -87,15 +99,19 @@ class Settings(BaseSettings):
     # Model candidates used by the cost/performance router. Prices are USD per
     # one million tokens and can be updated without code changes.
     # 가격표가 바뀌면 코드 수정 없이 .env만 바꿔도 cost_calculation trace가 갱신된다.
-    openai_high_model: str = Field(default="gpt-4.1", alias="OPENAI_HIGH_MODEL")
-    openai_balanced_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_BALANCED_MODEL")
-    openai_fast_model: str = Field(default="gpt-4.1-nano", alias="OPENAI_FAST_MODEL")
-    openai_high_input_cost_per_million: float = Field(default=2.00, alias="OPENAI_HIGH_INPUT_COST_PER_MILLION")
-    openai_high_output_cost_per_million: float = Field(default=8.00, alias="OPENAI_HIGH_OUTPUT_COST_PER_MILLION")
-    openai_balanced_input_cost_per_million: float = Field(default=0.40, alias="OPENAI_BALANCED_INPUT_COST_PER_MILLION")
-    openai_balanced_output_cost_per_million: float = Field(default=1.60, alias="OPENAI_BALANCED_OUTPUT_COST_PER_MILLION")
-    openai_fast_input_cost_per_million: float = Field(default=0.10, alias="OPENAI_FAST_INPUT_COST_PER_MILLION")
-    openai_fast_output_cost_per_million: float = Field(default=0.40, alias="OPENAI_FAST_OUTPUT_COST_PER_MILLION")
+    openai_high_model: str = Field(default="gpt-5.6-sol", alias="OPENAI_HIGH_MODEL")
+    openai_balanced_model: str = Field(default="gpt-5.6-terra", alias="OPENAI_BALANCED_MODEL")
+    openai_fast_model: str = Field(default="gpt-5.6-luna", alias="OPENAI_FAST_MODEL")
+    openai_extra_model_profiles_json: str = Field(
+        default=DEFAULT_OPENAI_EXTRA_MODEL_PROFILES_JSON,
+        alias="OPENAI_EXTRA_MODEL_PROFILES_JSON",
+    )
+    openai_high_input_cost_per_million: float = Field(default=5.00, alias="OPENAI_HIGH_INPUT_COST_PER_MILLION")
+    openai_high_output_cost_per_million: float = Field(default=30.00, alias="OPENAI_HIGH_OUTPUT_COST_PER_MILLION")
+    openai_balanced_input_cost_per_million: float = Field(default=2.50, alias="OPENAI_BALANCED_INPUT_COST_PER_MILLION")
+    openai_balanced_output_cost_per_million: float = Field(default=15.00, alias="OPENAI_BALANCED_OUTPUT_COST_PER_MILLION")
+    openai_fast_input_cost_per_million: float = Field(default=1.00, alias="OPENAI_FAST_INPUT_COST_PER_MILLION")
+    openai_fast_output_cost_per_million: float = Field(default=6.00, alias="OPENAI_FAST_OUTPUT_COST_PER_MILLION")
 
     anthropic_high_model: str = Field(default="claude-3-5-sonnet-latest", alias="ANTHROPIC_HIGH_MODEL")
     anthropic_fast_model: str = Field(default="claude-3-5-haiku-latest", alias="ANTHROPIC_FAST_MODEL")

@@ -19,6 +19,7 @@ from copy import deepcopy
 from typing import Any, TypeVar
 
 from app.agents.autonomy import build_supervisor_autonomy_policy, resolve_stage_loop_limit
+from app.agents.evaluation_policy import split_evidence_decision_ids
 from app.agents.registry import MAX_TOOL_CANDIDATES_PER_NODE, get_agent_spec, get_tool_specs_for_node
 from app.agents.runtime import build_agent_contract, build_contract_audit_log, get_agent_binding_for_node
 from app.agents.tool_runtime import call_agent_tool
@@ -26,8 +27,6 @@ from app.core.config import get_settings
 
 StateT = TypeVar("StateT", bound=dict[str, Any])
 
-EVIDENCE_INSUFFICIENT_THRESHOLD = 0.15
-LOW_CONFIDENCE_THRESHOLD = 0.45
 DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS = 2
 
 
@@ -63,6 +62,49 @@ def tool_uses_llm(tool_spec: dict[str, Any]) -> bool:
     return bool(tool_spec.get("uses_llm")) or "llm" in name.lower() or name in {"process_discovery_llm", "llm_critic", "report_writer"}
 
 
+def infer_agent_tool_call_status(
+    *,
+    executes_node: bool,
+    tool_purpose: str | None,
+    observation: dict[str, Any] | None,
+) -> str:
+    """tool call trace에 바로 표시할 실행 상태를 계산한다.
+
+    실제 node를 실행한 tool은 오류가 없으면 `success`로 남긴다. validate/guard/diagnose
+    계열 tool은 별도 node를 다시 실행하지 않고 직전 결과를 관찰하므로, UI와 디버깅에서
+    구분하기 쉽도록 `<purpose>_observed` 형식의 상태를 남긴다.
+    """
+
+    try:
+        errors_returned = int((observation or {}).get("errors_returned") or 0)
+    except (TypeError, ValueError):
+        errors_returned = 0
+
+    if errors_returned > 0:
+        return "failed"
+    if executes_node:
+        return "success"
+
+    purpose = str(tool_purpose or "").strip().lower()
+    if purpose == "validate":
+        return "validation_observed"
+    if purpose in {
+        "analyze",
+        "calibrate",
+        "diagnose",
+        "escalate",
+        "fallback",
+        "guard",
+        "normalize",
+        "plan",
+        "review",
+        "route",
+        "summarize",
+    }:
+        return f"{purpose}_observed"
+    return "observed_existing_node_result"
+
+
 def summarize_assigned_tool(tool_spec: dict[str, Any]) -> dict[str, Any]:
     """Agent contract trace에 넣을 tool 요약을 만든다."""
 
@@ -73,15 +115,6 @@ def summarize_assigned_tool(tool_spec: dict[str, Any]) -> dict[str, Any]:
         "nodes": tool_spec.get("nodes", []),
         "uses_llm": tool_uses_llm(tool_spec),
     }
-
-
-def as_float(value: Any, default: float = 0.0) -> float:
-    """score/status 보정에서 숫자 변환 실패를 안전하게 처리한다."""
-
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
 
 
 def get_agent_loop_settings(state: dict[str, Any]) -> tuple[int, bool, str | None]:
@@ -220,37 +253,6 @@ def build_agent_tool_decision(
     }
 
 
-def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[int], set[int]]:
-    """split_evidence_decision_ids 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    insufficient_ids: set[int] = set()
-    review_ids: set[int] = set()
-
-    for item in agent_evaluation.get("items", []) or []:
-        process_id = int(item.get("process_id") or 0)
-        if not process_id:
-            continue
-
-        evidence_coverage = as_float(item.get("evidence_coverage"), 0.0)
-        confidence_score = as_float(item.get("confidence_score"), 0.0)
-        predicted_status = str(item.get("predicted_status") or "")
-        requires_additional_evidence = bool(item.get("requires_additional_evidence"))
-        requires_human_review = bool(item.get("requires_human_review"))
-        critic = item.get("llm_critic") or {}
-        critic_verdict = str(critic.get("critic_verdict") or "")
-
-        severe_evidence_gap = evidence_coverage <= EVIDENCE_INSUFFICIENT_THRESHOLD
-        severe_low_confidence = confidence_score < LOW_CONFIDENCE_THRESHOLD
-        explicit_insufficient = predicted_status == "evidence_insufficient"
-
-        if severe_evidence_gap or (explicit_insufficient and severe_low_confidence):
-            insufficient_ids.add(process_id)
-        elif requires_additional_evidence or requires_human_review or explicit_insufficient or critic_verdict in {"needs_review", "revise"}:
-            review_ids.add(process_id)
-
-    review_ids -= insufficient_ids
-    return insufficient_ids, review_ids
-
-
 def count_llm_review_needs(agent_evaluation: dict[str, Any]) -> int:
     """count_llm_review_needs 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     summary = agent_evaluation.get("summary", {}) or {}
@@ -345,9 +347,14 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
     evaluation = deepcopy(result.get("agent_evaluation") or state.get("agent_evaluation") or {})
     ranking = deepcopy(result.get("priority_ranking") or state.get("priority_ranking") or {})
     summary = evaluation.setdefault("summary", {})
-    insufficient_ids, review_ids = split_evidence_decision_ids(evaluation)
+    insufficient_ids, review_ids, replan_ids = split_evidence_decision_ids(evaluation)
     llm_review_count = count_llm_review_needs(evaluation)
-    effective_required_count = max(int(summary.get("additional_evidence_required_count", 0) or 0), len(insufficient_ids | review_ids), llm_review_count)
+    evidence_replan_ids = insufficient_ids | replan_ids
+    effective_required_count = max(
+        int(summary.get("additional_evidence_required_count", 0) or 0),
+        len(evidence_replan_ids | review_ids),
+        llm_review_count,
+    )
 
     changed = False
     adjusted_count = 0
@@ -367,29 +374,36 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
                 item["agent_decision_status"] = "human_review_required"
                 item["agent_decision_reason"] = "Evaluation & Critic Agent requires human review, but did not classify the evidence gap as severe."
                 adjusted_count += 1
+            elif process_id in replan_ids:
+                item.setdefault("status_before_agent_decision", previous_status)
+                item["agent_decision_status"] = "auto_replan_required"
+                item["agent_decision_reason"] = "Evaluation & Critic Agent found a moderate evidence gap and will try bounded autonomous replan before Human Review."
+                adjusted_count += 1
 
         ranking = rebuild_priority_summary(ranking)
-        summary["additional_evidence_required_count"] = len(insufficient_ids | review_ids)
+        summary["additional_evidence_required_count"] = len(evidence_replan_ids)
         summary["evidence_insufficient_count"] = len(insufficient_ids)
         summary["human_review_required_count"] = ranking.get("summary", {}).get("human_review_required_count", 0)
+        summary["auto_replan_required_count"] = len(replan_ids)
         summary["agent_decision_adjusted_count"] = adjusted_count
         summary["agent_decision_applied"] = bool(adjusted_count)
         evaluation["summary"] = summary
         evaluation["agent_decision"] = {
             "decision": "request_replan_or_human_review" if adjusted_count else "pass_through",
-            "reason": "Severe evidence gaps are routed to evidence_insufficient; weaker evidence or critic concerns are routed to human_review_required.",
+            "reason": "Severe evidence gaps are blocked, moderate evidence gaps are routed to autonomous replan, and governance concerns are routed to Human Review.",
             "insufficient_process_ids": sorted(insufficient_ids),
             "review_process_ids": sorted(review_ids),
-            "fallback_route": "human_review",
+            "replan_process_ids": sorted(replan_ids),
+            "fallback_route": "bounded_replan_then_human_review",
         }
         result["agent_evaluation"] = evaluation
         result["priority_ranking"] = ranking
-        if insufficient_ids and not result.get("replan_request"):
+        if evidence_replan_ids and not result.get("replan_request"):
             result["replan_request"] = {
                 "mode": "agent_decision_hint",
-                "reason": "Evaluation & Critic Agent requested replan for candidates with severe evidence gaps.",
-                "items": build_replan_hint_items(insufficient_ids, state, ranking, evaluation),
-                "route_after_replan": "human_review",
+                "reason": "Evaluation & Critic Agent requested autonomous evidence replan before escalating to Human Review.",
+                "items": build_replan_hint_items(evidence_replan_ids, state, ranking, evaluation),
+                "route_after_replan": "retrieve_context",
             }
         changed = bool(adjusted_count)
 
@@ -403,8 +417,9 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
         "adjusted_count": adjusted_count,
         "evidence_insufficient_count": len(insufficient_ids),
         "review_required_count": len(review_ids),
-        "additional_evidence_required_count": len(insufficient_ids | review_ids),
-        "reason": "The critic distinguishes severe evidence insufficiency from ordinary human-review cases without changing unflagged recommended candidates.",
+        "auto_replan_required_count": len(replan_ids),
+        "additional_evidence_required_count": len(evidence_replan_ids),
+        "reason": "The critic separates severe evidence insufficiency, autonomous replan needs, and ordinary human-review cases.",
     }
     return result, post_decision
 
@@ -540,12 +555,17 @@ def validation_runner_result(current_result: dict[str, Any], tool_spec: dict[str
     """validation_runner_result 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     result = dict(current_result)
     validations = list(result.get("agent_tool_validations", []))
+    tool_purpose = str(tool_spec.get("purpose", "execute"))
     validations.append(
         {
             "tool_name": tool_spec.get("name"),
-            "purpose": tool_spec.get("purpose", "execute"),
+            "purpose": tool_purpose,
             "loop_index": loop_index,
-            "status": "observed_existing_node_result",
+            "status": infer_agent_tool_call_status(
+                executes_node=False,
+                tool_purpose=tool_purpose,
+                observation={},
+            ),
         }
     )
     result["agent_tool_validations"] = validations
@@ -616,6 +636,11 @@ def run_agent_tool_loop(
             all_audit_logs.extend(tool_call.audit_logs)
             loop_tool_names.append(str(tool_spec.get("name")))
             loop_observations.append(tool_call.observation)
+            tool_status = infer_agent_tool_call_status(
+                executes_node=executes_node,
+                tool_purpose=str(pre_decision.get("selected_tool_purpose") or ""),
+                observation=tool_call.observation,
+            )
             tool_call_records.append(
                 {
                     "node_name": node_name,
@@ -630,6 +655,7 @@ def run_agent_tool_loop(
                     "tool_purpose": pre_decision.get("selected_tool_purpose"),
                     "tool_uses_llm": pre_decision.get("selected_tool_uses_llm"),
                     "executes_node": executes_node,
+                    "status": tool_status,
                     "planner_mode": "expert_agent_supervisor_loop",
                     "planner_used_llm": False,
                     "selection_reason": pre_decision.get("selection_reason"),

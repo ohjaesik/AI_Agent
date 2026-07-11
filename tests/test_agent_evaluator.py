@@ -141,3 +141,43 @@ def test_agent_evaluator_respects_compliance_human_review_requirement():
     assert updated["status"] == "human_review_required"
     assert updated["compliance"]["compliance_level"] == "sensitive_review"
     assert updated["agent_evaluation"]["requires_human_review"] is True
+
+
+def test_moderate_evidence_gap_routes_to_auto_replan_not_human_review():
+    state = {
+        "priority_ranking": {
+            "items": [
+                {
+                    "process_id": 4,
+                    "candidate_agent_name": "Moderate Evidence Agent",
+                    "status": "recommended",
+                    "final_score": 4.1,
+                    "saving_rate": 65.0,
+                    "risk_score": 1,
+                    "data_accessibility": 4,
+                    "discovery_metadata": {"evidence_labels": ["[공식URL-1]"]},
+                    "score_rationale": {
+                        "expected_effect": "ok",
+                        "repeatability": "ok",
+                        "document_dependency": "ok",
+                        "data_accessibility": "ok",
+                        "tech_feasibility": "ok",
+                        "risk_score": "ok",
+                    },
+                    "compliance": {"compliance_level": "standard", "human_review_required": False, "blocked": False},
+                }
+            ],
+            "summary": {"total_candidates": 1},
+        },
+        "retrieved_contexts": {"4": [{"content": "a"}, {"content": "b"}]},
+        "evidence_items": [{"process_id": 4}],
+    }
+
+    result = evaluate_agent_outputs(state)
+    updated = result["updated_priority_ranking"]["items"][0]
+    evaluation = updated["agent_evaluation"]
+
+    assert updated["status"] == "recommended"
+    assert evaluation["requires_additional_evidence"] is True
+    assert evaluation["requires_human_review"] is False
+    assert evaluation["autonomy_route"] == "auto_replan"

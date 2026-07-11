@@ -13,7 +13,7 @@ from typing import Any
 from app.agents.evaluator import evaluate_agent_outputs
 from app.db.crud import save_analysis_result, write_audit_log
 from app.db.database import SessionLocal
-from app.graph.nodes import append_audit, append_error
+from app.graph.audit import append_audit, append_error
 from app.graph.state import AXPlannerState
 
 

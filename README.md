@@ -460,9 +460,10 @@ MODEL_ROUTER_ENABLE_VLLM=true
 MODEL_ROUTER_ENABLE_OPENAI=true
 MODEL_ROUTER_ENABLE_ANTHROPIC=true
 SUPERVISOR_MODEL_PROVIDER=openai
-SUPERVISOR_MODEL_NAME=gpt-4.1
+SUPERVISOR_MODEL_NAME=gpt-5.6-sol
 SUPERVISOR_LLM_ENABLED=true
 SUPERVISOR_MINIMAL_HUMAN_APPROVAL=true
+SUPERVISOR_LLM_TIMEOUT_SECONDS=45
 SUPERVISOR_LLM_RETRY_COUNT=2
 SUPERVISOR_LLM_RETRY_TIMEOUT_MULTIPLIER=1.8
 AGENT_LLM_TIMEOUT_SECONDS=10
@@ -473,9 +474,11 @@ SUPERVISOR_AUTONOMY_LEVEL=controlled_high
 SUPERVISOR_AUTONOMOUS_MAX_STAGE_LOOPS=4
 SUPERVISOR_AUTONOMOUS_EXTRA_LOOP_BUDGET=2
 SUPERVISOR_AUTONOMOUS_COST_BUDGET_USD=1.5
-OPENAI_HIGH_MODEL=gpt-4.1
-OPENAI_BALANCED_MODEL=gpt-4.1-mini
-OPENAI_FAST_MODEL=gpt-4.1-nano
+MODEL_ROUTER_QUALITY_FLOOR_MARGIN=0.12
+OPENAI_HIGH_MODEL=gpt-5.6-sol
+OPENAI_BALANCED_MODEL=gpt-5.6-terra
+OPENAI_FAST_MODEL=gpt-5.6-luna
+OPENAI_EXTRA_MODEL_PROFILES_JSON=[{"model":"gpt-4.1-mini","tier":"economy","quality_score":0.74,"speed_score":0.94,"context_window_tokens":1048576,"input_cost_per_million":0.40,"output_cost_per_million":1.60},{"model":"gpt-4.1-nano","tier":"nano","quality_score":0.67,"speed_score":0.97,"context_window_tokens":1048576,"input_cost_per_million":0.10,"output_cost_per_million":0.40}]
 ANTHROPIC_HIGH_MODEL=claude-3-5-sonnet-latest
 ANTHROPIC_FAST_MODEL=claude-3-5-haiku-latest
 DART_API_KEY=OPTIONAL_OPEN_DART_KEY
@@ -487,9 +490,9 @@ AGENT_SUPERVISOR_MAX_TOOL_LOOPS=2
 AGENT_SUPERVISOR_EXTRA_LOOP_ENABLED=true
 ```
 
-모델 라우터는 Supervisor Agent가 각 LLM 호출마다 입력 자료량, 후보 업무 수, 근거 수, 예상 출력량, 예상 처리 시간, 모델 품질 점수, context window, 1M token당 입력/출력 비용을 계산해 `agent_model_decisions` trace에 선택 근거를 남긴다. 각 decision에는 `cost_calculation`이 포함되어 입력 비용, 출력 비용, 총 예상 비용과 산식을 확인할 수 있다. `SUPERVISOR_LLM_ENABLED=true`이면 Supervisor Agent도 실제 LLM으로 실행되어 각 Expert Agent에게 자율성 수준, node 순서, tool 우선순위, 사람 승인 gate를 위임하고 `agent_supervisor_delegations` trace에 남긴다. Supervisor Agent 자체는 `SUPERVISOR_MODEL_PROVIDER`와 `SUPERVISOR_MODEL_NAME`의 상위 모델을 우선 사용하고, 나머지 Expert Agent와 LLM 도구는 가격 대비 효율 점수가 가장 높은 모델을 자동 선택한다. vLLM은 항상 `.env`의 `VLLM_MODEL`과 `VLLM_BASE_URL`을 사용한다.
+모델 라우터는 Supervisor Agent가 각 LLM 호출마다 입력 자료량, 후보 업무 수, 근거 수, 예상 출력량, 예상 처리 시간, 모델 품질 점수, context window, 1M token당 입력/출력 비용을 계산해 `agent_model_decisions` trace에 선택 근거를 남긴다. 각 decision에는 `cost_calculation`이 포함되어 입력 비용, 출력 비용, 총 예상 비용과 산식을 확인할 수 있다. `SUPERVISOR_LLM_ENABLED=true`이면 Supervisor Agent도 실제 LLM으로 실행되어 각 Expert Agent에게 자율성 수준, node 순서, tool 우선순위, 사람 승인 gate를 위임하고 `agent_supervisor_delegations` trace에 남긴다. Supervisor Agent 자체는 `SUPERVISOR_MODEL_PROVIDER`와 `SUPERVISOR_MODEL_NAME`의 상위 모델을 우선 사용한다. 기본 정책은 Supervisor를 `gpt-5.6-sol`에 고정하고, 나머지 Expert Agent와 LLM 도구는 `gpt-5.6-terra`, `gpt-5.6-luna`, `OPENAI_EXTRA_MODEL_PROFILES_JSON`에 등록한 저가 GPT 후보, 로컬 vLLM, Anthropic 후보까지 포함해 고른다. Supervisor가 아닌 호출은 `required_quality_score - MODEL_ROUTER_QUALITY_FLOOR_MARGIN` 이상의 품질 후보만 선택 대상으로 두고, 그 안에서 가격 대비 효율 점수가 가장 높은 모델을 자동 선택한다. 따라서 단순 command/reflection은 더 싼 GPT 후보로 내려갈 수 있고, critic/report처럼 품질 요구가 큰 작업은 너무 낮은 모델을 자동 제외한다. vLLM은 항상 `.env`의 `VLLM_MODEL`과 `VLLM_BASE_URL`을 사용한다.
 
-LLM 호출이 timeout되면 `retry_attempts`에 실패 모델과 timeout 시간을 남긴 뒤 `select_escalation_model`이 더 높은 품질 모델 또는 다른 고품질 provider를 골라 재시도한다. Supervisor retry에서 추가로 선택된 모델은 `agent_model_decisions`에 `selected_by=timeout_escalated_model` 또는 `timeout_retry_same_upper_model`로 기록된다. 실제 Agent handoff에는 `selected_tools`, `selected_tool_trace`, `supervisor_tool_policy`가 남아 어떤 tool이 실행/검증되었는지 추적할 수 있다.
+LLM 호출이 timeout되거나 선택한 모델에 대한 접근권한/model-not-found 오류가 발생하면 `retry_attempts`에 실패 모델, timeout 시간, 실패 유형을 남긴다. Supervisor는 기본 `SUPERVISOR_LLM_TIMEOUT_SECONDS=45`를 사용하고, `gpt-5.6-sol`이 timeout되면 낮은 모델로 내려가지 않고 retry 예산 안에서 같은 Sol 모델을 더 긴 timeout으로 계속 재시도한다. 접근권한/model-not-found 오류처럼 Sol 자체를 사용할 수 없는 경우에만 `select_escalation_model`이 다른 provider 또는 사용 가능한 후보를 고른다. Supervisor를 제외한 Expert Agent와 LLM 도구는 처음에는 가격 대비 효율 수식으로 고른 모델을 쓰고, timeout이 발생하면 더 높은 품질 모델로 상향한다. Supervisor retry에서 추가로 선택된 모델은 `agent_model_decisions`에 `selected_by=timeout_escalated_model` 또는 `timeout_retry_same_upper_model`로 기록된다. 실제 Agent handoff에는 `selected_tools`, `selected_tool_trace`, `supervisor_tool_policy`가 남아 어떤 tool이 실행/검증되었는지 추적할 수 있다.
 
 근거 검색은 process별로 `workflow_full_context`, `problem_and_user_intent`, `automation_evidence_keywords` 세 가지 query 전략을 생성해 process-specific/company-wide 검색을 수행한다. 결과 state의 `retrieval_query_plan`과 evidence metadata의 `retrieval_strategy_hits`에서 어떤 검색 방법으로 근거가 잡혔는지 확인할 수 있다.
 

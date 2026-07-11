@@ -11,6 +11,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.agents.evaluation_policy import (
+    REVIEW_LEVELS,
+    VERY_WEAK_EVIDENCE_THRESHOLD,
+    build_evaluation_route,
+    compliance_requires_human_review,
+    is_very_weak_evidence,
+)
 from app.agents.tool_guard import build_tool_permission_report
 
 STATUS_ORDER = {
@@ -21,14 +28,11 @@ STATUS_ORDER = {
     "low_roi": 2,
     "excluded": 1,
 }
-REVIEW_LEVELS = {"enhanced_review", "sensitive_review"}
-
 LOW_EVIDENCE_ISSUE_THRESHOLD = 0.30
 ADDITIONAL_EVIDENCE_THRESHOLD = 0.40
 POST_REPLAN_ADDITIONAL_EVIDENCE_THRESHOLD = 0.35
 CONFIDENCE_THRESHOLD = 0.50
 HUMAN_REVIEW_THRESHOLD = 0.65
-VERY_WEAK_EVIDENCE_THRESHOLD = 0.15
 
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
@@ -168,7 +172,20 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
     confidence_threshold = CONFIDENCE_THRESHOLD
     human_review_threshold = HUMAN_REVIEW_THRESHOLD
     zero_evidence_coverage = evidence_coverage <= 0.0
-    very_weak_evidence_coverage = evidence_coverage < VERY_WEAK_EVIDENCE_THRESHOLD or (evidence_coverage < 0.20 and data_confidence < 0.30)
+    very_weak_evidence_coverage = is_very_weak_evidence(evidence_coverage, data_confidence)
+
+    requires_additional_evidence = zero_evidence_coverage or evidence_coverage < additional_evidence_threshold or confidence_score < confidence_threshold
+    route = build_evaluation_route(
+        candidate_status=candidate.get("status"),
+        compliance=candidate.get("compliance") or {},
+        risk_uncertainty=risk_uncertainty,
+        confidence_score=confidence_score,
+        human_review_threshold=human_review_threshold,
+        issues=issues,
+        requires_additional_evidence=requires_additional_evidence,
+        zero_evidence_coverage=zero_evidence_coverage,
+        very_weak_evidence_coverage=very_weak_evidence_coverage,
+    )
 
     return {
         "process_id": candidate.get("process_id"),
@@ -185,8 +202,9 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
         "human_review_threshold": human_review_threshold,
         "zero_evidence_coverage": zero_evidence_coverage,
         "very_weak_evidence_coverage": very_weak_evidence_coverage,
-        "requires_additional_evidence": zero_evidence_coverage or evidence_coverage < additional_evidence_threshold or confidence_score < confidence_threshold,
-        "requires_human_review": confidence_score < human_review_threshold or bool(issues) or candidate.get("status") == "human_review_required",
+        "requires_additional_evidence": requires_additional_evidence,
+        "requires_human_review": route["requires_human_review"],
+        "autonomy_route": route["autonomy_route"],
         "issues": issues,
     }
 
@@ -203,7 +221,7 @@ def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_ite
         if evaluation:
             copied["agent_evaluation"] = evaluation
             compliance = copied.get("compliance") or {}
-            compliance_review_required = compliance.get("compliance_level") in REVIEW_LEVELS or bool(compliance.get("human_review_required"))
+            compliance_review_required = compliance_requires_human_review(compliance)
             if compliance.get("blocked"):
                 copied["status"] = "excluded"
             elif copied.get("status") == "recommended" and compliance_review_required:

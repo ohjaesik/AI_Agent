@@ -15,6 +15,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.evaluation_policy import deterministic_critic_verdict, normalize_critic_verdict
 from app.agents.model_router import compact_model_assignment
 from app.core.llm import get_chat_model, invoke_chat_with_retry
 
@@ -39,13 +40,14 @@ Evaluation:
 
 Guidance:
 - Return pass when confidence_score >= 0.70, requires_additional_evidence=false, compliance_alignment is high, and issues is empty.
+- Return needs_replan when evidence is moderate but below the additional-evidence threshold and automatic source collection can improve it.
 - Return needs_review for sensitive_review, enhanced_review, unclear reviewer responsibility, or moderate uncertainty.
-- Return insufficient_evidence when evidence_coverage is weak or requires_additional_evidence=true.
+- Return insufficient_evidence only when evidence_coverage is zero/very weak or the candidate should not be shown as a recommendation before replan.
 - Return reject only for blocked/prohibited use or clearly unsafe scope.
 
 Return JSON:
 {{
-  "critic_verdict": "pass|needs_review|insufficient_evidence|reject",
+  "critic_verdict": "pass|needs_replan|needs_review|insufficient_evidence|reject",
   "critic_confidence_adjustment": -0.10,
   "critic_reason": "short Korean reason",
   "missing_evidence": ["item"],
@@ -77,8 +79,7 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 def normalize_verdict(value: Any) -> str:
     """normalize_verdict 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
-    verdict = str(value or "needs_review").strip().lower()
-    return verdict if verdict in {"pass", "needs_review", "insufficient_evidence", "reject"} else "needs_review"
+    return normalize_critic_verdict(value)
 
 
 def clamp_adjustment(value: Any) -> float:
@@ -92,20 +93,7 @@ def clamp_adjustment(value: Any) -> float:
 
 def deterministic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any]) -> str:
     """deterministic_verdict 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    compliance = candidate.get("compliance") or {}
-    if compliance.get("blocked"):
-        return "reject"
-    if evaluation.get("requires_additional_evidence"):
-        return "insufficient_evidence"
-    if compliance.get("compliance_level") in {"sensitive_review", "enhanced_review"}:
-        return "needs_review"
-    if evaluation.get("issues"):
-        return "needs_review"
-    if float(evaluation.get("confidence_score") or 0.0) >= 0.70 and float(evaluation.get("compliance_alignment") or 0.0) >= 0.95:
-        return "pass"
-    if evaluation.get("requires_human_review"):
-        return "needs_review"
-    return "pass"
+    return deterministic_critic_verdict(candidate, evaluation)
 
 
 def calibrate_critic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any], critic: dict[str, Any]) -> dict[str, Any]:
@@ -113,13 +101,21 @@ def calibrate_critic_verdict(candidate: dict[str, Any], evaluation: dict[str, An
     expected = deterministic_verdict(candidate, evaluation)
     verdict = normalize_verdict(critic.get("critic_verdict"))
 
-    if expected == "pass" and verdict in {"needs_review", "insufficient_evidence"}:
+    if expected == "pass" and verdict in {"needs_replan", "needs_review", "insufficient_evidence"}:
         critic = dict(critic)
         critic["critic_verdict"] = "pass"
         critic["critic_confidence_adjustment"] = max(0.0, float(critic.get("critic_confidence_adjustment") or 0.0))
         critic["critic_reason"] = "정량 평가상 근거·정합성 기준을 충족하여 LLM Critic의 과도한 재검토 판정을 pass로 보정했다."
         critic["missing_evidence"] = []
         critic["review_questions"] = []
+        critic["critic_calibrated"] = True
+        return critic
+
+    if expected == "needs_replan" and verdict == "insufficient_evidence":
+        critic = dict(critic)
+        critic["critic_verdict"] = "needs_replan"
+        critic["critic_confidence_adjustment"] = min(0.0, float(critic.get("critic_confidence_adjustment") or 0.0))
+        critic["critic_reason"] = "근거가 부족하지만 심각한 결측은 아니므로 Human Review 전에 자동 replan으로 근거 보강을 우선하도록 보정했다."
         critic["critic_calibrated"] = True
         return critic
 
@@ -137,7 +133,7 @@ def fallback_critic(
 ) -> dict[str, Any]:
     """fallback_critic 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     verdict = deterministic_verdict(candidate, evaluation)
-    adjustment = -0.05 if verdict == "insufficient_evidence" else 0.0
+    adjustment = -0.05 if verdict == "insufficient_evidence" else (-0.03 if verdict == "needs_replan" else 0.0)
     return {
         "critic_verdict": verdict,
         "critic_confidence_adjustment": adjustment,
@@ -211,12 +207,16 @@ def apply_llm_critic_to_evaluation(
 
         copied = dict(candidate)
         copied["agent_evaluation"] = evaluation
-        if critic.get("critic_verdict") in {"reject", "insufficient_evidence"} and copied.get("status") == "recommended":
+        critic_verdict = str(critic.get("critic_verdict") or "")
+        if critic_verdict in {"reject", "insufficient_evidence"} and copied.get("status") == "recommended":
             copied["status"] = "evidence_insufficient"
             copied["reason"] = f"{copied.get('reason', '')} LLM Critic 검토 결과 추가 근거가 필요하다.".strip()
-        elif critic.get("critic_verdict") == "needs_review" and copied.get("status") == "recommended":
+        elif critic_verdict == "needs_review" and copied.get("status") == "recommended":
             copied["status"] = "human_review_required"
             copied["reason"] = f"{copied.get('reason', '')} LLM Critic 검토 결과 Human Review가 필요하다.".strip()
+        elif critic_verdict == "needs_replan":
+            copied["agent_decision_status"] = "auto_replan_required"
+            copied["agent_decision_reason"] = "LLM Critic은 Human Review 전에 자동 근거 보강을 우선해야 한다고 판단했다."
         updated_items.append(copied)
         evaluation_map[process_id] = evaluation
 
@@ -231,6 +231,10 @@ def apply_llm_critic_to_evaluation(
         "llm_critic_needs_review_count": sum(
             1 for item in evaluation_map.values()
             if (item.get("llm_critic") or {}).get("critic_verdict") in {"needs_review", "insufficient_evidence", "reject"}
+        ),
+        "llm_critic_needs_replan_count": sum(
+            1 for item in evaluation_map.values()
+            if (item.get("llm_critic") or {}).get("critic_verdict") == "needs_replan"
         ),
         "llm_critic_calibrated_count": sum(
             1 for item in evaluation_map.values()

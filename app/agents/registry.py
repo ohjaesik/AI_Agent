@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from app.agents.tool_names import normalize_tool_name
+
 MAX_TOOL_CANDIDATES_PER_NODE = 5
 
 STATE_INPUT_SCHEMA = {
@@ -342,11 +344,6 @@ def get_agent_spec(agent_id: str) -> dict[str, Any] | None:
         if item.id == agent_id:
             return item.to_dict()
     return None
-
-
-def normalize_tool_name(tool_name: str) -> str:
-    """tool 이름 비교가 안정적으로 되도록 대소문자/구분자를 정규화한다."""
-    return str(tool_name or "").strip().lower().replace("_", " ").replace("-", " ")
 
 
 def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[str, Any] | None:

@@ -13,6 +13,10 @@ from typing import Any
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.core.config import get_settings
+from app.core.model_policy import (
+    is_model_availability_exception as policy_is_model_availability_exception,
+    normalize_blank as policy_normalize_blank,
+)
 from app.core.retry import retry_call
 
 DEFAULT_VLLM_BASE_URL = "http://localhost:8000/v1"
@@ -22,15 +26,18 @@ DEFAULT_VLLM_MODEL = "gemma-4-e4b-it"
 
 def normalize_blank(value: str | None, default: str) -> str:
     """normalize_blank 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
-    if value is None:
-        return default
+    return policy_normalize_blank(value, default)
 
-    value = str(value).strip()
 
-    if not value:
-        return default
+def is_model_availability_exception(exc: Exception) -> bool:
+    """선택한 모델명이 없거나 계정 접근권한이 없을 때 재라우팅 가능한 오류로 판단한다.
 
-    return value
+    GPT-5.6 계열처럼 계정별 rollout/권한 차이가 생길 수 있는 모델은 처음 선택이
+    실패해도 workflow 전체를 포기하지 말고 다음 후보로 재시도해야 한다. 인증키 자체가
+    틀린 오류와 구분하기 위해 "model/access/deployment" 관련 문구만 좁게 본다.
+    """
+
+    return policy_is_model_availability_exception(exc)
 
 
 def get_embedding_model() -> OpenAIEmbeddings:

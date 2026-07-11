@@ -8,7 +8,6 @@ Supervisor 최소 승인 정책과 실제 ranking/compliance/evaluation 상태�
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
 from langgraph.types import interrupt
@@ -16,30 +15,9 @@ from langgraph.types import interrupt
 from app.core.config import get_settings
 from app.db.crud import save_human_review, write_audit_log
 from app.db.database import SessionLocal
+from app.graph.audit import append_audit
 from app.graph.state import AXPlannerState
 from app.tools.review_applier import apply_human_review_to_ranking
-
-
-def utc_now() -> str:
-    """UTC ISO timestamp를 생성해 audit log의 공통 시간값으로 사용한다."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def append_audit(
-    state: AXPlannerState,
-    node_name: str,
-    status: str,
-    payload: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """append_audit 함수. Human Review interrupt/auto approval을 담당하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    return state.get("audit_logs", []) + [
-        {
-            "node": node_name,
-            "status": status,
-            "timestamp": utc_now(),
-            "payload": payload or {},
-        }
-    ]
 
 
 def priority_status_counts(state: AXPlannerState) -> dict[str, int]:

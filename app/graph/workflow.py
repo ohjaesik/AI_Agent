@@ -29,6 +29,7 @@ from app.agents.agent_llm import (
     run_agent_reflection_prompt,
 )
 from app.agents.autonomy import build_supervisor_loop_decision, resolve_stage_loop_limit
+from app.agents.cost_summary import build_total_cost_summary
 from app.agents.expert_executor import expert_executed_node
 from app.agents.handoff import attach_agent_stage_outputs
 from app.agents.model_router import SUPERVISOR_AGENT_ID, select_agent_model
@@ -95,6 +96,7 @@ def merge_stage_result(accumulator: dict[str, Any], node_result: dict[str, Any])
         "errors",
         "agent_contracts",
         "agent_tool_calls",
+        "agent_tool_validations",
         "agent_decisions",
         "agent_loop_iterations",
         "agent_loop_requests",
@@ -361,6 +363,14 @@ def expert_agent_stage(stage_name: str):
     return _agent_node
 
 
+def finalize_observability(state: dict[str, Any]) -> dict[str, Any]:
+    """최종 workflow state에 UI/디버깅용 top-level 요약을 붙인다."""
+
+    return {
+        "total_cost_summary": build_total_cost_summary(list(state.get("agent_model_decisions", []) or [])),
+    }
+
+
 def build_ax_planner_graph():
     """AX 분석 그래프를 생성한다.
 
@@ -384,6 +394,7 @@ def build_ax_planner_graph():
     builder.add_node("evaluation_critic_agent", expert_agent_stage("evaluation_critic_agent"))
     builder.add_node("agent_replan", expert_agent_stage("agent_replan"))
     builder.add_node("delivery_orchestration_agent", expert_agent_stage("delivery_orchestration_agent"))
+    builder.add_node("finalize_observability", finalize_observability)
 
     builder.add_edge(START, "context_evidence_agent")
 
@@ -419,6 +430,7 @@ def build_ax_planner_graph():
         },
     )
 
-    builder.add_edge("delivery_orchestration_agent", END)
+    builder.add_edge("delivery_orchestration_agent", "finalize_observability")
+    builder.add_edge("finalize_observability", END)
 
     return builder.compile(checkpointer=InMemorySaver())

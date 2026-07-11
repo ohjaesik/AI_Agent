@@ -327,11 +327,11 @@ def build_supervisor_loop_decision(
     cost_budget = _as_non_negative_float(policy.get("cost_budget_usd"), 0.0)
     blocking_reasons: list[str] = []
 
-    if not bool(policy.get("enabled", True)):
+    if not bool(policy.get("enabled", True)) and iteration_reasons:
         blocking_reasons.append("supervisor_autonomy_disabled")
-    if not bool(merged.get("agent_supervisor_extra_loop_enabled")):
+    if not bool(merged.get("agent_supervisor_extra_loop_enabled")) and iteration_reasons:
         blocking_reasons.append("extra_loop_not_enabled")
-    if cost_budget > 0 and estimated_cost >= cost_budget:
+    if cost_budget > 0 and estimated_cost >= cost_budget and iteration_reasons:
         blocking_reasons.append("autonomy_cost_budget_reached")
     if loop_index >= loop_limit and iteration_reasons:
         blocking_reasons.append("stage_loop_limit_reached")

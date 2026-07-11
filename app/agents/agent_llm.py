@@ -19,16 +19,24 @@ stage 실행은 이어진다.
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.agent_contract import sanitize_node_order
 from app.agents.model_router import compact_model_assignment, select_escalation_model
 from app.agents.registry import get_tool_specs_for_node
-from app.core.config import get_settings
 from app.core.llm import get_chat_model, invoke_chat_with_retry
+from app.core.llm_json import compact_json, extract_json_object
+from app.core.model_policy import (
+    is_model_availability_exception,
+    is_timeout_exception,
+    retry_status_for_exception,
+    retry_timeout_seconds,
+    safe_model_retry_count,
+    safe_model_retry_timeout_multiplier,
+    safe_model_timeout,
+)
 
 SYSTEM_PROMPT = """
 You are one Expert Agent inside an AX Delivery Supervisor workflow.
@@ -133,73 +141,6 @@ Return JSON only:
 }}
 """.strip()
 
-
-def compact_json(value: Any, max_chars: int = 6000) -> str:
-    """prompt에 넣을 JSON context를 지정 길이로 제한한다."""
-
-    text = json.dumps(value, ensure_ascii=False, default=str)
-    return text if len(text) <= max_chars else text[:max_chars] + "..."
-
-
-def extract_json_object(text: str) -> dict[str, Any]:
-    """LLM 응답에서 JSON object를 추출한다."""
-
-    cleaned = str(text or "").strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
-        cleaned = re.sub(r"```$", "", cleaned).strip()
-
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if not match:
-            raise
-        payload = json.loads(match.group(0))
-
-    if not isinstance(payload, dict):
-        raise ValueError("LLM response JSON must be an object")
-    return payload
-
-
-def safe_settings_timeout(default: float = 8.0) -> float:
-    """Agent LLM timeout 설정을 안전하게 읽는다."""
-
-    try:
-        settings = get_settings()
-        # Reuse vLLM timeout if a dedicated setting does not exist.
-        return float(getattr(settings, "agent_llm_timeout_seconds", default) or default)
-    except Exception:
-        return default
-
-
-def safe_retry_count(default: int = 1) -> int:
-    """Agent LLM retry 횟수를 안전하게 읽는다."""
-
-    try:
-        settings = get_settings()
-        return max(0, int(getattr(settings, "agent_llm_retry_count", default) or default))
-    except Exception:
-        return default
-
-
-def safe_retry_timeout_multiplier(default: float = 1.6) -> float:
-    """Agent LLM retry마다 timeout을 늘리는 배수를 읽는다."""
-
-    try:
-        settings = get_settings()
-        return max(1.0, float(getattr(settings, "agent_llm_retry_timeout_multiplier", default) or default))
-    except Exception:
-        return default
-
-
-def is_timeout_exception(exc: Exception) -> bool:
-    """provider별 timeout 예외 이름이 달라 문자열 기반으로도 timeout을 감지한다."""
-
-    text = f"{type(exc).__name__}: {exc}".lower()
-    return "timeout" in text or "timed out" in text or "readtimeout" in text
-
-
 class AgentLLMInvocationError(Exception):
     """LLM 호출 실패와 retry trace를 함께 운반한다."""
 
@@ -226,7 +167,7 @@ def invoke_chat_with_timeout_escalation(
     call_kind: str,
     state: dict[str, Any],
 ) -> tuple[Any, dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
-    """timeout이면 모델을 상향/대체해 재시도하고 모든 시도를 trace로 반환한다.
+    """timeout 또는 모델 접근 실패면 모델을 상향/대체해 재시도하고 모든 시도를 trace로 반환한다.
 
     반환값:
     - response: 최종 LLM 응답
@@ -234,19 +175,20 @@ def invoke_chat_with_timeout_escalation(
     - model_retry_assignments: retry 과정에서 새로 선택된 모델들
     - retry_attempts: 각 시도의 timeout, status, error trace
 
-    timeout이 아닌 오류는 보통 재시도해도 해결되지 않는 경우가 많아서 즉시 예외로
-    올리고, 호출부가 deterministic fallback command/reflection을 만든다.
+    timeout과 model-not-found/access 오류는 다른 후보로 해결될 수 있으므로 재시도한다.
+    그 외 인증 오류, prompt 오류, provider 내부 오류는 호출부가 deterministic
+    fallback command/reflection을 만들도록 즉시 예외로 올린다.
     """
 
     retry_attempts: list[dict[str, Any]] = []
     model_retry_assignments: list[dict[str, Any]] = []
     attempt_model_assignment = model_assignment
-    max_attempts = safe_retry_count() + 1
-    base_timeout = safe_settings_timeout()
-    timeout_multiplier = safe_retry_timeout_multiplier()
+    max_attempts = safe_model_retry_count("agent", default=1) + 1
+    base_timeout = safe_model_timeout("agent", default=8.0)
+    timeout_multiplier = safe_model_retry_timeout_multiplier("agent", default=1.6)
 
     for attempt_index in range(1, max_attempts + 1):
-        timeout_seconds = round(base_timeout * (timeout_multiplier ** (attempt_index - 1)), 3)
+        timeout_seconds = retry_timeout_seconds(base_timeout, timeout_multiplier, attempt_index)
         try:
             llm = get_chat_model(temperature=0.0, timeout=timeout_seconds, model_assignment=attempt_model_assignment)
             response = invoke_chat_with_retry(llm, messages, retries=0)
@@ -262,17 +204,18 @@ def invoke_chat_with_timeout_escalation(
         except Exception as exc:
             error_text = f"{type(exc).__name__}: {exc}"
             timed_out = is_timeout_exception(exc)
+            model_unavailable = is_model_availability_exception(exc)
             retry_attempts.append(
                 {
                     "attempt": attempt_index,
-                    "status": "timeout" if timed_out else "failed",
+                    "status": retry_status_for_exception(exc),
                     "timeout_seconds": timeout_seconds,
                     "model_selection": compact_model_assignment(attempt_model_assignment),
                     "error_type": type(exc).__name__,
                     "error": str(exc),
                 }
             )
-            if not timed_out or attempt_index >= max_attempts:
+            if not (timed_out or model_unavailable) or attempt_index >= max_attempts:
                 raise AgentLLMInvocationError(
                     error_text,
                     retry_attempts=retry_attempts,
@@ -363,17 +306,6 @@ def assigned_work_for_nodes(agent_id: str, internal_nodes: list[str]) -> list[di
             }
         )
     return work
-
-
-def sanitize_node_order(raw_order: Any, internal_nodes: list[str]) -> list[str]:
-    """Agent command가 반환한 node 순서를 허용된 내부 node로 정규화한다."""
-
-    if not isinstance(raw_order, list):
-        return internal_nodes
-    ordered = [str(item) for item in raw_order if str(item) in internal_nodes]
-    ordered += [node for node in internal_nodes if node not in ordered]
-    return ordered or internal_nodes
-
 
 def fallback_agent_command(
     *,
