@@ -1,3 +1,5 @@
+<!-- 파일 역할: 외부 web search provider 설정과 replan 보조 검색 검증 절차를 설명한다. -->
+
 # Public Web Search Validation
 
 Public web search는 기본 비활성화 상태다. Replan Loop에서 같은 공식 도메인 자료만으로 근거가 부족할 때, Brave Search 또는 SerpAPI를 보조 출처 탐색에 사용할 수 있다.

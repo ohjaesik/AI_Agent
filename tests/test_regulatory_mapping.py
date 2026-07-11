@@ -1,3 +1,6 @@
+"""규제 mapping과 compliance level 산출을 검증한다.
+"""
+
 from app.compliance.assessment import assess_ai_compliance, classify_process
 from app.compliance.regulatory_mapping import build_regulatory_mappings, summarize_regulatory_mappings
 

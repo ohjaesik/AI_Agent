@@ -1,5 +1,11 @@
 # app/storage/file_store.py
 
+"""원본 문서 파일 저장소 abstraction.
+
+local filesystem 또는 S3/MinIO backend에 업로드 파일을 저장하고, DB에는 저장 위치를
+metadata로 남길 수 있게 한다.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +20,7 @@ from app.core.config import get_settings
 
 @dataclass(frozen=True)
 class StoredFile:
+    """StoredFile 클래스. 원본 문서 파일 저장소 abstraction.에서 사용하는 구조화된 데이터/동작 단위다."""
     storage_uri: str
     original_filename: str
     size_bytes: int
@@ -22,6 +29,7 @@ class StoredFile:
 
 
 def sha256_file(path: Path) -> str:
+    """sha256_file 함수. 원본 문서 파일 저장소 abstraction. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     digest = hashlib.sha256()
     with path.open("rb") as file:
         for block in iter(lambda: file.read(1024 * 1024), b""):
@@ -30,6 +38,7 @@ def sha256_file(path: Path) -> str:
 
 
 def safe_filename(filename: str | None, fallback: str = "document") -> str:
+    """safe_filename 함수. 원본 문서 파일 저장소 abstraction. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     raw = (filename or fallback).strip() or fallback
     keep = []
     for char in raw:
@@ -41,10 +50,12 @@ def safe_filename(filename: str | None, fallback: str = "document") -> str:
 
 
 def build_object_key(company_id: int, original_filename: str) -> str:
+    """build_object_key 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     return f"documents/company_{company_id}/{uuid4().hex}_{safe_filename(original_filename)}"
 
 
 def save_local_file(source_path: Path, company_id: int, original_filename: str) -> StoredFile:
+    """save_local_file 함수. 분석 결과나 사용자 결정을 DB 또는 파일에 저장한다."""
     settings = get_settings()
     object_key = build_object_key(company_id=company_id, original_filename=original_filename)
     destination = Path(settings.local_storage_dir) / object_key
@@ -61,6 +72,7 @@ def save_local_file(source_path: Path, company_id: int, original_filename: str) 
 
 
 def save_s3_file(source_path: Path, company_id: int, original_filename: str) -> StoredFile:
+    """save_s3_file 함수. 분석 결과나 사용자 결정을 DB 또는 파일에 저장한다."""
     import boto3
 
     settings = get_settings()
@@ -93,6 +105,7 @@ def save_s3_file(source_path: Path, company_id: int, original_filename: str) -> 
 
 
 def save_original_file(source_path: str | Path, company_id: int, original_filename: str | None = None) -> StoredFile:
+    """save_original_file 함수. 분석 결과나 사용자 결정을 DB 또는 파일에 저장한다."""
     path = Path(source_path)
     if not path.exists():
         raise FileNotFoundError(path)

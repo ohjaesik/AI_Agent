@@ -1,5 +1,11 @@
 # app/sources/collector.py
 
+"""RAG chunk와 내부 문서를 evidence item/source 목록으로 변환한다.
+
+retrieved context를 보고서 citation과 downstream scoring이 사용할 수 있는 표준 evidence
+구조로 정규화한다.
+"""
+
 from __future__ import annotations
 
 from datetime import date
@@ -7,6 +13,7 @@ from typing import Any
 
 
 def make_citation_label(prefix: str, source_id: Any) -> str:
+    """make_citation_label 함수. RAG chunk와 내부 문서를 evidence item/source 목록으로 변환한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return f"[{prefix}-{source_id}]"
 
 
@@ -14,6 +21,7 @@ def internal_document_to_evidence(
     document: dict[str, Any],
     used_for: list[str] | None = None,
 ) -> dict[str, Any]:
+    """DB 문서 metadata를 표준 evidence item으로 변환한다."""
     document_id = document.get("id")
 
     return {
@@ -46,6 +54,7 @@ def rag_chunk_to_evidence(
     chunk: dict[str, Any],
     used_for: list[str] | None = None,
 ) -> dict[str, Any]:
+    """검색된 RAG chunk를 표준 evidence item으로 변환한다."""
     chunk_id = chunk.get("chunk_id")
     document_id = chunk.get("document_id")
 
@@ -87,6 +96,7 @@ def agent_output_to_evidence(
     used_for: list[str],
     source_agent: str,
 ) -> dict[str, Any]:
+    """agent_output_to_evidence 함수. RAG chunk와 내부 문서를 evidence item/source 목록으로 변환한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return {
         "evidence_id": evidence_id,
         "source_type": "agent_output",
@@ -111,6 +121,7 @@ def agent_output_to_evidence(
 
 
 def dedupe_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """중복 evidence item을 label/source 기준으로 제거한다."""
     seen: set[str] = set()
     result: list[dict[str, Any]] = []
 
@@ -130,6 +141,7 @@ def dedupe_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def build_used_sources(evidence_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """evidence item 목록에서 보고서 reference로 쓸 source 목록을 만든다."""
     seen: set[str] = set()
     sources: list[dict[str, Any]] = []
 

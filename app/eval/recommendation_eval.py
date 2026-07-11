@@ -1,5 +1,10 @@
 # app/eval/recommendation_eval.py
 
+"""추천 결과의 간단한 품질 지표를 계산한다.
+
+후보 ranking과 기대 label을 비교해 데모/실험용 평가 metric을 만든다.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -14,6 +19,7 @@ from app.db.models import AnalysisResult
 
 
 def load_gold(path: str | Path) -> dict[str, Any]:
+    """load_gold 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
     if "relevant_process_ids" not in data:
@@ -23,6 +29,7 @@ def load_gold(path: str | Path) -> dict[str, Any]:
 
 
 def load_latest_priority_ranking(project_id: int) -> dict[str, Any]:
+    """load_latest_priority_ranking 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     with SessionLocal() as db:
         stmt = (
             select(AnalysisResult)
@@ -39,6 +46,7 @@ def load_latest_priority_ranking(project_id: int) -> dict[str, Any]:
 
 
 def load_prediction(path: str | Path | None, project_id: int | None) -> dict[str, Any]:
+    """load_prediction 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     if path:
         return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -53,6 +61,7 @@ def evaluate_ranking(
     relevant_process_ids: list[int],
     k: int = 5,
 ) -> dict[str, Any]:
+    """evaluate_ranking 함수. 추천 결과의 간단한 품질 지표를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     items = prediction.get("items", [])
     ranked_process_ids = [int(item.get("process_id")) for item in items if item.get("process_id")]
     relevant = set(int(value) for value in relevant_process_ids)
@@ -82,6 +91,7 @@ def evaluate_ranking(
 
 
 def parse_args() -> argparse.Namespace:
+    """CLI 실행 인자를 정의하고 argparse Namespace로 변환한다."""
     parser = argparse.ArgumentParser(description="Evaluate AX recommendation ranking.")
     parser.add_argument("--gold-file", type=str, required=True)
     parser.add_argument("--prediction-file", type=str, default=None)
@@ -91,6 +101,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     args = parse_args()
     gold = load_gold(args.gold_file)
     prediction = load_prediction(args.prediction_file, args.project_id)

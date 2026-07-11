@@ -1,5 +1,11 @@
 # app/graph/compliance_node.py
 
+"""LangGraph에서 compliance assessment를 실행하는 node.
+
+risk governance 결과와 업무 후보를 바탕으로 blocked/human review/control 정보를 state에
+저장한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -12,6 +18,7 @@ from app.graph.state import AXPlannerState
 
 
 def compliance_assessment_node(state: AXPlannerState) -> dict[str, Any]:
+    """risk governance 결과를 compliance level과 review/control 항목으로 변환한다."""
     node_name = "compliance_assessment"
 
     try:

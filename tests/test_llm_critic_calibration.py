@@ -1,3 +1,6 @@
+"""LLM critic 결과가 ranking status를 보수적으로 보정하는지 검증한다.
+"""
+
 from app.agents.llm_critic import calibrate_critic_verdict, deterministic_verdict
 
 

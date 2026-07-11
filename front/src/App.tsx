@@ -1,9 +1,13 @@
+// AX Delivery Planner dashboard SPA.
+// 백엔드 FastAPI endpoint를 호출해 문서 ingestion, RAG 검색, Supervisor 분석, HITL review를 한 화면에서 실행한다.
 import { useEffect, useState, useRef } from 'react';
 import * as api from './api';
 import './App.css';
 
+// 화면은 독립 route를 쓰지 않고 탭 상태만으로 전환한다.
 type Tab = 'dashboard' | 'ingestion' | 'analysis' | 'settings';
 
+// 화면 하단 console에 남기는 사용자 친화적 실행 로그 형식.
 interface LogLine {
   text: string;
   type: 'info' | 'success' | 'error';
@@ -11,18 +15,18 @@ interface LogLine {
 }
 
 export default function App() {
-  // Navigation & Health
+  // Navigation & Health: 현재 탭과 backend 연결 상태를 관리한다.
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [apiStatus, setApiStatus] = useState<'checking' | 'ok' | 'unreachable'>('checking');
 
-  // Settings state (loads from localStorage)
+  // Settings state: API key/role/user ID는 localStorage에 저장해 새로고침 후에도 유지한다.
   const [apiKey, setApiKey] = useState(localStorage.getItem('ax_api_key') || '');
   const [userRole, setUserRole] = useState(localStorage.getItem('ax_user_role') || 'admin');
   const [userId, setUserId] = useState(localStorage.getItem('ax_user_id') || 'admin-user');
   const [companyId, setCompanyId] = useState<number>(1);
   const [projectId, setProjectId] = useState<number>(1);
 
-  // Ingestion state
+  // Ingestion state: 문서 업로드 form, 보안 등급, process 연결값을 관리한다.
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [uploadMsg, setUploadMsg] = useState('');
@@ -32,41 +36,43 @@ export default function App() {
   const [docSecurity, setDocSecurity] = useState('internal');
   const [docProcessId, setDocProcessId] = useState('');
 
-  // RAG Search & Indexer state
+  // RAG Search & Indexer state: 색인 재생성과 similarity 검색 결과를 관리한다.
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [reindexing, setReindexing] = useState(false);
   const [reindexMsg, setReindexMsg] = useState('');
 
-  // Analysis state
+  // Analysis state: Supervisor graph 실행 여부와 분석 응답 payload를 보관한다.
   const [runningAnalysis, setRunningAnalysis] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<api.AnalysisResponse | null>(null);
   const [autoApprove, setAutoApprove] = useState(true);
 
-  // HITL state
+  // HITL state: 자동 승인되지 않은 후보를 사람이 재정렬/승인할 때 쓰는 임시 상태다.
   const [hitlDecision, setHitlDecision] = useState<'approve' | 'edit' | 'reject'>('edit');
   const [hitlReason, setHitlReason] = useState('');
   const [hitlCandidates, setHitlCandidates] = useState<any[]>([]);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [reviewResultMsg, setReviewResultMsg] = useState('');
 
-  // Log outputs for our mock console
+  // Log outputs: backend 작업이 오래 걸릴 때 사용자가 흐름을 볼 수 있도록 화면 console에 누적한다.
   const [consoleLogs, setConsoleLogs] = useState<LogLine[]>([]);
   const consoleBottomRef = useRef<HTMLDivElement>(null);
 
   const addLog = (text: string, type: 'info' | 'success' | 'error' = 'info') => {
+    // 로그마다 표시 시간을 붙여 실행 순서를 눈으로 추적하기 쉽게 만든다.
     const time = new Date().toLocaleTimeString();
     setConsoleLogs((prev) => [...prev, { text, type, timestamp: time }]);
   };
 
   useEffect(() => {
+    // 새 로그가 추가되면 console 영역을 맨 아래로 자동 스크롤한다.
     if (consoleBottomRef.current) {
       consoleBottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [consoleLogs]);
 
-  // Check health on mount or when API settings change
+  // API 설정이 바뀌거나 화면이 처음 열릴 때 backend health를 다시 확인한다.
   useEffect(() => {
     setApiStatus('checking');
     addLog('Checking backend connection...', 'info');
@@ -81,7 +87,7 @@ export default function App() {
       });
   }, [apiKey, userRole, userId]);
 
-  // Save Settings
+  // 설정 탭에서 입력한 인증/사용자 정보를 localStorage에 저장한다.
   const saveSettings = () => {
     localStorage.setItem('ax_api_key', apiKey);
     localStorage.setItem('ax_user_role', userRole);
@@ -89,7 +95,7 @@ export default function App() {
     addLog(`Configuration saved: Role=${userRole}, ID=${userId}`, 'success');
   };
 
-  // Trigger RAG Reindex
+  // RAG 재색인: backend가 DB 문서를 다시 chunking하고 embedding table을 갱신한다.
   const triggerReindex = () => {
     setReindexing(true);
     setReindexMsg('Reindexing documents...');
@@ -108,7 +114,7 @@ export default function App() {
       });
   };
 
-  // RAG Search
+  // RAG 검색: 사용자가 입력한 질의를 backend similarity search endpoint로 전달한다.
   const runSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery) return;
@@ -131,7 +137,7 @@ export default function App() {
       });
   };
 
-  // Ingest Document
+  // 문서 업로드: file + metadata를 multipart form으로 만들어 ingestion endpoint에 전달한다.
   const handleUpload = (e: React.FormEvent) => {
     e.preventDefault();
     if (!uploadFile) {
@@ -170,7 +176,7 @@ export default function App() {
       });
   };
 
-  // Run AX Analysis
+  // AX 분석 실행: Supervisor graph를 호출하고, 응답이 interrupt면 HITL 후보 UI를 준비한다.
   const handleAnalysis = () => {
     setRunningAnalysis(true);
     setAnalysisResult(null);
@@ -190,10 +196,12 @@ export default function App() {
           addLog('Analysis interrupted: Waiting for Human Review (HITL).', 'info');
           
           try {
+            // interrupt payload는 길 수 있으므로 console에는 앞부분만 보여준다.
             const rawInterrupt = res.interrupt || '';
             addLog(`Interrupt payload: ${rawInterrupt.substring(0, 150)}...`, 'info');
-          } catch(e) {}
+          } catch {}
           
+          // 현재 UI는 demo용 후보 목록을 보여준다. 실제 ranking payload 연결 시 이 배열을 backend 응답에서 채우면 된다.
           setHitlCandidates([
             { id: 31, name: '작업표준서 다국어 번역 및 검색', roi: 'High', feasibility: 'High', risk: 'Low', agent: 'SOP Translation Agent' },
             { id: 32, name: '생산 정비 일지 자동 요약', roi: 'Medium', feasibility: 'Medium', risk: 'Low', agent: 'Maintenance Reporter' },
@@ -210,7 +218,7 @@ export default function App() {
       });
   };
 
-  // HITL Re-rank candidate helper
+  // HITL 후보 재정렬 helper. 위/아래 버튼이 이 함수를 호출해 ranking 순서를 바꾼다.
   const moveCandidate = (index: number, direction: 'up' | 'down') => {
     const nextList = [...hitlCandidates];
     const targetIdx = direction === 'up' ? index - 1 : index + 1;
@@ -222,7 +230,7 @@ export default function App() {
     setHitlCandidates(nextList);
   };
 
-  // Apply HITL Decision
+  // HITL 결정 제출: 사람이 조정한 ranking과 사유를 backend review endpoint로 보낸다.
   const submitReview = () => {
     if (!analysisResult) return;
     setSubmittingReview(true);

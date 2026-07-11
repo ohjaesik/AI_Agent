@@ -1,5 +1,10 @@
 # app/tools/docx_generator.py
 
+"""report_data를 DOCX 보고서 파일로 내보내는 tool.
+
+표지, section, 표, citation 정보를 Word 문서로 렌더링하고 outputs 경로를 반환한다.
+"""
+
 from __future__ import annotations
 
 import re
@@ -36,23 +41,28 @@ STATUS_NOTES = {
 
 
 def report_status(report_data: dict[str, Any]) -> str:
+    """report_status 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     status = str(report_data.get("status") or "draft").lower()
     return status if status in STATUS_LABELS else "draft"
 
 
 def report_status_label(report_data: dict[str, Any]) -> str:
+    """report_status_label 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return STATUS_LABELS[report_status(report_data)]
 
 
 def report_status_note(report_data: dict[str, Any]) -> str:
+    """report_status_note 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return STATUS_NOTES[report_status(report_data)]
 
 
 def section_title_without_number(heading: str) -> str:
+    """section_title_without_number 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return re.sub(r"^\s*\d+\.\s*", "", str(heading or "제목 없음")).strip()
 
 
 def toc_display_items(sections: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    """toc_display_items 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     items: list[tuple[str, str]] = [
         ("A", "Executive Dashboard"),
         ("B", "Top Candidate Detail"),
@@ -78,6 +88,7 @@ def set_cell_text(
     color: str = COLOR_NAVY,
     align: WD_ALIGN_PARAGRAPH = WD_ALIGN_PARAGRAPH.CENTER,
 ) -> None:
+    """set_cell_text 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     cell.text = ""
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     paragraph = cell.paragraphs[0]
@@ -94,6 +105,7 @@ def set_cell_text(
 
 
 def set_cell_shading(cell, fill: str = COLOR_GRAY) -> None:
+    """set_cell_shading 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     tc_pr = cell._tc.get_or_add_tcPr()
     shading = OxmlElement("w:shd")
     shading.set(qn("w:fill"), fill)
@@ -101,6 +113,7 @@ def set_cell_shading(cell, fill: str = COLOR_GRAY) -> None:
 
 
 def set_cell_border(cell, color: str = "D1D5DB", size: str = "4") -> None:
+    """set_cell_border 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     tc_pr = cell._tc.get_or_add_tcPr()
     borders = tc_pr.first_child_found_in("w:tcBorders")
     if borders is None:
@@ -120,6 +133,7 @@ def set_cell_border(cell, color: str = "D1D5DB", size: str = "4") -> None:
 
 
 def set_run_font(run, size: int = 10, bold: bool = False, color: str = COLOR_NAVY) -> None:
+    """set_run_font 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     run.font.name = FONT_NAME
     run._element.rPr.rFonts.set(qn("w:eastAsia"), FONT_NAME)
     run.font.size = Pt(size)
@@ -128,6 +142,7 @@ def set_run_font(run, size: int = 10, bold: bool = False, color: str = COLOR_NAV
 
 
 def add_bottom_border(paragraph, color: str = COLOR_BLUE, size: str = "12") -> None:
+    """add_bottom_border 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     p_pr = paragraph._p.get_or_add_pPr()
     p_bdr = OxmlElement("w:pBdr")
     bottom = OxmlElement("w:bottom")
@@ -140,6 +155,7 @@ def add_bottom_border(paragraph, color: str = COLOR_BLUE, size: str = "12") -> N
 
 
 def configure_document_styles(doc: Document) -> None:
+    """configure_document_styles 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     section = doc.sections[0]
     section.top_margin = Cm(1.6)
     section.bottom_margin = Cm(1.5)
@@ -166,6 +182,7 @@ def configure_document_styles(doc: Document) -> None:
 
 
 def add_header_footer(doc: Document, report_data: dict[str, Any]) -> None:
+    """add_header_footer 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     company_name = report_data.get("company_name") or report_data.get("executive_summary", {}).get("company_name", "")
     status_label = report_status_label(report_data)
     for section in doc.sections:
@@ -181,6 +198,7 @@ def add_header_footer(doc: Document, report_data: dict[str, Any]) -> None:
 
 
 def add_small_label(doc: Document, text: str) -> None:
+    """add_small_label 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     paragraph = doc.add_paragraph()
     paragraph.paragraph_format.space_after = Pt(2)
     run = paragraph.add_run(text)
@@ -188,6 +206,7 @@ def add_small_label(doc: Document, text: str) -> None:
 
 
 def add_paragraph_block(doc: Document, text: str, font_size: int = 9.5) -> None:
+    """add_paragraph_block 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     if not text:
         return
     paragraph = doc.add_paragraph()
@@ -205,6 +224,7 @@ def add_table_block(
     font_size: int = 7,
     header_fill: str = COLOR_NAVY,
 ) -> None:
+    """add_table_block 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     if not headers:
         return
 
@@ -231,6 +251,7 @@ def add_table_block(
 
 
 def add_cover_page(doc: Document, report_data: dict[str, Any]) -> None:
+    """add_cover_page 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     for _ in range(3):
         doc.add_paragraph()
 
@@ -296,6 +317,7 @@ def add_cover_page(doc: Document, report_data: dict[str, Any]) -> None:
 
 
 def add_metric_card(table, row: int, col: int, label: str, value: Any, fill: str = COLOR_LIGHT_BLUE) -> None:
+    """add_metric_card 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     cell = table.cell(row, col)
     set_cell_shading(cell, fill)
     set_cell_border(cell, color="BFDBFE", size="6")
@@ -313,6 +335,7 @@ def add_metric_card(table, row: int, col: int, label: str, value: Any, fill: str
 
 
 def add_executive_dashboard(doc: Document, report_data: dict[str, Any]) -> None:
+    """add_executive_dashboard 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     summary = report_data.get("executive_summary") or {}
     candidates = report_data.get("top_candidates") or []
     doc.add_heading("Executive Dashboard", level=1)
@@ -350,6 +373,7 @@ def add_executive_dashboard(doc: Document, report_data: dict[str, Any]) -> None:
 
 
 def add_table_of_contents(doc: Document, sections: list[dict[str, Any]]) -> None:
+    """add_table_of_contents 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     doc.add_heading("Table of Contents", level=1)
     for label, heading in toc_display_items(sections):
         paragraph = doc.add_paragraph()
@@ -361,6 +385,7 @@ def add_table_of_contents(doc: Document, sections: list[dict[str, Any]]) -> None
 
 
 def add_top_candidate_details(doc: Document, report_data: dict[str, Any]) -> None:
+    """add_top_candidate_details 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     candidates = report_data.get("top_candidates") or []
     if not candidates:
         return
@@ -404,6 +429,7 @@ def add_top_candidate_details(doc: Document, report_data: dict[str, Any]) -> Non
 
 
 def add_section(doc: Document, section: dict[str, Any]) -> None:
+    """add_section 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     doc.add_heading(section.get("heading", "제목 없음"), level=1)
     for block in section.get("blocks", []):
         block_type = block.get("type")
@@ -420,6 +446,7 @@ def add_section(doc: Document, section: dict[str, Any]) -> None:
 
 
 def format_reference(reference: Any, idx: int) -> str:
+    """format_reference 함수. 사용자에게 보여줄 문자열이나 보고서 문구로 값을 포맷한다."""
     if isinstance(reference, str):
         return f"[{idx}] {reference}"
 
@@ -440,6 +467,7 @@ def format_reference(reference: Any, idx: int) -> str:
 
 
 def add_references(doc: Document, references: list[Any]) -> None:
+    """add_references 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     doc.add_page_break()
     doc.add_heading("References", level=1)
     if not references:
@@ -456,6 +484,7 @@ def add_references(doc: Document, references: list[Any]) -> None:
 
 
 def generate_docx_report(report_data: dict[str, Any], output_path: str | Path) -> str:
+    """report_data 전체를 Word 문서로 생성하고 저장 경로를 반환한다."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc = Document()

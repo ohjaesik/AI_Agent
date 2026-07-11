@@ -1,3 +1,6 @@
+"""replan으로 추가 근거가 생겼을 때 evaluator confidence가 상승하는지 검증한다.
+"""
+
 from app.agents.evaluator import compute_replan_evidence_lift, evaluate_candidate
 
 

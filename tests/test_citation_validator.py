@@ -1,3 +1,6 @@
+"""보고서 citation validator가 허용/미허용 label을 구분하는지 검증한다.
+"""
+
 from app.tools.citation_validator import normalize_citation_label, normalize_citation_labels, validate_report_citations
 
 

@@ -1,3 +1,6 @@
+"""Agent registry, tool permission, handoff trace, runtime loop 구조를 검증한다.
+"""
+
 from __future__ import annotations
 
 import pytest

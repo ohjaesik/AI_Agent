@@ -1,5 +1,10 @@
 # app/graph/llm_critic_node.py
 
+"""LangGraph에서 LLM critic을 실행하는 node.
+
+Evaluator 결과를 LLM second opinion으로 검토하고, 실패하면 deterministic 결과를 유지한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,6 +19,7 @@ from app.graph.state import AXPlannerState
 
 
 def llm_critic_node(state: AXPlannerState) -> dict[str, Any]:
+    """LLM second opinion으로 evaluator 결과를 보정한다."""
     node_name = "llm_critic"
 
     try:

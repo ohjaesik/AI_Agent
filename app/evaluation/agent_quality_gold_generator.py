@@ -1,5 +1,10 @@
 # app/evaluation/agent_quality_gold_generator.py
 
+"""Agent 품질 평가용 gold data를 생성한다.
+
+대표 업무/리스크/추천 상태 예시를 만들어 회귀 테스트나 오프라인 평가에 사용한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -17,6 +22,7 @@ PARTIAL_RATIONALE_2 = {"expected_effect": "ok", "repeatability": "ok"}
 
 
 def rationale(kind: str) -> dict[str, str]:
+    """rationale 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if kind == "full":
         return dict(FULL_RATIONALE)
     if kind == "partial3":
@@ -27,10 +33,12 @@ def rationale(kind: str) -> dict[str, str]:
 
 
 def labels(count: int) -> list[str]:
+    """labels 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return ["[공식URL-1]", "[공식URL-2]", "[DART-기업개황]"][:count]
 
 
 def compliance(process_id: int, level: str, blocked: bool = False) -> dict[str, Any]:
+    """compliance 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return {"process_id": process_id, "compliance_level": level, "human_review_required": True, "blocked": blocked}
 
 
@@ -51,6 +59,7 @@ def make_case(
     blocked: bool = False,
     replan: bool = False,
 ) -> dict[str, Any]:
+    """make_case 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     process_id = 100 + idx
     case: dict[str, Any] = {
         "case_id": f"gold-{idx:03d}",
@@ -80,6 +89,7 @@ def make_case(
 
 
 def build_additional_gold_cases() -> list[dict[str, Any]]:
+    """build_additional_gold_cases 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     cases: list[dict[str, Any]] = []
 
     compliance_cases = [

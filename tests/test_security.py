@@ -1,3 +1,6 @@
+"""API key/JWT/role 기반 접근 제어를 검증한다.
+"""
+
 import pytest
 from fastapi import HTTPException
 

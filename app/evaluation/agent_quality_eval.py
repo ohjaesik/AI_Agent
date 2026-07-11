@@ -1,5 +1,11 @@
 # app/evaluation/agent_quality_eval.py
 
+"""Agent output 품질을 오프라인으로 평가하는 script.
+
+gold case와 workflow result를 비교해 evidence coverage, status calibration, ranking 품질을
+점검한다.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -19,6 +25,7 @@ STATUS_LABELS = ["recommended", "human_review_required", "evidence_insufficient"
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    """load_jsonl 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     rows = []
     with Path(path).open("r", encoding="utf-8") as file:
         for line in file:
@@ -29,6 +36,7 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
 
 
 def load_regression_cases(path: str | Path = REGRESSION_GOLD_PATH, include_generated: bool = True) -> list[dict[str, Any]]:
+    """load_regression_cases 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     cases = load_jsonl(path)
     if include_generated and Path(path) == REGRESSION_GOLD_PATH:
         cases.extend(build_additional_gold_cases())
@@ -36,15 +44,18 @@ def load_regression_cases(path: str | Path = REGRESSION_GOLD_PATH, include_gener
 
 
 def load_holdout_cases(path: str | Path = BLIND_HOLDOUT_GOLD_PATH) -> list[dict[str, Any]]:
+    """load_holdout_cases 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     return load_jsonl(path)
 
 
 def load_gold_cases(path: str | Path = DEFAULT_GOLD_PATH, include_generated: bool = True) -> list[dict[str, Any]]:
     # Backward-compatible alias. This is the regression set.
+    """load_gold_cases 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     return load_regression_cases(path, include_generated=include_generated)
 
 
 def load_dataset_cases(dataset: str, include_generated: bool = True) -> tuple[list[dict[str, Any]], str, str]:
+    """load_dataset_cases 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     if dataset == "holdout":
         return load_holdout_cases(), "holdout", str(BLIND_HOLDOUT_GOLD_PATH)
     if dataset == "regression":
@@ -53,10 +64,12 @@ def load_dataset_cases(dataset: str, include_generated: bool = True) -> tuple[li
 
 
 def safe_div(numerator: float, denominator: float) -> float:
+    """safe_div 함수. Agent output 품질을 오프라인으로 평가하는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return round(numerator / denominator, 4) if denominator else 0.0
 
 
 def build_state_from_case(case: dict[str, Any]) -> dict[str, Any]:
+    """build_state_from_case 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     candidate = {
         "process_id": case["process_id"],
         "candidate_agent_name": case["candidate_agent_name"],
@@ -95,6 +108,7 @@ def build_state_from_case(case: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_confusion_matrix(expected_values: list[str], predicted_values: list[str]) -> dict[str, dict[str, int]]:
+    """build_confusion_matrix 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     matrix: dict[str, dict[str, int]] = {}
     for expected, predicted in zip(expected_values, predicted_values):
         matrix.setdefault(str(expected), {})
@@ -103,6 +117,7 @@ def build_confusion_matrix(expected_values: list[str], predicted_values: list[st
 
 
 def classification_report(expected_values: list[str], predicted_values: list[str], labels: list[str] | None = None) -> dict[str, Any]:
+    """classification_report 함수. Agent output 품질을 오프라인으로 평가하는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     labels = labels or sorted(set(expected_values) | set(predicted_values))
     per_label: dict[str, dict[str, float]] = {}
     total = len(expected_values)
@@ -140,6 +155,7 @@ def classification_report(expected_values: list[str], predicted_values: list[str
 
 
 def binary_report(expected_values: list[bool], predicted_values: list[bool]) -> dict[str, Any]:
+    """binary_report 함수. Agent output 품질을 오프라인으로 평가하는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     tp = sum(1 for expected, predicted in zip(expected_values, predicted_values) if expected and predicted)
     fp = sum(1 for expected, predicted in zip(expected_values, predicted_values) if not expected and predicted)
     fn = sum(1 for expected, predicted in zip(expected_values, predicted_values) if expected and not predicted)
@@ -151,6 +167,7 @@ def binary_report(expected_values: list[bool], predicted_values: list[bool]) -> 
 
 
 def evaluate_cases(cases: list[dict[str, Any]], evaluation_set: str = "regression", case_source: str | None = None) -> dict[str, Any]:
+    """evaluate_cases 함수. Agent output 품질을 오프라인으로 평가하는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     results = []
     expected_statuses: list[str] = []
     predicted_statuses: list[str] = []
@@ -219,6 +236,7 @@ def evaluate_cases(cases: list[dict[str, Any]], evaluation_set: str = "regressio
 
 
 def parse_args() -> argparse.Namespace:
+    """CLI 실행 인자를 정의하고 argparse Namespace로 변환한다."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", choices=["regression", "holdout"], default="regression")
     parser.add_argument("--gold-path", type=str, default=None, help="custom JSONL path; bypasses built-in regression/holdout selection")
@@ -235,6 +253,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def quality_gate(metrics: dict[str, Any], min_status_accuracy: float, min_review_accuracy: float, min_status_macro_f1: float = 0.75, min_review_f1: float = 0.90) -> dict[str, Any]:
+    """quality_gate 함수. Agent output 품질을 오프라인으로 평가하는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     checks = {
         "status_accuracy": float(metrics.get("status_accuracy", 0.0)) >= min_status_accuracy,
         "review_gate_accuracy": float(metrics.get("review_gate_accuracy", 0.0)) >= min_review_accuracy,
@@ -252,6 +271,7 @@ def quality_gate(metrics: dict[str, Any], min_status_accuracy: float, min_review
 
 
 def save_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
+    """save_csv 함수. 분석 결과나 사용자 결정을 DB 또는 파일에 저장한다."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -279,10 +299,12 @@ def save_csv(path: str | Path, rows: list[dict[str, Any]]) -> None:
 
 
 def format_bool(value: bool) -> str:
+    """format_bool 함수. 사용자에게 보여줄 문자열이나 보고서 문구로 값을 포맷한다."""
     return "PASS" if value else "FAIL"
 
 
 def save_markdown(path: str | Path, metrics: dict[str, Any]) -> None:
+    """save_markdown 함수. 분석 결과나 사용자 결정을 DB 또는 파일에 저장한다."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     gate = metrics.get("quality_gate", {})
@@ -338,6 +360,7 @@ def save_markdown(path: str | Path, metrics: dict[str, Any]) -> None:
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     args = parse_args()
     if args.gold_path:
         cases = load_jsonl(args.gold_path)

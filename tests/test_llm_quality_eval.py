@@ -1,3 +1,6 @@
+"""LLM 출력 품질 평가 metric과 JSON 검사 로직을 검증한다.
+"""
+
 from __future__ import annotations
 
 from app.evaluation.llm_quality_eval import (

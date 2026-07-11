@@ -1,3 +1,6 @@
+"""한국 AI 기본법 proxy mapping과 governance 문구를 검증한다.
+"""
+
 from app.compliance.assessment import assess_ai_compliance, classify_process
 from app.compliance.regulatory_policy import get_korea_ai_basic_act_reference, get_regulatory_controls
 

@@ -1,5 +1,11 @@
 # app/company_bootstrap/dart_client.py
 
+"""OpenDART API client.
+
+corp_code, stock_code, 회사명 기반으로 기업 개황과 공시 자료를 조회해 bootstrap
+context에 사용할 공식 정보를 만든다.
+"""
+
 from __future__ import annotations
 
 import io
@@ -19,6 +25,7 @@ DART_BASE_URL = "https://opendart.fss.or.kr/api"
 
 @dataclass(frozen=True)
 class DartCompany:
+    """OpenDART에서 조회한 회사 식별자와 기업 개황 정보를 담는 값 객체다."""
     corp_code: str
     corp_name: str
     stock_code: str | None
@@ -26,6 +33,7 @@ class DartCompany:
     profile: dict[str, Any]
 
     def to_document_content(self) -> str:
+        """to_document_content 함수. OpenDART API client. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
         lines = [
             "OpenDART 기업개황",
             f"회사명: {self.profile.get('corp_name') or self.corp_name}",
@@ -46,6 +54,7 @@ class DartCompany:
 
 
 def dart_get_json_once(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
+    """dart_get_json_once 함수. OpenDART API client. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     query = urllib.parse.urlencode(params)
     url = f"{DART_BASE_URL}/{endpoint}?{query}"
     request = urllib.request.Request(
@@ -60,6 +69,7 @@ def dart_get_json_once(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
 
 
 def dart_get_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
+    """dart_get_json 함수. OpenDART API client. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return retry_call(
         lambda: dart_get_json_once(endpoint, params),
         retries=2,
@@ -69,6 +79,7 @@ def dart_get_json(endpoint: str, params: dict[str, str]) -> dict[str, Any]:
 
 
 def download_corp_code_xml_once(api_key: str) -> bytes:
+    """download_corp_code_xml_once 함수. OpenDART API client. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     query = urllib.parse.urlencode({"crtfc_key": api_key})
     url = f"{DART_BASE_URL}/corpCode.xml?{query}"
     request = urllib.request.Request(
@@ -87,6 +98,7 @@ def download_corp_code_xml_once(api_key: str) -> bytes:
 
 
 def download_corp_code_xml(api_key: str) -> bytes:
+    """download_corp_code_xml 함수. OpenDART API client. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return retry_call(
         lambda: download_corp_code_xml_once(api_key),
         retries=2,
@@ -96,6 +108,7 @@ def download_corp_code_xml(api_key: str) -> bytes:
 
 
 def parse_corp_codes(xml_bytes: bytes) -> list[dict[str, str]]:
+    """parse_corp_codes 함수. 문자열/파일/CLI 입력을 내부에서 쓰기 쉬운 구조로 파싱한다."""
     root = ElementTree.fromstring(xml_bytes)
     rows: list[dict[str, str]] = []
 
@@ -117,6 +130,7 @@ def find_corp_code(
     company_name: str,
     stock_code: str | None = None,
 ) -> dict[str, str] | None:
+    """find_corp_code 함수. OpenDART API client. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     rows = parse_corp_codes(download_corp_code_xml(api_key))
     normalized_name = company_name.replace(" ", "").lower()
 
@@ -150,6 +164,7 @@ def get_company_overview(
     api_key: str,
     corp_code: str,
 ) -> dict[str, Any]:
+    """get_company_overview 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     data = dart_get_json(
         "company.json",
         {
@@ -171,6 +186,7 @@ def load_dart_company(
     corp_code: str | None = None,
     stock_code: str | None = None,
 ) -> DartCompany | None:
+    """load_dart_company 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     corp_row: dict[str, str] | None
 
     if corp_code:

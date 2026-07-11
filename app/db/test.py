@@ -1,11 +1,17 @@
 # app/tools/check_docx_generator.py
 
+"""DB 연결을 빠르게 확인하는 개발용 script.
+
+DATABASE_URL이 올바른지, 기본 query가 가능한지 확인하는 용도다.
+"""
+
 from __future__ import annotations
 
 from app.tools.docx_generator import generate_docx_report
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     report_data = {
         "title": "Multi-Agent 기반 제조기업 AX 전환 업무 프로세스 진단 및 AI Agent 도입 우선순위 추천 Agent 설계",
         "author": "오재식",

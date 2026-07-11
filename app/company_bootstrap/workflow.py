@@ -1,5 +1,11 @@
 # app/company_bootstrap/workflow.py
 
+"""회사 bootstrap용 LangGraph workflow.
+
+Company Profile, Source Ingestion, Process Discovery Agent를 Supervisor 위임 구조로
+순차 실행한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -22,12 +28,14 @@ from app.company_bootstrap.state import BootstrapState
 
 
 def supervisor_delegated_node(node_name: str, node_fn):
+    """supervisor_delegated_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     node_runner = expert_executed_node(node_name, node_fn)
     binding = get_agent_binding_for_node(node_name) or {}
     contract = build_agent_contract(node_name) or {}
     agent_id = str(binding.get("agent_id") or contract.get("agent_id") or "unknown_agent")
 
     def _node(state: dict[str, Any]) -> dict[str, Any]:
+        """_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
         supervisor_assignment = select_agent_model(
             agent_id=SUPERVISOR_AGENT_ID,
             stage_name=node_name,
@@ -74,6 +82,7 @@ def supervisor_delegated_node(node_name: str, node_fn):
 
 
 def build_bootstrap_supervisor_graph():
+    """build_bootstrap_supervisor_graph 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     builder = StateGraph(BootstrapState)
 
     builder.add_node("company_profile_agent", supervisor_delegated_node("company_profile_agent", company_profile_agent_node))

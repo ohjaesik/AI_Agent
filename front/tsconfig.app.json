@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    // React browser bundle용 TypeScript compiler 설정.
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
@@ -8,7 +9,7 @@
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 
-    /* Bundler mode */
+    /* Bundler mode: Vite가 module bundling을 담당하므로 TypeScript는 type check만 수행한다. */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
@@ -16,7 +17,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Linting */
+    /* Linting: unused code와 switch fallthrough를 build 단계에서 빠르게 잡는다. */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

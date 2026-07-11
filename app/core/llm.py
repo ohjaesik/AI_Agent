@@ -1,5 +1,11 @@
 # app/core/llm.py
 
+"""OpenAI/Anthropic/vLLM LLM client와 embedding 호출 helper.
+
+model_assignment에 따라 provider를 선택하고, report writer/critic/Supervisor/Agent가
+같은 방식으로 chat model을 얻도록 한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -15,6 +21,7 @@ DEFAULT_VLLM_MODEL = "gemma-4-e4b-it"
 
 
 def normalize_blank(value: str | None, default: str) -> str:
+    """normalize_blank 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     if value is None:
         return default
 
@@ -27,6 +34,7 @@ def normalize_blank(value: str | None, default: str) -> str:
 
 
 def get_embedding_model() -> OpenAIEmbeddings:
+    """get_embedding_model 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     settings = get_settings()
 
     return OpenAIEmbeddings(
@@ -37,11 +45,13 @@ def get_embedding_model() -> OpenAIEmbeddings:
 
 
 def embed_documents_with_retry(texts: list[str], retries: int = 2) -> list[list[float]]:
+    """문서 chunk 목록을 embedding vector 목록으로 변환한다."""
     embeddings = get_embedding_model()
     return retry_call(lambda: embeddings.embed_documents(texts), retries=retries, backoff_seconds=1.0)
 
 
 def embed_query_with_retry(query: str, retries: int = 2) -> list[float]:
+    """RAG 검색 query를 embedding vector로 변환한다."""
     embeddings = get_embedding_model()
     return retry_call(lambda: embeddings.embed_query(query), retries=retries, backoff_seconds=1.0)
 
@@ -102,4 +112,5 @@ def get_chat_model(
 
 
 def invoke_chat_with_retry(llm: Any, messages: list[Any], retries: int = 2) -> Any:
+    """chat model 호출을 retry policy로 감싸 일시적 실패를 완화한다."""
     return retry_call(lambda: llm.invoke(messages), retries=retries, backoff_seconds=1.0)

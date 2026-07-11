@@ -1,5 +1,11 @@
 # app/tools/score_calculator.py
 
+"""후보 업무의 PoC 우선순위 점수를 계산한다.
+
+효과, 반복성, 문서 의존도, 데이터 준비도, 기술 가능성, 리스크, ROI를 조합해 ranking을
+만든다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -9,6 +15,7 @@ DISCOVERY_BONUS_MAX = 0.35
 
 
 def safe_int(value: Any, default: int = 3) -> int:
+    """None/문자열/잘못된 값을 안전하게 정수로 변환한다."""
     if value is None:
         return default
     try:
@@ -18,6 +25,7 @@ def safe_int(value: Any, default: int = 3) -> int:
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
+    """None/문자열/잘못된 값을 안전하게 실수로 변환한다."""
     if value is None:
         return default
     try:
@@ -27,10 +35,12 @@ def safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def clamp_score(value: int) -> int:
+    """clamp_score 함수. 후보 업무의 PoC 우선순위 점수를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return max(1, min(value, 5))
 
 
 def calculate_priority_score(expected_effect: int, data_accessibility: int, repeatability: int, feasibility: int, user_acceptance: int, risk_score: int, implementation_cost_score: int) -> float:
+    """후보의 효과/반복성/readiness/ROI/risk 점수를 하나의 우선순위 점수로 합산한다."""
     score = (
         clamp_score(expected_effect) * 0.35
         + clamp_score(data_accessibility) * 0.20
@@ -44,6 +54,7 @@ def calculate_priority_score(expected_effect: int, data_accessibility: int, repe
 
 
 def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> float:
+    """calculate_discovery_bonus 함수. 후보 업무의 PoC 우선순위 점수를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if not discovery_metadata:
         return 0.0
     bonus = 0.0
@@ -65,6 +76,7 @@ def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> floa
 
 
 def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """build_compliance_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     result: dict[int, dict[str, Any]] = {}
     for item in (compliance_assessment or {}).get("items", []):
         process_id = safe_int(item.get("process_id"), 0)
@@ -74,6 +86,7 @@ def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[i
 
 
 def apply_compliance_status(base_status: str, compliance_item: dict[str, Any] | None) -> str:
+    """apply_compliance_status 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     if not compliance_item:
         return base_status
     if compliance_item.get("blocked"):
@@ -86,6 +99,7 @@ def apply_compliance_status(base_status: str, compliance_item: dict[str, Any] | 
 
 
 def determine_candidate_status(risk_score: int, data_accessibility: int, saving_rate: float, risk_flags: list[str] | None = None) -> str:
+    """determine_candidate_status 함수. 후보 업무의 PoC 우선순위 점수를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     risk_flags = risk_flags or []
     if "excluded_from_mvp" in risk_flags:
         return "excluded"
@@ -103,6 +117,7 @@ def determine_candidate_status(risk_score: int, data_accessibility: int, saving_
 
 
 def build_compliance_reason(compliance_item: dict[str, Any] | None) -> str:
+    """build_compliance_reason 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     if not compliance_item:
         return ""
     parts = []
@@ -118,6 +133,7 @@ def build_compliance_reason(compliance_item: dict[str, Any] | None) -> str:
 
 
 def build_esg_reason(esg_assessment: dict[str, Any] | None) -> str:
+    """build_esg_reason 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     if not esg_assessment or not esg_assessment.get("pillars"):
         return ""
 
@@ -128,6 +144,7 @@ def build_esg_reason(esg_assessment: dict[str, Any] | None) -> str:
 
 
 def build_status_reason(status: str, risk_score: int, data_accessibility: int, saving_rate: float, risk_flags: list[str] | None = None, discovery_metadata: dict[str, Any] | None = None, discovery_bonus: float = 0.0, compliance_item: dict[str, Any] | None = None, esg_assessment: dict[str, Any] | None = None) -> str:
+    """build_status_reason 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     risk_flags = risk_flags or []
     discovery_metadata = discovery_metadata or {}
     suitability_rationale = str(discovery_metadata.get("suitability_rationale") or "").strip()
@@ -158,6 +175,7 @@ def build_status_reason(status: str, risk_score: int, data_accessibility: int, s
 
 
 def build_roi_map(roi_cost: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """build_roi_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     result: dict[int, dict[str, Any]] = {}
     for item in (roi_cost or {}).get("items", []):
         process_id = safe_int(item.get("process_id"), 0)
@@ -167,6 +185,7 @@ def build_roi_map(roi_cost: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
 
 
 def build_risk_map(risk_governance: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """build_risk_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     result: dict[int, dict[str, Any]] = {}
     for item in (risk_governance or {}).get("items", []):
         process_id = safe_int(item.get("process_id"), 0)
@@ -176,6 +195,7 @@ def build_risk_map(risk_governance: dict[str, Any] | None) -> dict[int, dict[str
 
 
 def rank_agent_candidates(processes: list[dict[str, Any]], roi_cost: dict[str, Any] | None = None, risk_governance: dict[str, Any] | None = None, compliance_assessment: dict[str, Any] | None = None) -> dict[str, Any]:
+    """업무 후보들을 scoring rule로 정렬하고 추천 상태/사유를 붙인다."""
     roi_map = build_roi_map(roi_cost)
     risk_map = build_risk_map(risk_governance)
     effective_compliance = compliance_assessment or (risk_governance or {}).get("compliance_assessment")

@@ -1,3 +1,6 @@
+"""테스트 공통 fixture와 import path 설정을 제공한다.
+"""
+
 from __future__ import annotations
 
 import sys

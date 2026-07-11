@@ -1,5 +1,12 @@
 # app/agents/evaluator.py
 
+"""우선순위 후보의 근거 충분성, confidence, 추천 상태를 평가한다.
+
+Business Case Agent가 만든 ranking을 그대로 믿지 않고, RAG evidence coverage,
+데이터 접근성, compliance alignment, replan 효과를 기준으로 후보별 상태를
+recommended/human_review_required/evidence_insufficient 등으로 보정한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -25,10 +32,12 @@ VERY_WEAK_EVIDENCE_THRESHOLD = 0.15
 
 
 def clamp(value: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+    """점수나 비율이 허용 범위를 벗어나지 않도록 제한한다."""
     return round(max(minimum, min(maximum, value)), 3)
 
 
 def build_context_count_map(retrieved_contexts: dict[str, list[dict[str, Any]]]) -> dict[int, int]:
+    """build_context_count_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     result: dict[int, int] = {}
     for key, chunks in (retrieved_contexts or {}).items():
         try:
@@ -39,6 +48,7 @@ def build_context_count_map(retrieved_contexts: dict[str, list[dict[str, Any]]])
 
 
 def build_evidence_count_map(evidence_items: list[dict[str, Any]]) -> dict[int, int]:
+    """build_evidence_count_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     result: dict[int, int] = {}
     for item in evidence_items or []:
         try:
@@ -50,6 +60,7 @@ def build_evidence_count_map(evidence_items: list[dict[str, Any]]) -> dict[int, 
 
 
 def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
+    """build_compliance_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     result: dict[int, dict[str, Any]] = {}
     for item in (compliance_assessment or {}).get("items", []):
         try:
@@ -62,6 +73,7 @@ def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[i
 
 
 def compute_replan_evidence_lift(state: dict[str, Any]) -> float:
+    """compute_replan_evidence_lift 함수. 우선순위 후보의 근거 충분성, confidence, 추천 상태를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     source_collection = (state.get("replan_request") or {}).get("source_collection") or {}
     public_results = ((source_collection.get("public_web_search") or {}).get("results") or [])
     same_domain = source_collection.get("same_domain_discovered") or []
@@ -73,6 +85,7 @@ def compute_replan_evidence_lift(state: dict[str, Any]) -> float:
 
 
 def score_rationale_coverage(candidate: dict[str, Any]) -> float:
+    """score_rationale_coverage 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
     rationale = candidate.get("score_rationale") or {}
     if not isinstance(rationale, dict):
         return 0.0
@@ -82,6 +95,7 @@ def score_rationale_coverage(candidate: dict[str, Any]) -> float:
 
 
 def score_evidence_coverage(candidate: dict[str, Any], context_count: int, evidence_count: int, replan_evidence_lift: float = 0.0) -> float:
+    """score_evidence_coverage 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
     metadata = candidate.get("discovery_metadata") or {}
     labels = metadata.get("evidence_labels") if isinstance(metadata, dict) else []
     label_score = min(len(labels or []), 3) / 3
@@ -91,6 +105,7 @@ def score_evidence_coverage(candidate: dict[str, Any], context_count: int, evide
 
 
 def score_data_confidence(candidate: dict[str, Any], context_count: int, replan_evidence_lift: float = 0.0) -> float:
+    """score_data_confidence 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
     data_accessibility = float(candidate.get("data_accessibility") or 3)
     data_score = clamp(data_accessibility / 5)
     context_score = clamp(min(context_count, 4) / 4)
@@ -98,6 +113,7 @@ def score_data_confidence(candidate: dict[str, Any], context_count: int, replan_
 
 
 def score_compliance_alignment(candidate: dict[str, Any]) -> tuple[float, list[str]]:
+    """score_compliance_alignment 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
     issues: list[str] = []
     compliance = candidate.get("compliance") or {}
     status = candidate.get("status")
@@ -111,6 +127,7 @@ def score_compliance_alignment(candidate: dict[str, Any]) -> tuple[float, list[s
 
 
 def score_risk_uncertainty(candidate: dict[str, Any]) -> float:
+    """score_risk_uncertainty 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
     risk_score = float(candidate.get("risk_score") or 3)
     risk_part = clamp((risk_score - 1) / 4)
     compliance = candidate.get("compliance") or {}
@@ -125,6 +142,7 @@ def score_risk_uncertainty(candidate: dict[str, Any]) -> float:
 
 
 def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_count: int, replan_evidence_lift: float = 0.0) -> dict[str, Any]:
+    """evaluate_candidate 함수. 우선순위 후보의 근거 충분성, confidence, 추천 상태를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     evidence_coverage = score_evidence_coverage(candidate, context_count, evidence_count, replan_evidence_lift)
     data_confidence = score_data_confidence(candidate, context_count, replan_evidence_lift)
     rationale_coverage = score_rationale_coverage(candidate)
@@ -174,6 +192,7 @@ def evaluate_candidate(candidate: dict[str, Any], context_count: int, evidence_c
 
 
 def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_items: list[dict[str, Any]]) -> dict[str, Any]:
+    """apply_evaluation_to_ranking 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     evaluation_map = {int(item["process_id"]): item for item in evaluation_items if item.get("process_id") is not None}
     updated_items: list[dict[str, Any]] = []
 
@@ -236,6 +255,7 @@ def apply_evaluation_to_ranking(priority_ranking: dict[str, Any], evaluation_ite
 
 
 def evaluate_agent_outputs(state: dict[str, Any]) -> dict[str, Any]:
+    """evaluate_agent_outputs 함수. 우선순위 후보의 근거 충분성, confidence, 추천 상태를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     ranking = state.get("priority_ranking", {}) or {}
     context_map = build_context_count_map(state.get("retrieved_contexts", {}) or {})
     evidence_map = build_evidence_count_map(state.get("evidence_items", []) or [])

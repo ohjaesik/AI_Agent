@@ -1,3 +1,5 @@
+<!-- 파일 역할: React/Vite frontend 개발 환경과 빌드 방식을 설명하는 frontend 문서다. -->
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.

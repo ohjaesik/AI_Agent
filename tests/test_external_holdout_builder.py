@@ -1,3 +1,6 @@
+"""외부 holdout 평가 데이터 생성 로직을 검증한다.
+"""
+
 import json
 
 from app.evaluation.external_holdout_builder import build_external_holdout_cases, write_jsonl

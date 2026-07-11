@@ -1,3 +1,5 @@
+<!-- 파일 역할: 한국 AI 기본법 관점의 내부 운영 통제 mapping을 정리한다. -->
+
 # Korea AI Basic Act Operational Mapping
 
 본 문서는 AX Delivery Planner의 내부 운영 통제 mapping이다. 법률 자문이 아니며, 운영 전 국가법령정보센터 원문, 시행령, 고시, 주무부처 가이드라인을 기준으로 재검토해야 한다.

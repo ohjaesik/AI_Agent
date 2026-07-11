@@ -1,3 +1,6 @@
+"""public web search provider 결과 정규화와 fallback을 검증한다.
+"""
+
 from app.company_bootstrap.public_web_search import build_search_query, discover_public_web_sources, is_allowed_public_result
 
 

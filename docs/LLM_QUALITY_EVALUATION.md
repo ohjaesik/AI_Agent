@@ -1,3 +1,5 @@
+<!-- 파일 역할: LLM 출력 품질을 deterministic evaluator와 분리해 검증하는 방법을 설명한다. -->
+
 # LLM Quality Evaluation
 
 이 문서는 AX Delivery Planner에서 LLM이 개입하는 구간을 Agent Evaluator 품질 평가와 분리해 검증하는 방법을 설명한다.

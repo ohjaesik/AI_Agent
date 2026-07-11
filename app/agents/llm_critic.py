@@ -1,5 +1,12 @@
 # app/agents/llm_critic.py
 
+"""LLM 기반 2차 비평자 역할을 수행한다.
+
+deterministic evaluator가 만든 평가 결과를 입력으로 받아, 근거 부족/과도한 추천/
+컴플라이언스 불일치 가능성을 한 번 더 점검한다. LLM 실패 시에도 deterministic
+평가 결과를 유지하도록 fallback 구조를 둔다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -48,11 +55,13 @@ Return JSON:
 
 
 def compact_json(value: Any, max_chars: int = 5000) -> str:
+    """compact_json 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     text = json.dumps(value, ensure_ascii=False, default=str)
     return text if len(text) <= max_chars else text[:max_chars] + "..."
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
+    """extract_json_object 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     cleaned = str(text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
@@ -67,11 +76,13 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def normalize_verdict(value: Any) -> str:
+    """normalize_verdict 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     verdict = str(value or "needs_review").strip().lower()
     return verdict if verdict in {"pass", "needs_review", "insufficient_evidence", "reject"} else "needs_review"
 
 
 def clamp_adjustment(value: Any) -> float:
+    """clamp_adjustment 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -80,6 +91,7 @@ def clamp_adjustment(value: Any) -> float:
 
 
 def deterministic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any]) -> str:
+    """deterministic_verdict 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     compliance = candidate.get("compliance") or {}
     if compliance.get("blocked"):
         return "reject"
@@ -97,6 +109,7 @@ def deterministic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any])
 
 
 def calibrate_critic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any], critic: dict[str, Any]) -> dict[str, Any]:
+    """calibrate_critic_verdict 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     expected = deterministic_verdict(candidate, evaluation)
     verdict = normalize_verdict(critic.get("critic_verdict"))
 
@@ -122,6 +135,7 @@ def fallback_critic(
     reason: str,
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """fallback_critic 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     verdict = deterministic_verdict(candidate, evaluation)
     adjustment = -0.05 if verdict == "insufficient_evidence" else 0.0
     return {
@@ -141,6 +155,7 @@ def run_llm_critic(
     evaluation: dict[str, Any],
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """run_llm_critic 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     try:
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", USER_PROMPT)])
         # LLM Critic은 Evaluation Agent 내부 도구지만 실제 모델은
@@ -171,6 +186,7 @@ def apply_llm_critic_to_evaluation(
     agent_evaluation: dict[str, Any],
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """apply_llm_critic_to_evaluation 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     evaluation_map = {
         int(item.get("process_id") or 0): dict(item)
         for item in agent_evaluation.get("items", [])

@@ -1,3 +1,6 @@
+"""Supervisor 고정 모델, Expert Agent 비용/성능 라우팅, timeout escalation을 검증한다.
+"""
+
 from __future__ import annotations
 
 from app.agents.model_router import SUPERVISOR_AGENT_ID, select_agent_model, select_escalation_model

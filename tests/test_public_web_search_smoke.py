@@ -1,3 +1,6 @@
+"""public web search smoke helper의 최소 실행 경로를 검증한다.
+"""
+
 from app.ops.public_web_search_smoke import run_smoke, validate_provider_config
 
 

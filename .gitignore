@@ -1,4 +1,4 @@
-# Python
+# Python runtime/cache. 가상환경과 bytecode는 개발자별로 달라 repository에 포함하지 않는다.
 __pycache__/
 *.py[cod]
 .venv/
@@ -7,7 +7,7 @@ venv/
 *.env
 .env.local
 
-# Output / generated reports
+# Output / generated reports. 보고서와 평가 산출물은 실행마다 달라지므로 추적하지 않는다.
 outputs/
 *.docx
 *.pdf
@@ -15,27 +15,27 @@ outputs/
 *.xlsx
 *.jsonl
 
-# Local runtime storage and downloaded datasets
+# Local runtime storage and downloaded datasets. 업로드 원본 문서와 외부 데이터는 로컬에만 둔다.
 storage/
 files/
 data/external/
 
-# Local databases
+# Local databases. PostgreSQL을 쓰지 않는 임시 개발 DB도 git에 올리지 않는다.
 *.db
 *.sqlite
 *.sqlite3
 
-# IDE / OS
+# IDE / OS. 개인 개발환경 설정과 macOS metadata.
 .DS_Store
 .idea/
 .vscode/
 
-# Cache / coverage
+# Cache / coverage. 테스트·정적분석 캐시는 재생성 가능하다.
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
 
-# Local assistant files
+# Local assistant files. 개인 assistant 설정/로그는 프로젝트 산출물과 분리한다.
 CLAUDE.md

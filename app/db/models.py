@@ -1,5 +1,11 @@
 # app/db/models.py
 
+"""SQLAlchemy ORM model 정의.
+
+회사, 프로젝트, 부서, 시스템, 업무 프로세스, 문서, chunk, 분석 결과, human review,
+audit log table 구조를 선언한다.
+"""
+
 from datetime import datetime
 from typing import Any
 
@@ -12,6 +18,7 @@ from app.db.database import Base
 
 
 class AppUser(Base):
+    """로컬 API 인증에 사용하는 사용자 계정 table model이다."""
     __tablename__ = "app_users"
     __table_args__ = (UniqueConstraint("username", name="uq_app_users_username"),)
 
@@ -24,6 +31,7 @@ class AppUser(Base):
 
 
 class Company(Base):
+    """분석 대상 회사의 기본 식별 정보와 설명을 저장하는 table model이다."""
     __tablename__ = "companies"
     __table_args__ = (UniqueConstraint("name", name="uq_companies_name"),)
 
@@ -40,6 +48,7 @@ class Company(Base):
 
 
 class Department(Base):
+    """회사 내부 부서/조직 단위를 저장하는 table model이다."""
     __tablename__ = "departments"
     __table_args__ = (UniqueConstraint("company_id", "name", name="uq_departments_company_name"),)
 
@@ -55,6 +64,7 @@ class Department(Base):
 
 
 class EnterpriseSystem(Base):
+    """ERP/MES/CRM 같은 사내 시스템 정보를 저장하는 table model이다."""
     __tablename__ = "systems"
     __table_args__ = (UniqueConstraint("company_id", "name", name="uq_systems_company_name"),)
 
@@ -72,6 +82,7 @@ class EnterpriseSystem(Base):
 
 
 class BusinessProcess(Base):
+    """AI Agent 도입 후보가 될 업무 프로세스와 discovery metadata를 저장하는 table model이다."""
     __tablename__ = "business_processes"
     __table_args__ = (UniqueConstraint("company_id", "name", "candidate_agent_name", name="uq_processes_company_name_agent"),)
 
@@ -108,6 +119,7 @@ class BusinessProcess(Base):
 
 
 class ProcessDocument(Base):
+    """공식/내부 문서 원본과 보안 metadata를 저장하는 table model이다."""
     __tablename__ = "process_documents"
     __table_args__ = (UniqueConstraint("company_id", "document_type", "source_url", name="uq_documents_company_type_source_url"),)
 
@@ -137,6 +149,7 @@ class ProcessDocument(Base):
 
 
 class DocumentChunk(Base):
+    """RAG 검색용 chunk 본문, embedding, chunk metadata를 저장하는 table model이다."""
     __tablename__ = "document_chunks"
     __table_args__ = (UniqueConstraint("document_id", "chunk_index", name="uq_chunks_document_index"),)
 
@@ -156,6 +169,7 @@ class DocumentChunk(Base):
 
 
 class AnalysisProject(Base):
+    """회사별 AX 분석 실행 단위를 저장하는 table model이다."""
     __tablename__ = "analysis_projects"
     __table_args__ = (UniqueConstraint("company_id", "title", name="uq_analysis_projects_company_title"),)
 
@@ -167,6 +181,7 @@ class AnalysisProject(Base):
 
 
 class AnalysisResult(Base):
+    """각 graph node의 중간/최종 분석 결과 JSON을 저장하는 table model이다."""
     __tablename__ = "analysis_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -177,6 +192,7 @@ class AnalysisResult(Base):
 
 
 class HumanReview(Base):
+    """사람 검토자 또는 Supervisor auto approval 결정을 저장하는 table model이다."""
     __tablename__ = "human_reviews"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -189,6 +205,7 @@ class HumanReview(Base):
 
 
 class AuditLog(Base):
+    """node/tool/API 실행 이력을 감사 추적용으로 저장하는 table model이다."""
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -1,5 +1,12 @@
 # app/agents/registry.py
 
+"""시스템에 등록된 Expert Agent와 tool specification을 정의한다.
+
+각 Agent가 어떤 node를 관리하고 어떤 tool을 사용할 수 있는지, 역할 prompt와
+품질 기준, output contract가 무엇인지 선언하는 카탈로그다. runtime permission과
+Supervisor prompt는 이 registry를 기준으로 만들어진다.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -28,6 +35,7 @@ NODE_OUTPUT_SCHEMA = {
 
 
 def tool_spec(name: str, description: str, nodes: list[str], purpose: str = "execute") -> dict[str, Any]:
+    """tool_spec 함수. 시스템에 등록된 Expert Agent와 tool specification을 정의한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return {
         "name": name,
         "description": description,
@@ -40,6 +48,7 @@ def tool_spec(name: str, description: str, nodes: list[str], purpose: str = "exe
 
 @dataclass(frozen=True)
 class AgentSpec:
+    """AgentSpec 클래스. 시스템에 등록된 Expert Agent와 tool specification을 정의한다.에서 사용하는 구조화된 데이터/동작 단위다."""
     id: str
     name: str
     category: str
@@ -59,6 +68,7 @@ class AgentSpec:
     handoff_notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
         data = asdict(self)
         tool_names = [item.get("name") for item in self.tool_specs if item.get("name")]
         data["tools"] = sorted(set([*self.tools, *tool_names]))
@@ -322,10 +332,12 @@ AGENT_REGISTRY: list[AgentSpec] = [
 
 
 def get_agent_registry() -> list[dict[str, Any]]:
+    """get_agent_registry 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     return [item.to_dict() for item in AGENT_REGISTRY]
 
 
 def get_agent_spec(agent_id: str) -> dict[str, Any] | None:
+    """get_agent_spec 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     for item in AGENT_REGISTRY:
         if item.id == agent_id:
             return item.to_dict()
@@ -333,10 +345,12 @@ def get_agent_spec(agent_id: str) -> dict[str, Any] | None:
 
 
 def normalize_tool_name(tool_name: str) -> str:
+    """tool 이름 비교가 안정적으로 되도록 대소문자/구분자를 정규화한다."""
     return str(tool_name or "").strip().lower().replace("_", " ").replace("-", " ")
 
 
 def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[str, Any] | None:
+    """get_capability_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     for capability in agent_spec.get("capabilities", []) or []:
         if node_name in capability.get("nodes", []):
             return dict(capability)
@@ -344,6 +358,7 @@ def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[
 
 
 def get_tool_specs_for_node(agent_id: str, node_name: str, max_tools: int = MAX_TOOL_CANDIDATES_PER_NODE) -> list[dict[str, Any]]:
+    """get_tool_specs_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     spec = get_agent_spec(agent_id)
     if not spec:
         return []
@@ -352,6 +367,7 @@ def get_tool_specs_for_node(agent_id: str, node_name: str, max_tools: int = MAX_
 
 
 def get_tool_spec(agent_id: str, tool_name: str) -> dict[str, Any] | None:
+    """get_tool_spec 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     spec = get_agent_spec(agent_id)
     if not spec:
         return None
@@ -363,6 +379,7 @@ def get_tool_spec(agent_id: str, tool_name: str) -> dict[str, Any] | None:
 
 
 def get_tool_spec_for_node(agent_id: str, node_name: str) -> dict[str, Any] | None:
+    """get_tool_spec_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     specs = get_tool_specs_for_node(agent_id, node_name, max_tools=1)
     return specs[0] if specs else None
 

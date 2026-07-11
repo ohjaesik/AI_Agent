@@ -1,5 +1,11 @@
 # app/company_bootstrap/state.py
 
+"""bootstrap Supervisor graph의 state schema.
+
+회사 profile, 수집 문서, 후보 업무, Agent trace, 오류/경고 등 bootstrap workflow가
+주고받는 state key를 TypedDict로 정의한다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +13,7 @@ from typing import Annotated, Any, TypedDict
 
 
 def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """merge_unique_dicts 함수. bootstrap Supervisor graph의 state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -24,6 +31,7 @@ def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, 
 
 
 def merge_unique_strings(left: list[str] | None, right: list[str] | None) -> list[str]:
+    """merge_unique_strings 함수. bootstrap Supervisor graph의 state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     result: list[str] = []
     seen: set[str] = set()
 
@@ -38,6 +46,7 @@ def merge_unique_strings(left: list[str] | None, right: list[str] | None) -> lis
 
 class BootstrapState(TypedDict, total=False):
     # Inputs
+    """bootstrap LangGraph가 공유하는 state key를 정의하는 TypedDict schema다."""
     company_name: str
     official_urls: list[str]
     dart_api_key: str | None
@@ -78,10 +87,14 @@ class BootstrapState(TypedDict, total=False):
     agent_llm_calls: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_model_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_supervisor_delegations: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_autonomy_loop_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
     current_agent_model_assignment: dict[str, Any]
     current_supervisor_model_assignment: dict[str, Any]
     current_supervisor_delegation: dict[str, Any]
+    current_supervisor_loop_decision: dict[str, Any]
     supervisor_approval_policy: dict[str, Any]
+    supervisor_long_term_goal: dict[str, Any]
+    supervisor_autonomy_policy: dict[str, Any]
     agent_supervisor_extra_loop_enabled: bool
 
     # Agent package artifacts

@@ -1,3 +1,6 @@
+"""공식 URL source discovery가 같은 도메인 후보를 찾는지 검증한다.
+"""
+
 from app.company_bootstrap.source_discovery import is_candidate_url, normalize_url, same_domain, score_url
 
 

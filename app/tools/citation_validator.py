@@ -1,5 +1,10 @@
 # app/tools/citation_validator.py
 
+"""보고서 citation label 검증 tool.
+
+report paragraph 안의 citation이 실제 used_sources/evidence label 안에 존재하는지 확인한다.
+"""
+
 from __future__ import annotations
 
 import re
@@ -10,6 +15,7 @@ OFFICIAL_DISCOVERY_PATTERN = re.compile(r"^\[(공식URL-\d+|DART-기업개황)\]
 
 
 def collect_allowed_citation_labels(evidence_items: list[dict[str, Any]]) -> set[str]:
+    """collect_allowed_citation_labels 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return {
         str(item["citation_label"])
         for item in evidence_items
@@ -35,6 +41,7 @@ def normalize_citation_label(label: str) -> list[str]:
 
 
 def normalize_citation_labels(labels: list[str]) -> list[str]:
+    """normalize_citation_labels 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     result: list[str] = []
     for label in labels:
         for normalized in normalize_citation_label(label):
@@ -44,6 +51,7 @@ def normalize_citation_labels(labels: list[str]) -> list[str]:
 
 
 def collect_official_discovery_labels(report_data: dict[str, Any]) -> set[str]:
+    """collect_official_discovery_labels 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     labels: set[str] = set()
 
     for candidate in report_data.get("top_candidates", []):
@@ -69,6 +77,7 @@ def collect_official_discovery_labels(report_data: dict[str, Any]) -> set[str]:
 
 
 def collect_texts_from_report_data(report_data: dict[str, Any]) -> list[str]:
+    """collect_texts_from_report_data 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     texts: list[str] = []
 
     for section in report_data.get("sections", []):
@@ -86,6 +95,7 @@ def collect_texts_from_report_data(report_data: dict[str, Any]) -> list[str]:
 
 
 def find_citation_labels(text: str) -> list[str]:
+    """find_citation_labels 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return CITATION_PATTERN.findall(text or "")
 
 
@@ -93,6 +103,7 @@ def validate_report_citations(
     report_data: dict[str, Any],
     evidence_items: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """보고서 문단의 citation label이 허용된 source/evidence 안에 있는지 검증한다."""
     allowed = collect_allowed_citation_labels(evidence_items)
     allowed.update(collect_official_discovery_labels(report_data))
 

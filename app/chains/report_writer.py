@@ -1,5 +1,11 @@
 # app/chains/report_writer.py
 
+"""분석 결과를 보고서 문장/section 구조로 변환하는 chain.
+
+RAG evidence, ranking, PoC 계획, governance 결과를 바탕으로 citation을 포함한
+보고서 데이터를 생성하고, 실패 시 deterministic report builder로 fallback한다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -88,11 +94,13 @@ CITATION_EXEMPT_PATTERNS = [
 
 
 def compact_json(value: Any, max_chars: int = 12000) -> str:
+    """compact_json 함수. 분석 결과를 보고서 문장/section 구조로 변환하는 chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     text = json.dumps(value, ensure_ascii=False, default=str)
     return text if len(text) <= max_chars else text[:max_chars] + "..."
 
 
 def clean_evidence_summary(text: str, max_chars: int = 500) -> str:
+    """clean_evidence_summary 함수. 분석 결과를 보고서 문장/section 구조로 변환하는 chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     cleaned_lines = []
     for line in str(text or "").splitlines():
         cleaned = " ".join(line.split()).strip()
@@ -110,6 +118,7 @@ def clean_evidence_summary(text: str, max_chars: int = 500) -> str:
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
+    """extract_json_object 함수. 분석 결과를 보고서 문장/section 구조로 변환하는 chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
@@ -127,11 +136,13 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def append_unique(labels: list[str], label: str | None) -> None:
+    """append_unique 함수. 분석 결과를 보고서 문장/section 구조로 변환하는 chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if label and label not in labels:
         labels.append(str(label))
 
 
 def build_allowed_citation_labels(evidence_items: list[dict[str, Any]], state: dict[str, Any] | None = None) -> list[str]:
+    """build_allowed_citation_labels 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     labels: list[str] = []
 
     for item in evidence_items:
@@ -155,6 +166,7 @@ def build_allowed_citation_labels(evidence_items: list[dict[str, Any]], state: d
 
 
 def build_evidence_context(evidence_items: list[dict[str, Any]], limit: int = 12) -> list[dict[str, Any]]:
+    """build_evidence_context 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     sorted_items = sorted(evidence_items, key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
     context = []
 
@@ -175,6 +187,7 @@ def build_evidence_context(evidence_items: list[dict[str, Any]], limit: int = 12
 
 
 def build_base_sections_payload(report_data: dict[str, Any]) -> list[dict[str, Any]]:
+    """build_base_sections_payload 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     payload = []
     for section in report_data.get("sections", []):
         paragraphs = []
@@ -189,6 +202,7 @@ def build_base_sections_payload(report_data: dict[str, Any]) -> list[dict[str, A
 
 
 def build_analysis_summary(state: dict[str, Any]) -> dict[str, Any]:
+    """build_analysis_summary 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     return {
         "process_analysis": state.get("process_analysis", {}).get("summary", {}),
         "data_readiness": state.get("data_readiness", {}).get("summary", {}),
@@ -202,6 +216,7 @@ def build_analysis_summary(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def should_skip_citation_enforcement(text: str) -> bool:
+    """should_skip_citation_enforcement 함수. 분석 결과를 보고서 문장/section 구조로 변환하는 chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     stripped = str(text or "").strip()
     if not stripped:
         return True
@@ -211,6 +226,7 @@ def should_skip_citation_enforcement(text: str) -> bool:
 
 
 def select_default_citation_label(allowed_labels: list[str], evidence_items: list[dict[str, Any]]) -> str | None:
+    """select_default_citation_label 함수. 여러 후보 중 workflow 정책에 맞는 항목을 선택한다."""
     if evidence_items:
         sorted_items = sorted(evidence_items, key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
         for item in sorted_items:
@@ -221,6 +237,7 @@ def select_default_citation_label(allowed_labels: list[str], evidence_items: lis
 
 
 def enforce_citation_coverage(report_data: dict[str, Any], allowed_labels: list[str], evidence_items: list[dict[str, Any]]) -> dict[str, Any]:
+    """enforce_citation_coverage 함수. 분석 결과를 보고서 문장/section 구조로 변환하는 chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     default_label = select_default_citation_label(allowed_labels, evidence_items)
     if not default_label:
         return report_data
@@ -249,6 +266,7 @@ def enforce_citation_coverage(report_data: dict[str, Any], allowed_labels: list[
 
 
 def apply_llm_paragraphs(base_report_data: dict[str, Any], llm_payload: dict[str, Any]) -> dict[str, Any]:
+    """apply_llm_paragraphs 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     report_data = deepcopy(base_report_data)
     llm_sections = llm_payload.get("sections", [])
     section_map = {item.get("heading"): item.get("paragraphs", []) for item in llm_sections if item.get("heading")}
@@ -277,6 +295,7 @@ def build_fallback_report_data(
     reason: str,
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """build_fallback_report_data 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     report_data = build_deterministic_report_data(state)
     report_data["generation"] = {
         "mode": "deterministic_fallback",
@@ -287,6 +306,7 @@ def build_fallback_report_data(
 
 
 def generate_report_data_with_llm(state: dict[str, Any]) -> dict[str, Any]:
+    """generate_report_data_with_llm 함수. 분석 결과를 보고서 문장/section 구조로 변환하는 chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     base_report_data = build_deterministic_report_data(state)
     evidence_items = state.get("evidence_items", [])
     allowed_citation_labels = build_allowed_citation_labels(evidence_items, state=state)

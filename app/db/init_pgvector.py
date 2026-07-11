@@ -1,5 +1,11 @@
 # app/db/init_pgvector.py
 
+"""PostgreSQL pgvector extension 초기화 script.
+
+RAG embedding column과 vector distance 검색을 사용하기 위해 필요한 DB extension을
+준비한다.
+"""
+
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -7,6 +13,7 @@ from app.db.database import engine
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     try:
         with engine.begin() as conn:
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))

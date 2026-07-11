@@ -1,5 +1,11 @@
 # app/compliance/regulatory_mapping.py
 
+"""AI 관련 규제/거버넌스 통제 항목을 후보 업무에 매핑한다.
+
+EU AI Act, 한국 AI 기본법 proxy, privacy/security control을 운영 screening 관점에서
+정리한다. 법률 자문이 아니라 PoC 전 기술적 검토 자료다.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -8,6 +14,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class RegulatoryMappingRule:
+    """RegulatoryMappingRule 클래스. AI 관련 규제/거버넌스 통제 항목을 후보 업무에 매핑한다.에서 사용하는 구조화된 데이터/동작 단위다."""
     id: str
     framework: str
     risk_category: str
@@ -19,6 +26,7 @@ class RegulatoryMappingRule:
     implementation_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
         return asdict(self)
 
 
@@ -143,6 +151,7 @@ HIGH_IMPACT_TO_REGULATORY_DOMAIN = {
 
 
 def _mapping_payload(rule_id: str, matched_triggers: list[str]) -> dict[str, Any]:
+    """_mapping_payload 함수. AI 관련 규제/거버넌스 통제 항목을 후보 업무에 매핑한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     rule = REGULATORY_MAPPING_RULES[rule_id]
     payload = rule.to_dict()
     payload["matched_triggers"] = sorted(set(str(item) for item in matched_triggers if str(item).strip()))
@@ -159,6 +168,7 @@ def build_regulatory_mappings(
     high_impact_risk_flags: list[str],
     risk_flags: list[str],
 ) -> list[dict[str, Any]]:
+    """build_regulatory_mappings 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     mappings: list[dict[str, Any]] = []
 
     if prohibited_hits or compliance_level == "blocked":
@@ -181,6 +191,7 @@ def build_regulatory_mappings(
 
 
 def summarize_regulatory_mappings(mappings: list[dict[str, Any]]) -> dict[str, Any]:
+    """summarize_regulatory_mappings 함수. AI 관련 규제/거버넌스 통제 항목을 후보 업무에 매핑한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     frameworks: list[str] = []
     risk_categories: list[str] = []
     required_controls: list[str] = []
@@ -209,4 +220,5 @@ def summarize_regulatory_mappings(mappings: list[dict[str, Any]]) -> dict[str, A
 
 
 def get_regulatory_mapping_rules() -> list[dict[str, Any]]:
+    """get_regulatory_mapping_rules 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     return [rule.to_dict() for rule in REGULATORY_MAPPING_RULES.values()]

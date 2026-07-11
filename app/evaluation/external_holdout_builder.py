@@ -1,5 +1,10 @@
 # app/evaluation/external_holdout_builder.py
 
+"""외부 holdout 평가 데이터를 구성한다.
+
+학습/개발에 직접 쓰지 않은 문서나 업무 후보를 모아 일반화 성능을 점검할 때 사용한다.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -22,14 +27,17 @@ REQUIRED_SCORE_KEYS = [
 
 
 def normalize_key(value: str) -> str:
+    """normalize_key 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
 
 
 def normalize_value(value: Any) -> str:
+    """normalize_value 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     return str(value or "").replace("\ufeff", "").replace("\u00a0", " ").strip()
 
 
 def read_text_with_fallback(path: str | Path) -> tuple[str, str]:
+    """read_text_with_fallback 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     input_path = Path(path)
     last_error: UnicodeDecodeError | None = None
     for encoding in CSV_ENCODINGS:
@@ -43,6 +51,7 @@ def read_text_with_fallback(path: str | Path) -> tuple[str, str]:
 
 
 def read_csv_rows(path: str | Path) -> list[dict[str, str]]:
+    """read_csv_rows 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     text, _ = read_text_with_fallback(path)
     reader = csv.DictReader(text.splitlines())
     rows: list[dict[str, str]] = []
@@ -54,6 +63,7 @@ def read_csv_rows(path: str | Path) -> list[dict[str, str]]:
 
 
 def parse_float(value: Any, default: float = 0.0) -> float:
+    """parse_float 함수. 문자열/파일/CLI 입력을 내부에서 쓰기 쉬운 구조로 파싱한다."""
     try:
         return float(str(value).replace(",", ""))
     except (TypeError, ValueError):
@@ -61,6 +71,7 @@ def parse_float(value: Any, default: float = 0.0) -> float:
 
 
 def parse_int(value: Any, default: int = 0) -> int:
+    """parse_int 함수. 문자열/파일/CLI 입력을 내부에서 쓰기 쉬운 구조로 파싱한다."""
     try:
         return int(float(str(value).replace(",", "")))
     except (TypeError, ValueError):
@@ -68,10 +79,12 @@ def parse_int(value: Any, default: int = 0) -> int:
 
 
 def truthy(value: Any) -> bool:
+    """truthy 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return normalize_value(value).lower() in {"1", "true", "yes", "y", "default", "failure"}
 
 
 def first_value(row: dict[str, str], aliases: list[str]) -> str:
+    """first_value 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     for alias in aliases:
         key = normalize_key(alias)
         if row.get(key):
@@ -80,6 +93,7 @@ def first_value(row: dict[str, str], aliases: list[str]) -> str:
 
 
 def score_rationale(*keys: str) -> dict[str, str]:
+    """score_rationale 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
     selected = set(keys) | {"expected_effect", "repeatability"}
     return {key: "derived_from_external_dataset" for key in REQUIRED_SCORE_KEYS if key in selected}
 
@@ -101,6 +115,7 @@ def base_case(
     saving_rate: float,
     compliance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """base_case 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     payload: dict[str, Any] = {
         "case_id": case_id,
         "process_id": process_id,
@@ -123,6 +138,7 @@ def base_case(
 
 
 def map_online_retail(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
+    """map_online_retail 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     description = first_value(row, ["Description", "description", "item_description"])
     quantity = parse_float(first_value(row, ["Quantity", "quantity"]), default=0.0)
     unit_price = parse_float(first_value(row, ["UnitPrice", "unit_price", "price"]), default=0.0)
@@ -181,6 +197,7 @@ def map_online_retail(row: dict[str, str], case_id: str, process_id: int) -> dic
 
 
 def map_bank_marketing(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
+    """map_bank_marketing 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     has_loan = normalize_value(first_value(row, ["loan", "housing", "default"])).lower() in {"yes", "true", "1"}
     campaign = parse_int(first_value(row, ["campaign", "previous"]), default=0)
     data_accessibility = 4 if row else 2
@@ -205,6 +222,7 @@ def map_bank_marketing(row: dict[str, str], case_id: str, process_id: int) -> di
 
 
 def map_credit_default(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
+    """map_credit_default 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     default_next_month = truthy(first_value(row, ["default_payment_next_month", "default", "y", "target"]))
     delinquency = max(
         parse_int(first_value(row, ["PAY_0", "pay_0", "pay_status", "delay"]), default=0),
@@ -251,6 +269,7 @@ def map_credit_default(row: dict[str, str], case_id: str, process_id: int) -> di
 
 
 def map_process_mining(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
+    """map_process_mining 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     activity = first_value(row, ["activity", "concept_name", "event", "task"])
     timestamp = first_value(row, ["timestamp", "time_timestamp", "complete_timestamp", "date"])
     resource = first_value(row, ["resource", "org_resource", "user", "role"])
@@ -309,6 +328,7 @@ def map_process_mining(row: dict[str, str], case_id: str, process_id: int) -> di
 
 
 def map_row(dataset_type: str, row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
+    """map_row 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if dataset_type == "online_retail":
         return map_online_retail(row, case_id, process_id)
     if dataset_type == "bank_marketing":
@@ -327,6 +347,7 @@ def build_external_holdout_cases(
     process_id_start: int = 10_000,
     max_cases: int | None = None,
 ) -> list[dict[str, Any]]:
+    """build_external_holdout_cases 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     if dataset_type not in SUPPORTED_DATASET_TYPES:
         raise ValueError(f"dataset_type must be one of {sorted(SUPPORTED_DATASET_TYPES)}")
     rows = read_csv_rows(input_path)
@@ -344,6 +365,7 @@ def build_external_holdout_cases(
 
 
 def write_jsonl(path: str | Path, rows: list[dict[str, Any]], append: bool = False) -> None:
+    """write_jsonl 함수. audit log나 결과 payload를 영속 저장소에 기록한다."""
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mode = "a" if append else "w"
@@ -353,6 +375,7 @@ def write_jsonl(path: str | Path, rows: list[dict[str, Any]], append: bool = Fal
 
 
 def parse_args() -> argparse.Namespace:
+    """CLI 실행 인자를 정의하고 argparse Namespace로 변환한다."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-type", required=True, choices=sorted(SUPPORTED_DATASET_TYPES))
     parser.add_argument("--input", required=True, help="External dataset CSV path")
@@ -365,6 +388,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     args = parse_args()
     cases = build_external_holdout_cases(
         dataset_type=args.dataset_type,

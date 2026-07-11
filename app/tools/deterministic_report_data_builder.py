@@ -1,5 +1,10 @@
 # app/tools/deterministic_report_data_builder.py
 
+"""LLM 없이 보고서 데이터를 만드는 deterministic fallback builder.
+
+report writer LLM이 실패해도 제출 가능한 기본 보고서 구조와 section을 생성한다.
+"""
+
 from __future__ import annotations
 
 from datetime import date
@@ -7,6 +12,7 @@ from typing import Any
 
 
 def money(value: Any) -> str:
+    """money 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     try:
         return f"{int(value):,}원"
     except (TypeError, ValueError):
@@ -14,6 +20,7 @@ def money(value: Any) -> str:
 
 
 def percent(value: Any) -> str:
+    """percent 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     try:
         return f"{float(value):.1f}%"
     except (TypeError, ValueError):
@@ -21,12 +28,14 @@ def percent(value: Any) -> str:
 
 
 def evidence_for(evidence_items: list[dict[str, Any]], purpose: str, limit: int = 5) -> list[dict[str, Any]]:
+    """evidence_for 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     matched = [item for item in evidence_items if purpose in item.get("used_for", [])]
     matched.sort(key=lambda item: float(item.get("confidence") or 0.0), reverse=True)
     return matched[:limit]
 
 
 def citations(items: list[dict[str, Any]]) -> str:
+    """citations 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     labels = []
     for item in items:
         label = item.get("citation_label")
@@ -36,6 +45,7 @@ def citations(items: list[dict[str, Any]]) -> str:
 
 
 def source_label_for_document(document: dict[str, Any], index: int) -> str:
+    """source_label_for_document 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     document_type = str(document.get("document_type") or "")
     if document_type == "opendart_company_overview":
         return "[DART-기업개황]"
@@ -45,6 +55,7 @@ def source_label_for_document(document: dict[str, Any], index: int) -> str:
 
 
 def clean_company_description(description: str | None) -> list[str]:
+    """clean_company_description 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if not description:
         return []
 
@@ -61,6 +72,7 @@ def clean_company_description(description: str | None) -> list[str]:
 
 
 def extract_profile_value(description_lines: list[str], prefix: str) -> str | None:
+    """extract_profile_value 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     for line in description_lines:
         if line.startswith(prefix):
             return line.split(":", 1)[-1].strip()
@@ -68,6 +80,7 @@ def extract_profile_value(description_lines: list[str], prefix: str) -> str | No
 
 
 def build_company_fact_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_company_fact_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     company = state.get("company_profile", {})
     description_lines = clean_company_description(company.get("description"))
 
@@ -92,6 +105,7 @@ def build_company_fact_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def infer_source_usage(document: dict[str, Any]) -> str:
+    """infer_source_usage 함수. 명시 입력이 없을 때 텍스트나 metadata에서 보수적인 추정값을 만든다."""
     title = str(document.get("title") or "")
     document_type = str(document.get("document_type") or "")
     lowered = title.lower()
@@ -108,6 +122,7 @@ def infer_source_usage(document: dict[str, Any]) -> str:
 
 
 def build_source_overview_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_source_overview_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     official_url_index = 0
 
@@ -129,6 +144,7 @@ def build_source_overview_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_ax_interpretation_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_ax_interpretation_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     seen = set()
 
@@ -147,6 +163,7 @@ def build_ax_interpretation_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def summarize_evidence(items: list[dict[str, Any]], limit: int = 3) -> str:
+    """summarize_evidence 함수. LLM 없이 보고서 데이터를 만드는 deterministic fallback builder. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     selected = items[:limit]
     if not selected:
         return "현재 연결된 근거 자료가 부족하여 추가 자료 수집이 필요하다."
@@ -164,6 +181,7 @@ def summarize_evidence(items: list[dict[str, Any]], limit: int = 3) -> str:
 
 
 def build_process_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_process_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for process in state.get("business_processes", []):
         rows.append([
@@ -178,6 +196,7 @@ def build_process_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_candidate_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_candidate_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for item in state.get("priority_ranking", {}).get("items", []):
         rows.append([
@@ -194,6 +213,7 @@ def build_candidate_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_roi_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_roi_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for item in state.get("roi_cost", {}).get("items", []):
         rows.append([
@@ -208,6 +228,7 @@ def build_roi_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_risk_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_risk_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for item in state.get("risk_governance", {}).get("items", []):
         rows.append([
@@ -221,6 +242,7 @@ def build_risk_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_compliance_summary_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_compliance_summary_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     assessment = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
     summary = assessment.get("summary", {}) or {}
     return [
@@ -234,6 +256,7 @@ def build_compliance_summary_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_compliance_candidate_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_compliance_candidate_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     assessment = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
 
@@ -253,6 +276,7 @@ def build_compliance_candidate_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_regulatory_control_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_regulatory_control_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     assessment = state.get("compliance_assessment", {}) or state.get("risk_governance", {}).get("compliance_assessment", {}) or {}
     controls = assessment.get("regulatory_controls", [])
     rows = []
@@ -269,6 +293,7 @@ def build_regulatory_control_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_poc_milestone_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_poc_milestone_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for item in state.get("poc_plan", {}).get("poc_plan", {}).get("milestones", []):
         rows.append([
@@ -282,6 +307,7 @@ def build_poc_milestone_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_poc_kpi_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_poc_kpi_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for item in state.get("poc_plan", {}).get("kpis", []):
         rows.append([item.get("kpi"), item.get("target"), item.get("measurement")])
@@ -289,6 +315,7 @@ def build_poc_kpi_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_review_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_review_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     review = state.get("human_review", {}) or {}
     if not review:
         return []
@@ -301,6 +328,7 @@ def build_review_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_top_candidate_details(state: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    """build_top_candidate_details 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     details = []
     for item in state.get("priority_ranking", {}).get("items", [])[:limit]:
         details.append({
@@ -326,6 +354,7 @@ def build_top_candidate_details(state: dict[str, Any], limit: int = 5) -> list[d
 
 
 def build_executive_summary(state: dict[str, Any]) -> dict[str, Any]:
+    """build_executive_summary 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     company = state.get("company_profile", {})
     ranking = state.get("priority_ranking", {})
     roi_summary = state.get("roi_cost", {}).get("summary", {})
@@ -358,6 +387,7 @@ def build_executive_summary(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_report_data(state: dict[str, Any]) -> dict[str, Any]:
+    """분석 state를 보고서 section/table/reference 구조로 조립한다."""
     company = state.get("company_profile", {})
     evidence_items = state.get("evidence_items", [])
     used_sources = state.get("used_sources", [])

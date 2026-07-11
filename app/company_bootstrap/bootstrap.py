@@ -1,5 +1,11 @@
 # app/company_bootstrap/bootstrap.py
 
+"""회사 bootstrap CLI 진입점.
+
+회사명, 공식 URL, OpenDART 식별자를 받아 bootstrap Supervisor graph를 실행하고
+회사/문서/업무 후보를 DB에 생성한다.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -11,6 +17,7 @@ from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 
 
 def parse_args() -> argparse.Namespace:
+    """CLI 실행 인자를 정의하고 argparse Namespace로 변환한다."""
     parser = argparse.ArgumentParser(description="Bootstrap AX analysis DB from official company sources.")
     parser.add_argument("--company-name", type=str, required=True)
     parser.add_argument("--official-url", action="append", default=[])
@@ -30,6 +37,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def initialize_database() -> None:
+    """initialize_database 함수. 회사 bootstrap CLI 진입점. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     from app.db.create_tables import main as create_tables
     from app.db.init_pgvector import main as init_pgvector
     from app.db.migrate_discovery_metadata import main as migrate_discovery_metadata
@@ -42,6 +50,7 @@ def initialize_database() -> None:
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     args = parse_args()
 
     if args.init_db:

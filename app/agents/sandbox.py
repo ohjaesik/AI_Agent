@@ -1,5 +1,11 @@
 # app/agents/sandbox.py
 
+"""Agent tool을 격리 환경에서 실행하기 위한 sandbox helper.
+
+현재 기본 실행은 direct Python call이지만, 설정에 따라 Docker 같은 제한된 환경에서
+tool command를 실행할 수 있도록 경계를 제공한다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -52,11 +58,13 @@ DENIED_ARGUMENT_TOKENS = {
 
 
 class AgentSandboxError(RuntimeError):
+    """AgentSandboxError 클래스. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper.에서 사용하는 구조화된 데이터/동작 단위다."""
     pass
 
 
 @dataclass(frozen=True)
 class SandboxResult:
+    """SandboxResult 클래스. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper.에서 사용하는 구조화된 데이터/동작 단위다."""
     mode: str
     returncode: int
     stdout: str
@@ -64,6 +72,7 @@ class SandboxResult:
     timed_out: bool = False
 
     def to_dict(self) -> dict[str, Any]:
+        """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
         return {
             "mode": self.mode,
             "returncode": self.returncode,
@@ -74,10 +83,12 @@ class SandboxResult:
 
 
 def command_basename(command: str) -> str:
+    """command_basename 함수. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return Path(command).name.lower()
 
 
 def validate_command_safety(command: list[str]) -> None:
+    """validate_command_safety 함수. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if not command:
         raise AgentSandboxError("Sandbox command cannot be empty.")
 
@@ -99,6 +110,7 @@ def validate_command_safety(command: list[str]) -> None:
 
 
 def run_direct_command(command: list[str], timeout_seconds: int) -> SandboxResult:
+    """run_direct_command 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     validate_command_safety(command)
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout_seconds, check=False)
@@ -108,6 +120,7 @@ def run_direct_command(command: list[str], timeout_seconds: int) -> SandboxResul
 
 
 def run_docker_command(command: list[str], timeout_seconds: int) -> SandboxResult:
+    """run_docker_command 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     validate_command_safety(command)
     settings = get_settings()
     with tempfile.TemporaryDirectory(prefix="ax-agent-sandbox-") as temp_dir:
@@ -143,6 +156,7 @@ def run_docker_command(command: list[str], timeout_seconds: int) -> SandboxResul
 
 
 def run_sandboxed_command(command: list[str], timeout_seconds: int | None = None) -> SandboxResult:
+    """run_sandboxed_command 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     settings = get_settings()
     timeout = timeout_seconds or settings.agent_tool_sandbox_timeout_seconds
     mode = settings.agent_tool_sandbox_mode.lower()
@@ -155,6 +169,7 @@ def run_sandboxed_command(command: list[str], timeout_seconds: int | None = None
 
 
 def assert_sandbox_available() -> None:
+    """assert_sandbox_available 함수. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     settings = get_settings()
     if settings.agent_tool_sandbox_mode.lower() != "docker":
         return

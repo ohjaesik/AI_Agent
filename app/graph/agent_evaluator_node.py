@@ -1,5 +1,11 @@
 # app/graph/agent_evaluator_node.py
 
+"""LangGraph에서 deterministic Agent evaluator를 실행하는 node.
+
+priority ranking을 받아 후보별 confidence/evidence coverage/status를 계산하고 필요 시
+replan 신호를 만든다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -12,6 +18,7 @@ from app.graph.state import AXPlannerState
 
 
 def agent_evaluator_node(state: AXPlannerState) -> dict[str, Any]:
+    """priority ranking을 deterministic evaluator로 검증하고 replan 필요성을 계산한다."""
     node_name = "agent_evaluator"
 
     try:

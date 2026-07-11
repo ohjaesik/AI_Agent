@@ -1,5 +1,11 @@
 # app/graph/replan_node.py
 
+"""근거 부족 후보에 대해 bounded replan을 수행하는 node.
+
+공식 도메인 탐색, 선택적 public web search, 신규 문서 색인 후 retrieval로 돌아갈지
+Human Review로 갈지 결정한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -20,6 +26,7 @@ REPLAN_MAX_ITEMS = 5
 
 
 def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
+    """build_replan_items 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     items = []
     ranking_items = {int(item.get("process_id") or 0): item for item in state.get("priority_ranking", {}).get("items", [])}
 
@@ -57,6 +64,7 @@ def build_replan_items(state: AXPlannerState) -> list[dict[str, Any]]:
 
 
 def official_seed_urls(state: AXPlannerState) -> tuple[list[str], set[str]]:
+    """official_seed_urls 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     seed_urls: list[str] = []
     existing_urls: set[str] = set()
 
@@ -83,6 +91,7 @@ def official_seed_urls(state: AXPlannerState) -> tuple[list[str], set[str]]:
 
 
 def replan_query_terms(state: AXPlannerState, replan_items: list[dict[str, Any]]) -> list[str]:
+    """replan_query_terms 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     terms: list[str] = []
     for item in replan_items:
         for key in ("process_name", "candidate_agent_name"):
@@ -105,6 +114,7 @@ def replan_query_terms(state: AXPlannerState, replan_items: list[dict[str, Any]]
 
 
 def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[str, Any]], max_total: int = 3) -> dict[str, Any]:
+    """collect_discovered_sources 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     settings = get_settings()
     company_id = int(state["company_id"])
     company_name = str((state.get("company_profile", {}) or {}).get("name") or "")
@@ -166,28 +176,33 @@ def collect_discovered_sources(state: AXPlannerState, replan_items: list[dict[st
 
 
 def current_replan_attempts(state: AXPlannerState) -> int:
+    """current_replan_attempts 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     state_attempts = int(state.get("replan_attempts", 0) or 0)
     request_attempts = int((state.get("replan_request") or {}).get("attempt", 0) or 0)
     return max(state_attempts, request_attempts)
 
 
 def max_replan_attempts() -> int:
+    """max_replan_attempts 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return max(int(get_settings().agent_replan_max_attempts or 0), 0)
 
 
 def has_additional_evidence_need(state: AXPlannerState) -> bool:
+    """has_additional_evidence_need 함수. 조건을 검사해 True/False 판단값을 반환한다."""
     evaluation = state.get("agent_evaluation", {}) or {}
     summary = evaluation.get("summary", {}) or {}
     return int(summary.get("additional_evidence_required_count", 0) or 0) > 0
 
 
 def has_replan_source_path(state: AXPlannerState) -> bool:
+    """has_replan_source_path 함수. 조건을 검사해 True/False 판단값을 반환한다."""
     settings = get_settings()
     seed_urls, _ = official_seed_urls(state)
     return bool(seed_urls) or bool(settings.external_web_discovery_enabled)
 
 
 def source_collection_productive(source_collection: dict[str, Any]) -> bool:
+    """source_collection_productive 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     same_domain = source_collection.get("same_domain_discovered") or []
     public_results = ((source_collection.get("public_web_search") or {}).get("results") or [])
     loaded = source_collection.get("loaded") or []
@@ -196,6 +211,7 @@ def source_collection_productive(source_collection: dict[str, Any]) -> bool:
 
 
 def previous_replan_unproductive(state: AXPlannerState) -> bool:
+    """previous_replan_unproductive 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if current_replan_attempts(state) <= 0:
         return False
     source_collection = (state.get("replan_request") or {}).get("source_collection") or {}
@@ -203,6 +219,7 @@ def previous_replan_unproductive(state: AXPlannerState) -> bool:
 
 
 def replan_route_reason(state: AXPlannerState) -> str:
+    """replan_route_reason 함수. 근거 부족 후보에 대해 bounded replan을 수행하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     attempts = current_replan_attempts(state)
     max_attempts = max_replan_attempts()
 
@@ -220,10 +237,12 @@ def replan_route_reason(state: AXPlannerState) -> str:
 
 
 def should_replan(state: AXPlannerState) -> str:
+    """evaluation 결과와 replan guard를 보고 agent_replan으로 갈지 delivery로 갈지 결정한다."""
     return "agent_replan" if replan_route_reason(state) == "route_to_replan" else "human_review"
 
 
 def should_continue_after_replan(state: AXPlannerState) -> str:
+    """replan 후 retrieval로 돌아갈지 Human Review로 갈지 결정한다."""
     request = state.get("replan_request") or {}
     route = request.get("route_after_replan")
     if route in {"retrieve_context", "human_review"}:
@@ -232,6 +251,7 @@ def should_continue_after_replan(state: AXPlannerState) -> str:
 
 
 def agent_replan_node(state: AXPlannerState) -> dict[str, Any]:
+    """근거 부족 후보에 대해 공식자료/선택적 public web search 기반 보강 루프를 실행한다."""
     node_name = "agent_replan"
 
     try:

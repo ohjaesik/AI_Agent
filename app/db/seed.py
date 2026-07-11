@@ -1,5 +1,10 @@
 # app/db/seed.py
 
+"""데모용 초기 데이터를 DB에 넣는 script.
+
+로컬 테스트에서 회사/프로젝트/업무/문서 예시가 필요할 때 사용한다.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -17,6 +22,7 @@ from app.db.models import (
 
 
 def seed_company(db):
+    """seed_company 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     company = Company(
         name="Hanbit Precision Manufacturing",
         industry="자동차 부품 제조",
@@ -33,6 +39,7 @@ def seed_company(db):
 
 
 def seed_departments(db, company_id: int):
+    """seed_departments 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     departments = [
         Department(
             company_id=company_id,
@@ -78,6 +85,7 @@ def seed_departments(db, company_id: int):
 
 
 def seed_systems(db, company_id: int):
+    """seed_systems 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     systems = [
         EnterpriseSystem(
             company_id=company_id,
@@ -150,6 +158,7 @@ def seed_systems(db, company_id: int):
 
 
 def seed_processes(db, company_id: int, departments: dict[str, Department]):
+    """seed_processes 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     processes = [
         BusinessProcess(
             company_id=company_id,
@@ -369,6 +378,7 @@ def seed_processes(db, company_id: int, departments: dict[str, Department]):
 
 
 def seed_documents(db, company_id: int, processes: dict[str, BusinessProcess]):
+    """seed_documents 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     documents = [
         ProcessDocument(
             company_id=company_id,
@@ -493,6 +503,7 @@ def seed_documents(db, company_id: int, processes: dict[str, BusinessProcess]):
 
 
 def seed_project(db, company_id: int):
+    """seed_project 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     project = AnalysisProject(
         company_id=company_id,
         title="2026 제조기업 AX 전환 사전진단 프로젝트",
@@ -504,6 +515,7 @@ def seed_project(db, company_id: int):
 
 
 def run_seed(reset: bool = False) -> None:
+    """run_seed 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     with SessionLocal() as db:
         if reset:
             delete_seed_data(db)
@@ -523,6 +535,7 @@ def run_seed(reset: bool = False) -> None:
 
 
 def parse_args():
+    """CLI 실행 인자를 정의하고 argparse Namespace로 변환한다."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--reset",

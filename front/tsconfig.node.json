@@ -1,19 +1,20 @@
 {
   "compilerOptions": {
+    // Vite 설정 파일처럼 Node 환경에서 실행되는 TypeScript 파일용 compiler 설정.
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023"],
     "types": ["node"],
     "skipLibCheck": true,
 
-    /* Bundler mode */
+    /* Bundler mode: NodeNext module 규칙에 맞춰 vite.config.ts를 type check한다. */
     "module": "nodenext",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
 
-    /* Linting */
+    /* Linting: 설정 파일에서도 unused code와 switch fallthrough를 잡는다. */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

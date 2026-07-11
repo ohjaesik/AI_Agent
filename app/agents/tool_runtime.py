@@ -1,5 +1,11 @@
 # app/agents/tool_runtime.py
 
+"""Agent tool 호출을 표준 trace와 함께 실행하는 runtime.
+
+tool 실행 시작/성공/실패 audit log를 남기고, runner 함수 결과를 Agent loop가
+소비할 수 있는 일관된 구조로 포장한다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -15,16 +21,19 @@ from app.agents.tool_guard import assert_tool_spec_allowed
 
 @dataclass(frozen=True)
 class ToolCallResult:
+    """tool 실행 결과, audit log, 관찰 정보를 함께 운반하는 값 객체다."""
     result: dict[str, Any]
     audit_logs: list[dict[str, Any]] = field(default_factory=list)
     observation: dict[str, Any] = field(default_factory=dict)
 
 
 def utc_now() -> str:
+    """UTC ISO timestamp를 생성해 audit log의 공통 시간값으로 사용한다."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def compact_json(value: Any, max_chars: int = 900) -> str:
+    """compact_json 함수. Agent tool 호출을 표준 trace와 함께 실행하는 runtime. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     try:
         text = json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
     except TypeError:
@@ -33,12 +42,14 @@ def compact_json(value: Any, max_chars: int = 900) -> str:
 
 
 def is_langgraph_interrupt(exc: BaseException) -> bool:
+    """is_langgraph_interrupt 함수. 조건을 검사해 True/False 판단값을 반환한다."""
     name = type(exc).__name__.lower()
     module = type(exc).__module__.lower()
     return "interrupt" in name and "langgraph" in module
 
 
 def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """tool 호출 입력 payload를 trace에 넣기 좋은 작은 요약으로 줄인다."""
     state = payload.get("state") if isinstance(payload, dict) else None
     if not isinstance(state, dict):
         return {"payload": compact_json(payload)}
@@ -55,6 +66,7 @@ def summarize_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize_result(result: dict[str, Any]) -> dict[str, Any]:
+    """tool 실행 결과를 trace에 넣기 좋은 작은 요약으로 줄인다."""
     return {
         "result_keys": sorted(result.keys()),
         "errors_returned": len(result.get("errors", []) or []),
@@ -72,6 +84,7 @@ def build_tool_audit_log(
     status: str,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """tool 실행 시작/성공/실패 이벤트를 audit log 형식으로 만든다."""
     return {
         "node": node_name or tool_name,
         "status": status,

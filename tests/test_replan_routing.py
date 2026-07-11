@@ -1,3 +1,6 @@
+"""근거 부족 상황에서 replan/human review route가 올바른지 검증한다.
+"""
+
 from app.core.config import get_settings
 from app.graph.replan_node import (
     build_replan_items,

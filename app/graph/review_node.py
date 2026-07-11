@@ -1,5 +1,11 @@
 # app/graph/review_node.py
 
+"""Human Review interrupt/auto approval을 담당하는 node.
+
+Supervisor 최소 승인 정책과 실제 ranking/compliance/evaluation 상태를 보고 사람이 필요한
+경우만 interrupt하고, 그렇지 않으면 Supervisor auto approval 기록을 남긴다.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -15,6 +21,7 @@ from app.tools.review_applier import apply_human_review_to_ranking
 
 
 def utc_now() -> str:
+    """UTC ISO timestamp를 생성해 audit log의 공통 시간값으로 사용한다."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -24,6 +31,7 @@ def append_audit(
     status: str,
     payload: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    """append_audit 함수. Human Review interrupt/auto approval을 담당하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return state.get("audit_logs", []) + [
         {
             "node": node_name,
@@ -35,6 +43,7 @@ def append_audit(
 
 
 def priority_status_counts(state: AXPlannerState) -> dict[str, int]:
+    """priority_status_counts 함수. Human Review interrupt/auto approval을 담당하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     counts: dict[str, int] = {}
     for item in (state.get("priority_ranking", {}) or {}).get("items", []) or []:
         status = str(item.get("status") or "unknown")
@@ -103,6 +112,7 @@ def build_supervisor_auto_decision(state: AXPlannerState, approval_need: dict[st
 
 
 def human_review_node(state: AXPlannerState) -> dict[str, Any]:
+    """Human Review interrupt 또는 Supervisor auto approval을 처리한다."""
     node_name = "human_review"
 
     approval_need = human_approval_need(state)

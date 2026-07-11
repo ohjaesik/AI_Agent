@@ -1,3 +1,6 @@
+"""오프라인 Agent 품질 평가 helper가 기대 metric을 계산하는지 검증한다.
+"""
+
 from app.evaluation.agent_quality_eval import (
     BLIND_HOLDOUT_GOLD_PATH,
     DEFAULT_GOLD_PATH,

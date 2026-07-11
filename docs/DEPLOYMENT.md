@@ -1,3 +1,5 @@
+<!-- 파일 역할: 로컬 PoC를 운영형 MVP로 배포할 때 필요한 환경변수와 실행 기준을 설명한다. -->
+
 # Deployment Guide
 
 본 문서는 AX Delivery Planner를 로컬 PoC가 아니라 최소 운영형 MVP로 실행하기 위한 배포 기준을 정리한다.

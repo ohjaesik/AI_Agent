@@ -1,5 +1,11 @@
 # app/graph/node_worker.py
 
+"""graph node를 direct/subprocess/docker 방식으로 실행하는 wrapper.
+
+노드 격리와 timeout, 실행 모드 trace를 제공해 긴 작업이 전체 프로세스를 망가뜨리지
+않게 한다.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -44,10 +50,12 @@ NON_WORKERIZABLE_NODES = {"human_review"}
 
 
 class NodeWorkerError(RuntimeError):
+    """격리 node worker 실행 중 발생한 오류를 호출자에게 전달하는 예외다."""
     pass
 
 
 def import_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]]:
+    """import_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     target = NODE_TARGETS.get(node_name)
     if not target:
         raise NodeWorkerError(f"Unknown graph node: {node_name}")
@@ -58,10 +66,12 @@ def import_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]]:
 
 
 def run_node_direct(node_name: str, state: AXPlannerState) -> dict[str, Any]:
+    """run_node_direct 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     return import_node(node_name)(state)
 
 
 def run_node_subprocess(node_name: str, state: AXPlannerState, timeout_seconds: int) -> dict[str, Any]:
+    """run_node_subprocess 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     with tempfile.TemporaryDirectory(prefix="ax-node-worker-") as temp_dir:
         state_path = Path(temp_dir) / "state.json"
         output_path = Path(temp_dir) / "output.json"
@@ -92,6 +102,7 @@ def run_node_subprocess(node_name: str, state: AXPlannerState, timeout_seconds: 
 
 
 def run_node_docker(node_name: str, state: AXPlannerState, timeout_seconds: int) -> dict[str, Any]:
+    """run_node_docker 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     settings = get_settings()
     repo_root = Path.cwd().resolve()
     with tempfile.TemporaryDirectory(prefix="ax-node-worker-") as temp_dir:
@@ -147,6 +158,7 @@ def run_node_docker(node_name: str, state: AXPlannerState, timeout_seconds: int)
 
 
 def run_node_via_worker(node_name: str, state: AXPlannerState) -> dict[str, Any]:
+    """run_node_via_worker 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     if node_name in NON_WORKERIZABLE_NODES:
         return run_node_direct(node_name, state)
 
@@ -162,7 +174,9 @@ def run_node_via_worker(node_name: str, state: AXPlannerState) -> dict[str, Any]
 
 
 def workerized_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]]:
+    """workerized_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     def _node(state: AXPlannerState) -> dict[str, Any]:
+        """_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
         settings = get_settings()
         mode = "direct" if node_name in NON_WORKERIZABLE_NODES else settings.graph_node_execution_mode.lower()
         start = time.perf_counter()
@@ -180,6 +194,7 @@ def workerized_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]
 
 
 def parse_args() -> argparse.Namespace:
+    """CLI 실행 인자를 정의하고 argparse Namespace로 변환한다."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--node", required=True)
     parser.add_argument("--state-file", required=True)
@@ -188,6 +203,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     args = parse_args()
     state = json.loads(Path(args.state_file).read_text(encoding="utf-8"))
     result = run_node_direct(args.node, state)

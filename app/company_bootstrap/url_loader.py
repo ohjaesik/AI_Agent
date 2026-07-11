@@ -1,5 +1,11 @@
 # app/company_bootstrap/url_loader.py
 
+"""공식 URL 본문을 로드하고 텍스트로 정리한다.
+
+HTML 페이지를 가져와 title, 본문 텍스트, URL metadata를 추출하고 source document로
+저장 가능한 구조로 반환한다.
+"""
+
 from __future__ import annotations
 
 import re
@@ -19,12 +25,14 @@ PDF_PLACEHOLDER = (
 
 @dataclass(frozen=True)
 class OfficialUrlDocument:
+    """공식 URL에서 로드한 title/body/source metadata를 담는 값 객체다."""
     url: str
     title: str
     content: str
 
 
 class ReadableHTMLParser(HTMLParser):
+    """HTML에서 script/style을 제외하고 사람이 읽을 수 있는 본문 텍스트를 추출하는 parser다."""
     def __init__(self) -> None:
         super().__init__()
         self.parts: list[str] = []
@@ -33,6 +41,7 @@ class ReadableHTMLParser(HTMLParser):
         self.skip_depth = 0
 
     def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[no-untyped-def]
+        """handle_starttag 함수. 공식 URL 본문을 로드하고 텍스트로 정리한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
         self.current_tag = tag.lower()
 
         if self.current_tag in {"script", "style", "noscript", "svg"}:
@@ -42,6 +51,7 @@ class ReadableHTMLParser(HTMLParser):
             self.parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
+        """handle_endtag 함수. 공식 URL 본문을 로드하고 텍스트로 정리한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
         tag = tag.lower()
 
         if tag in {"script", "style", "noscript", "svg"} and self.skip_depth > 0:
@@ -53,6 +63,7 @@ class ReadableHTMLParser(HTMLParser):
         self.current_tag = None
 
     def handle_data(self, data: str) -> None:
+        """handle_data 함수. 공식 URL 본문을 로드하고 텍스트로 정리한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
         if self.skip_depth > 0:
             return
 
@@ -66,10 +77,12 @@ class ReadableHTMLParser(HTMLParser):
             self.parts.append(text)
 
     def get_title(self, fallback: str) -> str:
+        """get_title 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
         title = " ".join(self.title_parts).strip()
         return normalize_whitespace(title) or fallback
 
     def get_text(self) -> str:
+        """get_text 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
         return normalize_text(" ".join(self.parts))
 
 
@@ -83,6 +96,7 @@ def sanitize_text(text: str) -> str:
 
 
 def looks_like_binary_text(text: str) -> bool:
+    """looks_like_binary_text 함수. 조건을 검사해 True/False 판단값을 반환한다."""
     if not text:
         return False
     sample = text[:2000]
@@ -92,10 +106,12 @@ def looks_like_binary_text(text: str) -> bool:
 
 
 def normalize_whitespace(text: str) -> str:
+    """normalize_whitespace 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     return re.sub(r"\s+", " ", sanitize_text(text or "")).strip()
 
 
 def normalize_text(text: str) -> str:
+    """normalize_text 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     text = sanitize_text(text or "")
     lines = [normalize_whitespace(line) for line in re.split(r"[\r\n]+", text)]
     lines = [line for line in lines if line]
@@ -105,6 +121,7 @@ def normalize_text(text: str) -> str:
 
 
 def fetch_url_once(url: str, timeout: int = 15) -> tuple[str, str]:
+    """fetch_url_once 함수. 공식 URL 본문을 로드하고 텍스트로 정리한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     request = urllib.request.Request(
         url,
         headers={
@@ -124,6 +141,7 @@ def fetch_url_once(url: str, timeout: int = 15) -> tuple[str, str]:
 
 
 def fetch_url(url: str, timeout: int = 15, retries: int = 2, backoff_seconds: float = 1.0) -> tuple[str, str]:
+    """fetch_url 함수. 공식 URL 본문을 로드하고 텍스트로 정리한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     last_error: Exception | None = None
 
     for attempt in range(retries + 1):
@@ -140,6 +158,7 @@ def fetch_url(url: str, timeout: int = 15, retries: int = 2, backoff_seconds: fl
 
 
 def fallback_title_from_url(url: str) -> str:
+    """fallback_title_from_url 함수. 공식 URL 본문을 로드하고 텍스트로 정리한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     parsed = urlparse(url)
     host = parsed.netloc or "official-url"
     path = parsed.path.strip("/") or "home"
@@ -147,6 +166,7 @@ def fallback_title_from_url(url: str) -> str:
 
 
 def is_pdf_or_binary_url(url: str, content_type: str, text: str) -> bool:
+    """is_pdf_or_binary_url 함수. 조건을 검사해 True/False 판단값을 반환한다."""
     lower_url = url.lower().split("?", 1)[0]
     lower_type = content_type.lower()
     return (
@@ -158,6 +178,7 @@ def is_pdf_or_binary_url(url: str, content_type: str, text: str) -> bool:
 
 
 def load_official_url(url: str, max_chars: int = 20000) -> OfficialUrlDocument:
+    """load_official_url 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
     html, content_type = fetch_url(url)
     fallback_title = fallback_title_from_url(url)
 

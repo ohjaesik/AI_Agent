@@ -1,4 +1,16 @@
 # app/agents/model_router.py
+"""Supervisor가 LLM 호출별 모델을 선택하는 비용/성능 라우터다.
+
+이 파일은 OpenAI, Anthropic, vLLM 후보를 같은 형식의 `ModelProfile`로 만든 뒤,
+입력 자료량, 예상 출력량, 업무 복잡도, 예상 처리 시간, 모델 품질, context window,
+가격을 하나의 수식으로 비교한다.
+
+정책 요약:
+- Supervisor Agent는 항상 설정된 상위 모델을 우선 사용한다.
+- 나머지 Expert Agent command/reflection/tool LLM은 가격 대비 효율 수식으로 고른다.
+- timeout retry 시에는 이전보다 더 강한 모델 또는 다른 고품질 provider로 상향한다.
+- 모든 선택 근거와 비용 계산은 `agent_model_decisions`에 남긴다.
+"""
 
 from __future__ import annotations
 
@@ -86,6 +98,7 @@ class WorkloadMetrics:
     required_quality_score: float
 
     def to_dict(self) -> dict[str, Any]:
+        """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
         return asdict(self)
 
 
@@ -107,6 +120,7 @@ class ModelProfile:
     def to_public_dict(self) -> dict[str, Any]:
         # API key 같은 비밀값은 절대 trace에 넣지 않는다. 모델 선택 근거에
         # 필요한 공개 메타데이터만 남긴다.
+        """to_public_dict 함수. Supervisor가 LLM 호출별 모델을 선택하는 비용/성능 라우터다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
         return {
             "provider": self.provider,
             "model": self.model,
@@ -122,6 +136,8 @@ class ModelProfile:
 
 
 def clamp(value: float, lower: float = 0.0, upper: float = 1.0) -> float:
+    """점수 계산 값이 0~1 범위를 벗어나지 않도록 제한한다."""
+
     return max(lower, min(upper, value))
 
 
@@ -143,10 +159,13 @@ def compact_json_size(value: Any, max_chars: int = 300_000) -> int:
 def estimate_tokens_from_chars(char_count: int) -> int:
     # 너무 작은 입력도 모델 호출에는 system/user prompt가 붙기 때문에
     # 최소 128 token으로 잡아 과소평가를 피한다.
+    """estimate_tokens_from_chars 함수. Supervisor가 LLM 호출별 모델을 선택하는 비용/성능 라우터다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return max(128, int(char_count / 4))
 
 
 def count_items(value: Any) -> int:
+    """list/dict 계열 state 값의 크기만 안전하게 센다."""
+
     if isinstance(value, list):
         return len(value)
     if isinstance(value, dict):
@@ -244,11 +263,18 @@ def estimate_workload(
 
 
 def has_value(value: str | None) -> bool:
+    """API key나 모델명처럼 빈 문자열이면 없는 값으로 봐야 하는 설정 검사."""
+
     return bool(str(value or "").strip())
 
 
 def build_model_profiles() -> list[ModelProfile]:
-    """환경설정과 API key 유무를 반영해 모델 후보군을 만든다."""
+    """환경설정과 API key 유무를 반영해 모델 후보군을 만든다.
+
+    vLLM은 로컬 endpoint라 API key가 없을 수 있으므로 enable flag만 본다.
+    OpenAI/Anthropic은 key와 enable flag가 모두 있어야 available로 표시한다.
+    unavailable 후보도 trace용으로 남길 수 있게 profile에는 포함한다.
+    """
 
     settings = get_settings()
     openai_available = has_value(settings.openai_api_key) and settings.model_router_enable_openai
@@ -350,6 +376,8 @@ def estimate_model_cost_breakdown(profile: ModelProfile, metrics: WorkloadMetric
 
 
 def estimate_model_cost(profile: ModelProfile, metrics: WorkloadMetrics) -> float:
+    """후보 모델의 총 예상 비용만 float로 반환한다."""
+
     return float(estimate_model_cost_breakdown(profile, metrics)["total_cost_usd"])
 
 
@@ -408,7 +436,13 @@ def score_model(profile: ModelProfile, metrics: WorkloadMetrics, max_candidate_c
 
 
 def choose_supervisor_profile(profiles: list[ModelProfile]) -> tuple[ModelProfile, str]:
-    """Supervisor는 수식 최적화 대신 상위 모델 고정 정책을 우선 적용한다."""
+    """Supervisor는 수식 최적화 대신 상위 모델 고정 정책을 우선 적용한다.
+
+    Supervisor는 하위 Agent를 통제하고 사람 승인 경계를 판단하는 역할이라,
+    비용 최적화보다 안정적인 reasoning 품질이 우선이다. 그래서 `.env`의
+    `SUPERVISOR_MODEL_PROVIDER`와 `SUPERVISOR_MODEL_NAME`을 먼저 찾고,
+    없으면 같은 provider 최고 품질, 그것도 없으면 전체 최고 품질로 대체한다.
+    """
 
     settings = get_settings()
     available_profiles = [profile for profile in profiles if profile.available]
@@ -562,7 +596,15 @@ def select_agent_model(
     call_kind: str,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Supervisor 정책에 따라 Agent별 LLM 모델을 선택한다."""
+    """Supervisor 정책에 따라 Agent별 LLM 모델을 선택한다.
+
+    선택 흐름:
+    1. state를 기반으로 workload metrics를 만든다.
+    2. router가 꺼져 있으면 vLLM 기본 모델을 쓴다.
+    3. Supervisor Agent면 상위 모델 고정 정책을 쓴다.
+    4. Expert Agent면 score_model 수식으로 후보를 비교한다.
+    5. 선택 결과와 상위 후보 score cards를 trace에 남긴다.
+    """
 
     settings = get_settings()
     state = state or {}
@@ -624,6 +666,8 @@ def select_agent_model(
         ),
         reverse=True,
     )
+    # 같은 점수라면 비용이 낮은 모델을 우선하도록 `-estimated_cost_usd`를
+    # 정렬 key에 넣었다. 그래도 품질 점수는 마지막 tie-breaker로 남긴다.
     chosen_card = score_cards[0]
     chosen_profile = next(
         profile
@@ -658,6 +702,8 @@ def build_assignment(
     reason: str,
     score_cards: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """모델 선택 결과를 workflow_state에 저장할 표준 payload로 만든다."""
+
     return {
         "agent_id": agent_id,
         "stage_name": stage_name,

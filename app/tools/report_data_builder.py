@@ -1,5 +1,11 @@
 # app/tools/report_data_builder.py
 
+"""분석 state를 report_data 구조로 조립한다.
+
+ranking, PoC 계획, evidence, compliance, Agent trace를 보고서 생성 chain이 사용할 수 있는
+중간 JSON으로 만든다.
+"""
+
 from __future__ import annotations
 
 import re
@@ -9,6 +15,7 @@ from app.chains.report_writer import generate_report_data_with_llm
 
 
 def percent(value: Any) -> str:
+    """percent 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     try:
         return f"{float(value) * 100:.1f}%" if float(value) <= 1 else f"{float(value):.1f}%"
     except (TypeError, ValueError):
@@ -16,10 +23,12 @@ def percent(value: Any) -> str:
 
 
 def strip_heading_number(heading: str) -> str:
+    """strip_heading_number 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return re.sub(r"^\d+\.\s*", "", heading or "").strip()
 
 
 def renumber_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """renumber_sections 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     result = []
     number = 1
     for section in sections:
@@ -33,12 +42,14 @@ def renumber_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def is_agent_evaluation_section(section: dict[str, Any]) -> bool:
+    """is_agent_evaluation_section 함수. 조건을 검사해 True/False 판단값을 반환한다."""
     heading = str(section.get("heading") or "")
     normalized = strip_heading_number(heading)
     return "Agent Evaluation" in normalized or "신뢰도 검증" in normalized
 
 
 def remove_agent_evaluation_sections(report_data: dict[str, Any]) -> dict[str, Any]:
+    """remove_agent_evaluation_sections 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     sections = list(report_data.get("sections", []) or [])
     filtered_sections = [section for section in sections if not is_agent_evaluation_section(section)]
     if len(filtered_sections) == len(sections):
@@ -50,6 +61,7 @@ def remove_agent_evaluation_sections(report_data: dict[str, Any]) -> dict[str, A
 
 
 def build_agent_registry_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_agent_registry_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for agent in state.get("agent_registry", []) or state.get("agent_evaluation", {}).get("agent_registry", []):
         rows.append([
@@ -62,6 +74,7 @@ def build_agent_registry_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_agent_decision_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_agent_decision_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for decision in state.get("agent_decisions", []) or []:
         if decision.get("phase") != "post_tool_observation":
@@ -77,6 +90,7 @@ def build_agent_decision_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_agent_evaluation_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_agent_evaluation_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     for item in state.get("agent_evaluation", {}).get("items", []):
         critic = item.get("llm_critic") or {}
@@ -96,6 +110,7 @@ def build_agent_evaluation_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_agent_evaluation_summary_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_agent_evaluation_summary_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     summary = state.get("agent_evaluation", {}).get("summary", {})
     rows = [
         ["평가 후보 수", summary.get("evaluated_candidates", 0)],
@@ -116,6 +131,7 @@ def build_agent_evaluation_summary_rows(state: dict[str, Any]) -> list[list[Any]
 
 
 def normalize_replan_item(item: Any, state: dict[str, Any]) -> dict[str, Any]:
+    """normalize_replan_item 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     if isinstance(item, dict):
         return item
     process_id = int(item or 0)
@@ -149,6 +165,7 @@ def normalize_replan_item(item: Any, state: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_replan_rows(state: dict[str, Any]) -> list[list[Any]]:
+    """build_replan_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     rows = []
     raw_items = state.get("replan_request", {}).get("items", [])
     for raw_item in raw_items:
@@ -163,6 +180,7 @@ def build_replan_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_agent_evaluation_section(state: dict[str, Any]) -> dict[str, Any]:
+    """build_agent_evaluation_section 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     blocks: list[dict[str, Any]] = [
         {
             "type": "paragraph",

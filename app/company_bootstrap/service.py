@@ -1,5 +1,11 @@
 # app/company_bootstrap/service.py
 
+"""회사 bootstrap을 서비스 함수 형태로 제공한다.
+
+API layer가 직접 graph 세부 구현을 알 필요 없이 company bootstrap을 호출할 수 있게
+입력 정리와 결과 포장을 담당한다.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,6 +24,7 @@ from app.rag.indexer import delete_existing_chunks
 
 @dataclass(frozen=True)
 class BootstrapResult:
+    """기존 service 기반 bootstrap 결과를 호출자에게 반환하기 위한 값 객체다."""
     company_id: int
     project_id: int | None
     document_ids: list[int]
@@ -28,6 +35,7 @@ class BootstrapResult:
     discovery_mode: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
         return {
             "company_id": self.company_id,
             "project_id": self.project_id,
@@ -41,6 +49,7 @@ class BootstrapResult:
 
 
 def infer_industry(text: str, dart_company: DartCompany | None = None) -> str:
+    """infer_industry 함수. 명시 입력이 없을 때 텍스트나 metadata에서 보수적인 추정값을 만든다."""
     if dart_company and dart_company.profile.get("induty_code"):
         return f"공식자료 기반 업종코드 {dart_company.profile.get('induty_code')}"
 
@@ -68,6 +77,7 @@ def infer_industry(text: str, dart_company: DartCompany | None = None) -> str:
 
 
 def infer_size(dart_company: DartCompany | None = None) -> str:
+    """infer_size 함수. 명시 입력이 없을 때 텍스트나 metadata에서 보수적인 추정값을 만든다."""
     if dart_company is None:
         return "확인 필요"
 
@@ -88,6 +98,7 @@ def build_company_description(
     combined_text: str,
     dart_company: DartCompany | None = None,
 ) -> str:
+    """build_company_description 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     parts = [f"{company_name} 공식자료 기반 AX 분석용 회사 프로필"]
 
     if dart_company is not None:
@@ -112,6 +123,7 @@ def create_company(
     combined_text: str,
     dart_company: DartCompany | None = None,
 ) -> Company:
+    """create_company 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     company = Company(
         name=company_name,
         industry=infer_industry(combined_text, dart_company=dart_company),
@@ -129,6 +141,7 @@ def create_company(
 
 
 def create_default_departments(db: Session, company_id: int) -> dict[str, Department]:
+    """create_default_departments 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     specs = [
         ("AX전략/기획", "AX 과제 발굴, PoC 기획, 성과관리", "공식자료 기반 업무 후보 구체화 필요"),
         ("IT/데이터", "시스템 연동, 데이터 접근권한, RAG/Agent 운영", "데이터 품질과 권한 관리 필요"),
@@ -155,6 +168,7 @@ def create_default_departments(db: Session, company_id: int) -> dict[str, Depart
 
 
 def create_default_systems(db: Session, company_id: int) -> list[EnterpriseSystem]:
+    """create_default_systems 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     specs = [
         ("공식자료/RAG 문서 저장소", "knowledge_base", "IT/데이터", 4, True, "공식 URL, 공시, 업로드 문서를 검색 가능한 지식베이스로 활용"),
         ("업무 프로세스 분석 DB", "analysis_db", "AX전략/기획", 4, True, "AX 후보 업무와 평가 결과 저장"),
@@ -182,6 +196,7 @@ def create_default_systems(db: Session, company_id: int) -> list[EnterpriseSyste
 
 
 def contains_any(text: str, keywords: list[str]) -> bool:
+    """contains_any 함수. 조건을 검사해 True/False 판단값을 반환한다."""
     lowered = text.lower()
     return any(keyword.lower() in lowered for keyword in keywords)
 
@@ -204,6 +219,7 @@ def process_spec(
     risk_score: int,
     implementation_cost_score: int,
 ) -> dict[str, Any]:
+    """process_spec 함수. 회사 bootstrap을 서비스 함수 형태로 제공한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return {
         "department": department,
         "name": name,
@@ -225,6 +241,7 @@ def process_spec(
 
 
 def build_process_specs(combined_text: str) -> list[dict[str, Any]]:
+    """build_process_specs 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     specs = [
         process_spec(
             "AX전략/기획",
@@ -353,6 +370,7 @@ def build_official_source_payloads(
     official_docs: list[OfficialUrlDocument],
     dart_company: DartCompany | None,
 ) -> list[dict[str, Any]]:
+    """build_official_source_payloads 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     sources: list[dict[str, Any]] = []
 
     if dart_company is not None:
@@ -381,6 +399,7 @@ def build_official_source_payloads(
 
 
 def build_discovery_metadata(spec: dict[str, Any]) -> dict[str, Any]:
+    """build_discovery_metadata 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     return {
         "discovery_mode": spec.get("discovery_mode"),
         "discovery_warning": spec.get("discovery_warning"),
@@ -397,6 +416,7 @@ def create_business_processes(
     departments: dict[str, Department],
     process_specs: list[dict[str, Any]],
 ) -> list[BusinessProcess]:
+    """create_business_processes 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     ensure_discovery_metadata_column()
     rows: list[BusinessProcess] = []
 
@@ -445,6 +465,7 @@ def create_source_documents(
     official_docs: list[OfficialUrlDocument],
     dart_company: DartCompany | None,
 ) -> list[ProcessDocument]:
+    """create_source_documents 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     rows: list[ProcessDocument] = []
 
     if dart_company is not None:
@@ -483,6 +504,7 @@ def create_source_documents(
 
 
 def create_analysis_project(db: Session, company_id: int, company_name: str) -> AnalysisProject:
+    """create_analysis_project 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     project = AnalysisProject(
         company_id=company_id,
         title=f"{company_name} 공식자료 기반 AX 전환 진단",
@@ -505,6 +527,7 @@ def bootstrap_company(
     index: bool = True,
     reset_company_chunks: bool = False,
 ) -> BootstrapResult:
+    """bootstrap_company 함수. 회사 bootstrap을 서비스 함수 형태로 제공한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     warnings: list[str] = []
     official_urls = official_urls or []
 

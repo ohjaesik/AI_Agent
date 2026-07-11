@@ -1,5 +1,10 @@
 # app/tools/review_applier.py
 
+"""Human Review 결정을 priority ranking에 반영한다.
+
+approve/edit/reject와 promote/exclude/status override를 적용해 최종 후보 상태를 갱신한다.
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -7,6 +12,7 @@ from typing import Any
 
 
 def reassign_ranks(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """reassign_ranks 함수. Human Review 결정을 priority ranking에 반영한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     items.sort(
         key=lambda item: (
             item.get("status") == "recommended",
@@ -23,6 +29,7 @@ def reassign_ranks(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def build_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """build_summary 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     recommended = [item for item in items if item.get("status") == "recommended"]
     review_required = [item for item in items if item.get("status") == "human_review_required"]
     excluded = [item for item in items if item.get("status") == "excluded"]

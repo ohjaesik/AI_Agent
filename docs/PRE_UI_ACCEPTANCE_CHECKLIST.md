@@ -1,3 +1,5 @@
+<!-- 파일 역할: UI 구현 전 backend/graph/evaluator 안정화 여부를 확인하는 checklist다. -->
+
 # Pre-UI Acceptance Checklist
 
 UI 구현 전 백엔드, Supervisor Graph, 평가 gate가 안정화되었는지 확인하는 기준이다.

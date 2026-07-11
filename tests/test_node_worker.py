@@ -1,3 +1,6 @@
+"""node worker direct/subprocess 실행 wrapper를 검증한다.
+"""
+
 import pytest
 
 from app.graph.node_worker import NON_WORKERIZABLE_NODES, NodeWorkerError, import_node, workerized_node

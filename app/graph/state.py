@@ -1,5 +1,11 @@
 # app/graph/state.py
 
+"""AX 분석 LangGraph state schema.
+
+프로젝트 데이터, RAG 근거, Agent trace, Supervisor autonomy, 분석 산출물, 보고서 경로 등
+workflow 전체에서 공유되는 state key를 TypedDict로 정의한다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +13,7 @@ from typing import Annotated, Any, TypedDict
 
 
 def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """merge_unique_dicts 함수. AX 분석 LangGraph state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -24,6 +31,7 @@ def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, 
 
 
 def merge_unique_strings(left: list[str] | None, right: list[str] | None) -> list[str]:
+    """merge_unique_strings 함수. AX 분석 LangGraph state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     result: list[str] = []
     seen: set[str] = set()
 
@@ -37,6 +45,7 @@ def merge_unique_strings(left: list[str] | None, right: list[str] | None) -> lis
 
 
 class AXPlannerState(TypedDict, total=False):
+    """AX 분석 LangGraph가 공유하는 state key를 정의하는 TypedDict schema다."""
     project_id: int
     company_id: int
 
@@ -71,12 +80,16 @@ class AXPlannerState(TypedDict, total=False):
     agent_commands: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_model_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
     agent_supervisor_delegations: Annotated[list[dict[str, Any]], merge_unique_dicts]
+    agent_autonomy_loop_decisions: Annotated[list[dict[str, Any]], merge_unique_dicts]
     current_agent_command: dict[str, Any]
     current_agent_reflection: dict[str, Any]
     current_agent_model_assignment: dict[str, Any]
     current_supervisor_model_assignment: dict[str, Any]
     current_supervisor_delegation: dict[str, Any]
+    current_supervisor_loop_decision: dict[str, Any]
     supervisor_approval_policy: dict[str, Any]
+    supervisor_long_term_goal: dict[str, Any]
+    supervisor_autonomy_policy: dict[str, Any]
     agent_supervisor_extra_loop_enabled: bool
 
     # Agent package artifacts

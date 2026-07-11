@@ -1,5 +1,11 @@
 # app/agents/supervisor_flow.py
 
+"""정적 Supervisor handoff flow 정의 모듈.
+
+Agent 간 기본 stage 순서, package key, handoff rule을 선언해 문서/테스트/레거시
+흐름에서 동일한 Supervisor 구조를 참조할 수 있게 한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -190,6 +196,7 @@ HANDOFFS_BY_NODE: dict[str, list[dict[str, Any]]] = {
 
 
 def present_payload_keys(result: dict[str, Any], keys: list[str]) -> list[str]:
+    """present_payload_keys 함수. 정적 Supervisor handoff flow 정의 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return [key for key in keys if key in result and result.get(key) not in (None, [], {}, "")]
 
 
@@ -201,6 +208,7 @@ def build_supervisor_step(
     assigned_tools: list[dict[str, Any]],
     loop_limit: int,
 ) -> dict[str, Any]:
+    """build_supervisor_step 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     return {
         "supervisor_agent_id": SUPERVISOR_AGENT_ID,
         "supervisor_agent_name": SUPERVISOR_AGENT_NAME,
@@ -221,6 +229,7 @@ def build_agent_artifact(
     agent_id: str,
     result: dict[str, Any],
 ) -> dict[str, Any]:
+    """build_agent_artifact 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     expected_keys = ARTIFACT_KEYS_BY_AGENT.get(agent_id, [])
     output_keys = present_payload_keys(result, expected_keys)
     return {
@@ -239,6 +248,7 @@ def build_agent_handoffs(
     result: dict[str, Any],
     loop_index: int | None = None,
 ) -> list[dict[str, Any]]:
+    """build_agent_handoffs 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     handoffs: list[dict[str, Any]] = []
     for spec in HANDOFFS_BY_NODE.get(node_name, []):
         payload_keys = list(spec.get("payload_keys", []))

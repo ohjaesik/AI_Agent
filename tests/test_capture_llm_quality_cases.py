@@ -1,3 +1,6 @@
+"""LLM 품질 사례 캡처 로직이 case payload를 올바르게 저장하는지 검증한다.
+"""
+
 from __future__ import annotations
 
 from app.evaluation.capture_llm_quality_cases import build_cases_from_state

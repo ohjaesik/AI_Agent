@@ -1,7 +1,9 @@
+# AX Delivery Planner API와 Agent graph 실행 상태에 대한 기본 운영 경보.
 groups:
   - name: ax-planner-api
     rules:
       - alert: AXPlannerHighErrorRate
+        # 최근 5분간 전체 요청 대비 5xx 비율이 5%를 넘으면 API/DB/LLM fallback 상태를 확인한다.
         expr: sum(rate(ax_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(ax_http_requests_total[5m])), 0.001) > 0.05
         for: 5m
         labels:
@@ -11,6 +13,7 @@ groups:
           description: "Check API logs, vLLM fallback behavior, DB connectivity, and agent graph errors."
 
       - alert: AXPlannerHighLatency
+        # 평균 latency가 10초를 넘으면 RAG 검색, 외부 URL 수집, LLM 호출 병목을 의심한다.
         expr: sum(rate(ax_http_request_latency_seconds_sum[5m])) / clamp_min(sum(rate(ax_http_requests_total[5m])), 0.001) > 10
         for: 5m
         labels:
@@ -20,6 +23,7 @@ groups:
           description: "Check graph execution, external URL fetch, embedding, and vLLM latency."
 
       - alert: AXPlannerAgentNodeFailure
+        # LangGraph node worker가 실패를 기록하면 즉시 audit log와 node label을 확인한다.
         expr: sum(increase(ax_agent_node_runs_total{status="failed"}[10m])) > 0
         for: 1m
         labels:
@@ -29,6 +33,7 @@ groups:
           description: "Check node_worker logs and the failed node label in ax_agent_node_runs_total."
 
       - alert: AXPlannerSlowAgentNode
+        # 특정 Agent node가 60초 이상 걸리면 timeout/retry/model routing 정책을 점검한다.
         expr: max(ax_agent_node_latency_seconds_max) > 60
         for: 5m
         labels:

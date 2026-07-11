@@ -1,5 +1,11 @@
 # app/chains/company_process_discovery.py
 
+"""회사 공식자료에서 AX 후보 업무를 발굴하는 LLM chain.
+
+공식 URL/OpenDART/업로드 문서 excerpt를 근거로 업무 후보를 JSON으로 생성하고,
+유효성 검증과 fallback을 통해 환각을 줄인다.
+"""
+
 from __future__ import annotations
 
 import json
@@ -84,6 +90,7 @@ Return this exact JSON shape:
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
+    """extract_json_object 함수. 회사 공식자료에서 AX 후보 업무를 발굴하는 LLM chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     text = text.strip()
 
     if text.startswith("```"):
@@ -105,6 +112,7 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def clamp_int(value: Any, default: int = 3, minimum: int = 1, maximum: int = 5) -> int:
+    """clamp_int 함수. 회사 공식자료에서 AX 후보 업무를 발굴하는 LLM chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -114,6 +122,7 @@ def clamp_int(value: Any, default: int = 3, minimum: int = 1, maximum: int = 5) 
 
 
 def safe_float(value: Any, default: float = 6.0) -> float:
+    """None/문자열/잘못된 값을 안전하게 실수로 변환한다."""
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -123,6 +132,7 @@ def safe_float(value: Any, default: float = 6.0) -> float:
 
 
 def compact(text: str, max_chars: int = 3500) -> str:
+    """compact 함수. 회사 공식자료에서 AX 후보 업무를 발굴하는 LLM chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     cleaned = " ".join((text or "").split())
     if len(cleaned) <= max_chars:
         return cleaned
@@ -130,6 +140,7 @@ def compact(text: str, max_chars: int = 3500) -> str:
 
 
 def build_source_context(sources: list[dict[str, Any]]) -> str:
+    """build_source_context 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     blocks = []
 
     for source in sources:
@@ -154,11 +165,13 @@ def build_source_context(sources: list[dict[str, Any]]) -> str:
 
 
 def normalize_department(value: Any) -> str:
+    """normalize_department 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     department = str(value or "").strip()
     return department if department in ALLOWED_DEPARTMENTS else "AX전략/기획"
 
 
 def ensure_evidence_label(text: str, labels: list[str]) -> str:
+    """ensure_evidence_label 함수. 회사 공식자료에서 AX 후보 업무를 발굴하는 LLM chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if any(label in text for label in labels):
         return text
 
@@ -169,6 +182,7 @@ def ensure_evidence_label(text: str, labels: list[str]) -> str:
 
 
 def build_score_rationale(raw: dict[str, Any], evidence_labels: list[str]) -> dict[str, str]:
+    """build_score_rationale 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     default_label = evidence_labels[0] if evidence_labels else ""
     raw_rationale = raw.get("score_rationale") or {}
     if not isinstance(raw_rationale, dict):
@@ -195,6 +209,7 @@ def build_score_rationale(raw: dict[str, Any], evidence_labels: list[str]) -> di
 
 
 def validate_processes(payload: dict[str, Any], allowed_labels: list[str], fallback_processes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """validate_processes 함수. 회사 공식자료에서 AX 후보 업무를 발굴하는 LLM chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     raw_processes = payload.get("processes")
 
     if not isinstance(raw_processes, list):
@@ -260,6 +275,7 @@ def validate_processes(payload: dict[str, Any], allowed_labels: list[str], fallb
 
 
 def add_fallback_metadata(processes: list[dict[str, Any]], reason: str) -> list[dict[str, Any]]:
+    """add_fallback_metadata 함수. DOCX/HTML/출력 객체에 스타일이나 콘텐츠 블록을 추가/설정한다."""
     result = []
 
     for process in processes:
@@ -285,6 +301,7 @@ def discover_company_process_specs(
     official_sources: list[dict[str, Any]],
     fallback_processes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    """discover_company_process_specs 함수. 회사 공식자료에서 AX 후보 업무를 발굴하는 LLM chain. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     allowed_labels = [str(source.get("label")) for source in official_sources if source.get("label")]
 
     if not official_sources or not allowed_labels:

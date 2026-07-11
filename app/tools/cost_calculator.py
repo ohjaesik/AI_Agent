@@ -1,15 +1,23 @@
 # app/tools/cost_calculator.py
 
+"""업무별 ROI/비용 절감 추정 tool.
+
+현재 투입 시간, 반복 빈도, 자동화 보조율, PoC 비용 가정을 기반으로 baseline cost와
+절감률을 계산한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
 
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
+    """점수나 비율이 허용 범위를 벗어나지 않도록 제한한다."""
     return max(minimum, min(value, maximum))
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
+    """None/문자열/잘못된 값을 안전하게 실수로 변환한다."""
     if value is None:
         return default
 
@@ -20,6 +28,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def safe_int(value: Any, default: int = 0) -> int:
+    """None/문자열/잘못된 값을 안전하게 정수로 변환한다."""
     if value is None:
         return default
 

@@ -1,3 +1,5 @@
+<!-- 파일 역할: AX Supervisor Graph 운영 시 적용할 AI governance 기본 통제 기준을 정리한다. -->
+
 # AI Governance Baseline for AX Supervisor Graph
 
 본 문서는 AX Delivery Planner를 Agent 기반 Supervisor Graph로 운영하기 위한 AI Governance 기준을 정리한다. 법률 자문 문서가 아니라, 개발·시연·PoC 단계에서 적용할 기술적 통제 기준이다.

@@ -1,5 +1,11 @@
 # app/db/migrate_operational_hardening.py
 
+"""운영 안정성 강화를 위한 DB migration script.
+
+문서 보안 등급, allowed roles, audit/security metadata처럼 운영 통제에 필요한 구조를
+추가한다.
+"""
+
 from __future__ import annotations
 
 from sqlalchemy import text
@@ -128,11 +134,13 @@ ON document_chunks (document_id, chunk_index);
 
 
 def migrate_operational_hardening() -> None:
+    """migrate_operational_hardening 함수. 운영 안정성 강화를 위한 DB migration script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     with engine.begin() as conn:
         conn.execute(text(DDL))
 
 
 def main() -> None:
+    """해당 모듈을 script로 실행했을 때 호출되는 진입점이다."""
     migrate_operational_hardening()
     print("Operational hardening migration completed.")
 

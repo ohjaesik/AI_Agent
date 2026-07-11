@@ -1,7 +1,9 @@
 /* front/src/index.css */
+/* AX Delivery Planner dashboard 전역 스타일.
+   색상 token, layout grid, form/control, console, 보고서 preview까지 한 파일에서 관리한다. */
 
 :root {
-  /* Clean Bright SaaS Palette (similar to Stripe / Tailwind UI) */
+  /* Clean Bright SaaS Palette: 운영형 SaaS dashboard처럼 밝고 가독성 높은 색상 체계다. */
   --bg-primary: #f8fafc;     /* Soft slate grey background */
   --bg-secondary: #ffffff;   /* Pure white cards and sidebar */
   --bg-tertiary: #f1f5f9;    /* Form fields background */
@@ -27,17 +29,20 @@
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   
+  /* 주요 layout 치수. sidebar/header 크기를 변수화해 responsive 조정이 쉽도록 한다. */
   --sidebar-width: 260px;
   --header-height: 70px;
   --border-radius: 12px;
 }
 
+/* 전체 요소에 border-box를 적용해 card/form width 계산을 예측 가능하게 만든다. */
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
+/* body 기본 typography와 배경. 개별 card는 이 token들을 재사용한다. */
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
@@ -47,7 +52,7 @@ body {
   line-height: 1.5;
 }
 
-/* App Layout */
+/* App Layout: fixed sidebar + sticky header + scrollable main dashboard 구조. */
 .app-container {
   display: flex;
   min-height: 100vh;
@@ -76,7 +81,7 @@ body {
   background-color: var(--bg-primary);
 }
 
-/* Sidebar Components */
+/* Sidebar Components: 탭 버튼, 브랜드 영역, active 상태를 담당한다. */
 .brand {
   display: flex;
   align-items: center;
@@ -142,7 +147,7 @@ body {
   font-weight: 600;
 }
 
-/* Header Components */
+/* Header Components: 현재 탭 제목과 backend 연결 상태 badge를 배치한다. */
 .header {
   height: var(--header-height);
   background-color: var(--bg-secondary);
@@ -198,7 +203,7 @@ body {
   box-shadow: 0 0 6px var(--color-danger);
 }
 
-/* Dashboard Layout */
+/* Dashboard Layout: 12-column grid를 기본으로 하되 좁은 화면에서는 세로 stack으로 전환한다. */
 .dashboard-body {
   padding: 32px;
   display: flex;
@@ -224,7 +229,7 @@ body {
 .col-4 { grid-column: span 4; }
 .col-6 { grid-column: span 6; }
 
-/* Card Element */
+/* Card Element: 반복되는 dashboard panel의 기본 시각 구조. */
 .card {
   background-color: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -250,7 +255,7 @@ body {
   color: var(--text-primary);
 }
 
-/* Forms & Inputs */
+/* Forms & Inputs: 업로드, 검색, 설정 탭에서 공통으로 쓰는 form control. */
 .form-group {
   display: flex;
   flex-direction: column;
@@ -289,7 +294,7 @@ body {
   flex: 1;
 }
 
-/* Buttons */
+/* Buttons: primary/secondary/danger 상태와 disabled 상태를 통일한다. */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -343,7 +348,7 @@ body {
   transform: none !important;
 }
 
-/* Ingestion Dropzone */
+/* Ingestion Dropzone: 문서 업로드 영역의 hover/drag affordance를 제공한다. */
 .dropzone {
   border: 2px dashed var(--border-color);
   border-radius: var(--border-radius);
@@ -363,7 +368,7 @@ body {
   background-color: var(--accent-glow);
 }
 
-/* Tables */
+/* Tables: 후보 목록이나 검색 결과를 표 형태로 보여줄 때 쓰는 기본 스타일. */
 .table-container {
   overflow-x: auto;
 }
@@ -390,7 +395,7 @@ body {
   background-color: var(--bg-tertiary);
 }
 
-/* Badges */
+/* Badges: 위험도, 상태, 성공/경고/오류 label을 작게 표시한다. */
 .badge {
   display: inline-flex;
   padding: 2px 8px;
@@ -404,7 +409,7 @@ body {
 .badge-danger { background-color: #fee2e2; color: #991b1b; }
 .badge-info { background-color: #e0f2fe; color: #075985; }
 
-/* Clean Console Log - Bright style */
+/* Clean Console Log: 장시간 Agent 실행 중 사용자가 진행 로그를 확인하는 영역. */
 .console-box {
   background-color: #f1f5f9;  /* Light grey slate */
   color: #334155;            /* Slate 700 */
@@ -429,7 +434,7 @@ body {
 .console-line.info { color: #0369a1; }
 .console-line.warning { color: #b45309; }
 
-/* Interactive Ranker */
+/* Interactive Ranker: HITL review에서 후보 순위를 위/아래로 조정하는 리스트. */
 .rank-item {
   display: flex;
   align-items: center;
@@ -466,7 +471,7 @@ body {
   color: var(--accent-primary);
 }
 
-/* User-friendly Analysis Loading box */
+/* User-friendly Analysis Loading box: Supervisor graph 실행 중 대기 상태를 안내한다. */
 .analysis-loading-box {
   margin-top: 24px;
   padding: 24px;
@@ -517,7 +522,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* Report Preview Sheet Styles */
+/* Report Preview Sheet Styles: 생성될 DOCX 보고서를 화면에서 미리 보는 종이형 preview. */
 .document-preview-container {
   display: flex;
   flex-direction: column;
@@ -608,7 +613,7 @@ body {
   font-size: 12px;
 }
 
-/* ROI and Roadmap Visualization styles */
+/* ROI and Roadmap Visualization styles: 평가 가중치와 roadmap summary를 시각화한다. */
 .project-goal-card {
   border-left: 4px solid var(--accent-primary) !important;
 }
@@ -755,5 +760,4 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
 }
-
 

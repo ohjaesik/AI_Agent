@@ -1,3 +1,5 @@
+<!-- 파일 역할: 운영 점검, 장애 대응, preflight 실행 절차를 정리한 runbook이다. -->
+
 # AX Delivery Planner Operational Runbook
 
 이 문서는 AX Delivery Planner를 내부 PoC MVP로 운영할 때 필요한 점검, 실행, 장애 대응 절차를 정리한다.

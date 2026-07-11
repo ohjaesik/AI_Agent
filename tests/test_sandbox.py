@@ -1,3 +1,6 @@
+"""Agent tool sandbox 실행과 permission 경계를 검증한다.
+"""
+
 import sys
 
 import pytest

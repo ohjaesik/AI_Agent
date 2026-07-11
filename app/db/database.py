@@ -1,5 +1,11 @@
 # app/db/database.py
 
+"""SQLAlchemy engine/session factory 설정.
+
+.env의 DATABASE_URL을 기준으로 DB 연결을 만들고, 각 node/API가 사용할 SessionLocal을
+제공한다.
+"""
+
 from collections.abc import Generator
 
 from pgvector.psycopg import register_vector
@@ -13,6 +19,7 @@ settings = get_settings()
 
 
 class Base(DeclarativeBase):
+    """SQLAlchemy declarative model들이 상속하는 공통 base class다."""
     pass
 
 
@@ -41,6 +48,7 @@ SessionLocal = sessionmaker(
 
 
 def get_db() -> Generator[Session, None, None]:
+    """FastAPI dependency에서 사용할 DB session generator다."""
     db = SessionLocal()
     try:
         yield db

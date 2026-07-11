@@ -1,5 +1,11 @@
 # app/graph/nodes.py
 
+"""AX 분석 workflow의 핵심 업무 node 구현.
+
+프로젝트 데이터 로드, RAG 검색, 프로세스 분석, 데이터 준비도, 자동화 가능성, ROI,
+risk, ranking, report data 생성 같은 주요 분석 node가 들어 있다.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -29,6 +35,7 @@ from app.tools.score_calculator import rank_agent_candidates
 
 
 def utc_now() -> str:
+    """UTC ISO timestamp를 생성해 audit log의 공통 시간값으로 사용한다."""
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -38,6 +45,7 @@ def append_audit(
     status: str,
     payload: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    """append_audit 함수. AX 분석 workflow의 핵심 업무 node 구현. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return state.get("audit_logs", []) + [
         {
             "node": node_name,
@@ -53,12 +61,14 @@ def append_error(
     node_name: str,
     error: Exception,
 ) -> list[str]:
+    """append_error 함수. AX 분석 workflow의 핵심 업무 node 구현. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return state.get("errors", []) + [
         f"[{node_name}] {type(error).__name__}: {str(error)}"
     ]
 
 
 def load_project_data_node(state: AXPlannerState) -> dict[str, Any]:
+    """project/company/process/document context를 DB에서 읽어 LangGraph state에 적재한다."""
     node_name = "load_project_data"
 
     try:
@@ -106,6 +116,7 @@ def load_project_data_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def retrieve_context_node(state: AXPlannerState) -> dict[str, Any]:
+    """업무별 RAG 검색을 실행하고 evidence_items와 used_sources를 state에 만든다."""
     node_name = "retrieve_context"
 
     try:
@@ -202,6 +213,7 @@ def retrieve_context_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def process_analyzer_node(state: AXPlannerState) -> dict[str, Any]:
+    """업무별 병목, 대상 사용자, 현재 흐름, 근거 요약을 분석한다."""
     node_name = "process_analyzer"
 
     try:
@@ -289,6 +301,7 @@ def process_analyzer_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def data_readiness_node(state: AXPlannerState) -> dict[str, Any]:
+    """업무별 데이터 접근성, 문서 연결성, 준비 필요 여부를 평가한다."""
     node_name = "data_readiness"
 
     try:
@@ -353,6 +366,7 @@ def data_readiness_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def automation_feasibility_node(state: AXPlannerState) -> dict[str, Any]:
+    """반복성/효과/구현 가능성/리스크 기반으로 자동화 보조 가능성을 계산한다."""
     node_name = "automation_feasibility"
 
     try:
@@ -436,6 +450,7 @@ def automation_feasibility_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def roi_cost_node(state: AXPlannerState) -> dict[str, Any]:
+    """업무 후보별 baseline 비용, 예상 절감, PoC 비용을 계산한다."""
     node_name = "roi_cost"
 
     try:
@@ -470,6 +485,7 @@ def roi_cost_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def risk_governance_node(state: AXPlannerState) -> dict[str, Any]:
+    """업무 후보의 privacy/security/high-impact risk signal을 탐지한다."""
     node_name = "risk_governance"
 
     try:
@@ -504,6 +520,7 @@ def risk_governance_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def priority_ranking_node(state: AXPlannerState) -> dict[str, Any]:
+    """ROI, readiness, feasibility, governance를 합쳐 PoC 우선순위를 만든다."""
     node_name = "priority_ranking"
 
     try:
@@ -539,6 +556,7 @@ def priority_ranking_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def human_review_node(state: AXPlannerState) -> dict[str, Any]:
+    """Human Review interrupt 또는 Supervisor auto approval을 처리한다."""
     node_name = "human_review"
 
     review_payload = {
@@ -596,6 +614,7 @@ def human_review_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def build_poc_milestones(candidate: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """build_poc_milestones 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     agent_name = (candidate or {}).get("candidate_agent_name") or "선정 Agent"
     process_name = (candidate or {}).get("process_name") or "선정 업무"
     risk_flags = (candidate or {}).get("risk_flags") or []
@@ -667,6 +686,7 @@ def build_poc_milestones(candidate: dict[str, Any] | None) -> list[dict[str, Any
 
 
 def build_poc_kpis(candidate: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """build_poc_kpis 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     candidate = candidate or {}
     return [
         {
@@ -698,6 +718,7 @@ def build_poc_kpis(candidate: dict[str, Any] | None) -> list[dict[str, Any]]:
 
 
 def poc_delivery_planner_node(state: AXPlannerState) -> dict[str, Any]:
+    """검토된 후보를 기반으로 MVP Agent와 PoC milestone/KPI를 생성한다."""
     node_name = "poc_delivery_planner"
 
     try:
@@ -772,6 +793,7 @@ def poc_delivery_planner_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def report_writer_node(state: AXPlannerState) -> dict[str, Any]:
+    """분석 state를 citation 포함 report_data로 변환한다."""
     node_name = "report_writer"
 
     try:
@@ -820,6 +842,7 @@ def report_writer_node(state: AXPlannerState) -> dict[str, Any]:
 
 
 def docx_generator_node(state: AXPlannerState) -> dict[str, Any]:
+    """report_data를 DOCX 파일로 렌더링하고 output path를 state에 저장한다."""
     node_name = "docx_generator"
 
     try:

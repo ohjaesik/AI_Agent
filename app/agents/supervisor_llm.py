@@ -1,4 +1,17 @@
 # app/agents/supervisor_llm.py
+"""AX Delivery Supervisor Agent의 LLM 위임장을 생성한다.
+
+Supervisor는 실제 DB/RAG/tool을 직접 실행하지 않는다. 대신 각 Expert Agent stage가
+무엇을 목표로 실행해야 하는지, 어떤 내부 node 순서를 우선해야 하는지, 어떤 tool을
+중요하게 봐야 하는지, 사람 승인이 필요한지 여부를 JSON 위임장으로 만든다.
+
+이 파일의 핵심 출력:
+- `agent_supervisor_delegations`: Supervisor LLM이 만든 stage별 위임 trace
+- `agent_llm_calls`: Supervisor 호출 성공/실패/retry 기록
+- `supervisor_approval_policy`: Human Review node가 최소 승인 원칙을 판단할 때 참고
+
+LLM 실패 시에도 workflow가 멈추지 않도록 deterministic fallback 위임장을 만든다.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +21,7 @@ from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from app.agents.autonomy import build_supervisor_autonomy_policy, build_supervisor_long_term_goal
 from app.agents.model_router import SUPERVISOR_AGENT_ID, compact_model_assignment, select_escalation_model
 from app.agents.registry import get_tool_specs_for_node
 from app.core.config import get_settings
@@ -31,6 +45,9 @@ Rules:
 """.strip()
 
 
+# Supervisor에게 반환받는 JSON schema를 prompt에 고정한다.
+# 여기서 받은 `tool_policy`와 `human_approval_policy`는 실제 runtime trace와
+# Human Review 최소 승인 판단에 그대로 연결되므로, 반드시 JSON만 반환하게 요구한다.
 DELEGATION_PROMPT = """
 Workflow goal:
 {workflow_goal}
@@ -49,6 +66,9 @@ Incoming handoff context:
 
 State summary:
 {state_summary}
+
+Supervisor long-term goal and autonomy policy:
+{autonomy_context}
 
 Current model assignment:
 {model_assignment}
@@ -76,6 +96,13 @@ Return JSON only:
     "minimal_approval_reason": "Korean reason why approval is or is not needed now"
   }},
   "allowed_auto_actions": ["load_db_context", "retrieve_rag", "run_scoring", "run_critic", "draft_report", "export_docx"],
+  "iteration_policy": {{
+    "allow_extra_loop": true,
+    "iterate_when": ["missing_required_output", "expert_reflection_requests_iteration", "retrieval_or_report_generation_failed"],
+    "stop_when": ["loop_limit_reached", "cost_budget_reached", "human_approval_boundary_hit"],
+    "handoff_when_sufficient": true
+  }},
+  "long_term_goal_alignment": "Korean sentence explaining how this delegation advances the long-term goal",
   "stop_conditions": ["Korean stop/escalation condition"],
   "route_hint": "continue|replan|human_review|stop",
   "risk_note": "Korean risk/control note"
@@ -84,6 +111,12 @@ Return JSON only:
 
 
 def compact_json(value: Any, max_chars: int = 6000) -> str:
+    """LLM prompt에 넣을 context를 JSON 문자열로 압축한다.
+
+    state 전체를 넣으면 prompt가 너무 커지고 비용/timeout 위험이 커진다.
+    그래서 호출별로 필요한 요약 정보만 만든 뒤, 마지막 안전장치로 길이를 자른다.
+    """
+
     try:
         text = json.dumps(value, ensure_ascii=False, default=str)
     except TypeError:
@@ -92,6 +125,12 @@ def compact_json(value: Any, max_chars: int = 6000) -> str:
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
+    """LLM 응답에서 JSON object를 추출한다.
+
+    모델이 실수로 ```json fence를 붙이거나 앞뒤 설명을 섞어도 가능한 범위에서
+    JSON object만 찾아 파싱한다. 그래도 object가 아니면 fallback 경로로 넘어간다.
+    """
+
     cleaned = str(text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
@@ -111,6 +150,8 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def safe_settings_timeout(default: float = 10.0) -> float:
+    """Supervisor LLM timeout 설정을 안전하게 읽는다."""
+
     try:
         settings = get_settings()
         return float(getattr(settings, "agent_llm_timeout_seconds", default) or default)
@@ -119,6 +160,8 @@ def safe_settings_timeout(default: float = 10.0) -> float:
 
 
 def safe_retry_count(default: int = 2) -> int:
+    """Supervisor LLM retry 횟수를 안전하게 읽는다."""
+
     try:
         settings = get_settings()
         return max(0, int(getattr(settings, "supervisor_llm_retry_count", default) or default))
@@ -127,6 +170,8 @@ def safe_retry_count(default: int = 2) -> int:
 
 
 def safe_retry_timeout_multiplier(default: float = 1.8) -> float:
+    """retry마다 timeout을 얼마나 늘릴지 안전하게 읽는다."""
+
     try:
         settings = get_settings()
         return max(1.0, float(getattr(settings, "supervisor_llm_retry_timeout_multiplier", default) or default))
@@ -195,6 +240,12 @@ def summarize_state_for_supervisor(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def sanitize_node_order(raw_order: Any, internal_nodes: list[str]) -> list[str]:
+    """LLM이 반환한 node_order를 허용된 내부 node 목록으로 제한한다.
+
+    Supervisor가 잘못된 node 이름을 만들더라도 runtime은 stage에 배정된 node만 실행한다.
+    빠진 node는 뒤에 붙여 기본 stage 산출물이 빠지지 않게 한다.
+    """
+
     if not isinstance(raw_order, list):
         return internal_nodes
     ordered = [str(item) for item in raw_order if str(item) in internal_nodes]
@@ -256,6 +307,13 @@ def fallback_supervisor_delegation(
             "draft_report",
             "export_docx",
         ],
+        "iteration_policy": {
+            "allow_extra_loop": True,
+            "iterate_when": ["missing_required_output", "expert_reflection_requests_iteration"],
+            "stop_when": ["loop_limit_reached", "cost_budget_reached", "human_approval_boundary_hit"],
+            "handoff_when_sufficient": True,
+        },
+        "long_term_goal_alignment": "기본 자율 정책으로 현재 stage 산출물을 만들고 다음 Agent에게 넘긴다.",
         "stop_conditions": ["금지 가능 사용, 고영향/민감정보 리스크, 심각한 근거 부족이 확인되면 Human Review로 전환한다."],
         "route_hint": "continue",
         "risk_note": reason,
@@ -267,6 +325,8 @@ def fallback_supervisor_delegation(
 
 
 def normalize_human_approval_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    """Supervisor LLM의 승인 정책을 Human Review node가 이해할 수 있게 정규화한다."""
+
     policy = payload.get("human_approval_policy")
     if not isinstance(policy, dict):
         policy = {}
@@ -290,7 +350,12 @@ def normalize_supervisor_delegation(
     retry_attempts: list[dict[str, Any]] | None = None,
     model_retry_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """LLM 응답을 런타임이 믿고 쓸 수 있는 형태로 정규화한다."""
+    """LLM 응답을 런타임이 믿고 쓸 수 있는 형태로 정규화한다.
+
+    여기서는 schema validation을 완벽하게 하는 대신, workflow가 계속 돌 수 있도록
+    잘못된 필드는 기본값으로 보정한다. 특히 tool policy는 stage 내부 node에 속한
+    도구만 남기고, route hint는 허용된 값으로 제한한다.
+    """
 
     tool_policy = payload.get("tool_policy")
     if not isinstance(tool_policy, list):
@@ -335,6 +400,13 @@ def normalize_supervisor_delegation(
         "tool_policy": normalized_policy,
         "human_approval_policy": normalize_human_approval_policy(payload),
         "allowed_auto_actions": payload.get("allowed_auto_actions") if isinstance(payload.get("allowed_auto_actions"), list) else [],
+        "iteration_policy": payload.get("iteration_policy") if isinstance(payload.get("iteration_policy"), dict) else {
+            "allow_extra_loop": True,
+            "iterate_when": ["missing_required_output", "expert_reflection_requests_iteration"],
+            "stop_when": ["loop_limit_reached", "cost_budget_reached", "human_approval_boundary_hit"],
+            "handoff_when_sufficient": True,
+        },
+        "long_term_goal_alignment": str(payload.get("long_term_goal_alignment") or ""),
         "stop_conditions": payload.get("stop_conditions") if isinstance(payload.get("stop_conditions"), list) else [],
         "route_hint": route_hint,
         "risk_note": str(payload.get("risk_note") or ""),
@@ -354,7 +426,18 @@ def run_supervisor_delegation_prompt(
     loop_index: int = 1,
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """상위 Supervisor LLM을 실제로 호출해 Expert Agent 위임장을 만든다."""
+    """상위 Supervisor LLM을 실제로 호출해 Expert Agent 위임장을 만든다.
+
+    retry 전략:
+    - 첫 시도는 model_router가 고른 Supervisor 상위 모델을 사용한다.
+    - timeout이면 timeout을 늘리고 `select_escalation_model`로 더 강한 모델을 다시 고른다.
+    - 인증 오류, JSON 파싱 불가, provider 오류처럼 timeout이 아닌 실패는 즉시 fallback한다.
+
+    fallback 전략:
+    - Supervisor LLM이 실패해도 stage는 멈추지 않는다.
+    - 기본 node 순서와 기본 tool policy로 자율 실행을 계속하고,
+      위험/근거부족/최종확정만 Human Review 경계로 둔다.
+    """
 
     agent_id = str(agent_spec.get("id") or stage_name)
     retry_attempts: list[dict[str, Any]] = []
@@ -415,10 +498,26 @@ def run_supervisor_delegation_prompt(
                 assigned_work=compact_json(assigned_work_for_nodes(agent_id, internal_nodes), max_chars=5200),
                 handoff_context=compact_json(incoming_handoffs or [], max_chars=3000),
                 state_summary=compact_json(summarize_state_for_supervisor(state), max_chars=3600),
+                autonomy_context=compact_json(
+                    {
+                        "long_term_goal": state.get("supervisor_long_term_goal")
+                        or build_supervisor_long_term_goal(
+                            user_request=state.get("user_request"),
+                            report_requirements=state.get("report_requirements"),
+                        ),
+                        "autonomy_policy": state.get("supervisor_autonomy_policy")
+                        or build_supervisor_autonomy_policy(
+                            extra_loop_enabled=bool(state.get("agent_supervisor_extra_loop_enabled"))
+                        ),
+                    },
+                    max_chars=2600,
+                ),
                 model_assignment=compact_json(compact_model_assignment(attempt_model_assignment), max_chars=1200),
             )
 
             try:
+                # `get_chat_model`은 model_assignment에 따라 OpenAI, Anthropic, vLLM을 선택한다.
+                # 여기서는 LangChain 내부 retry를 0으로 두고, 우리 쪽 retry trace에 모든 시도를 남긴다.
                 llm = get_chat_model(temperature=0.0, timeout=timeout_seconds, model_assignment=attempt_model_assignment)
                 response = invoke_chat_with_retry(llm, messages, retries=0)
                 payload = extract_json_object(str(response.content))
@@ -495,7 +594,12 @@ def run_supervisor_delegation_prompt(
 
 
 def build_supervisor_llm_call_record(payload: dict[str, Any]) -> dict[str, Any]:
-    """agent_llm_calls와 같은 trace 형식으로 Supervisor 호출을 기록한다."""
+    """agent_llm_calls와 같은 trace 형식으로 Supervisor 호출을 기록한다.
+
+    UI/API/디버깅에서는 전체 delegation payload보다 이 compact record를 주로 본다.
+    따라서 어떤 stage를 누구에게 위임했는지, LLM을 썼는지, retry가 있었는지,
+    어떤 승인/반복 정책을 받았는지를 한눈에 보도록 만든다.
+    """
 
     return {
         "kind": "supervisor_delegation",
@@ -512,6 +616,8 @@ def build_supervisor_llm_call_record(payload: dict[str, Any]) -> dict[str, Any]:
             "delegated_to": payload.get("delegated_to"),
             "autonomy_level": payload.get("autonomy_level"),
             "human_approval_policy": payload.get("human_approval_policy", {}),
+            "iteration_policy": payload.get("iteration_policy", {}),
+            "long_term_goal_alignment": payload.get("long_term_goal_alignment"),
         },
         "risk_note": payload.get("risk_note"),
         "model_selection": payload.get("model_selection", {}),

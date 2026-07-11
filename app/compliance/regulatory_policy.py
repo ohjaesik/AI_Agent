@@ -1,5 +1,11 @@
 # app/compliance/regulatory_policy.py
 
+"""규제 수준, 위험 flag, 통제 문구의 기준값을 정의한다.
+
+여러 compliance node가 같은 threshold와 wording을 사용하도록 상수/정책 helper를
+모아둔다.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -8,6 +14,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class RegulatoryControl:
+    """RegulatoryControl 클래스. 규제 수준, 위험 flag, 통제 문구의 기준값을 정의한다.에서 사용하는 구조화된 데이터/동작 단위다."""
     id: str
     name: str
     source_frameworks: list[str]
@@ -17,6 +24,7 @@ class RegulatoryControl:
     korea_ai_basic_act_mapping: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
+        """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
         return asdict(self)
 
 
@@ -159,10 +167,12 @@ REGULATORY_CONTROLS: list[RegulatoryControl] = [
 
 
 def get_regulatory_controls() -> list[dict[str, Any]]:
+    """get_regulatory_controls 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     return [item.to_dict() for item in REGULATORY_CONTROLS]
 
 
 def get_control(control_id: str) -> dict[str, Any] | None:
+    """get_control 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     for item in REGULATORY_CONTROLS:
         if item.id == control_id:
             return item.to_dict()
@@ -170,4 +180,5 @@ def get_control(control_id: str) -> dict[str, Any] | None:
 
 
 def get_korea_ai_basic_act_reference() -> dict[str, Any]:
+    """get_korea_ai_basic_act_reference 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     return KOREA_AI_BASIC_ACT_REFERENCE

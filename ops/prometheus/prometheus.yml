@@ -1,12 +1,16 @@
+# Prometheus scrape 설정.
+# docker-compose.prod.yml의 `api` service가 노출하는 `/metrics` endpoint를 주기적으로 수집한다.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# 경보 rule은 별도 파일로 분리해 운영자가 threshold만 조정하기 쉽게 둔다.
 rule_files:
   - /etc/prometheus/alert_rules.yml
 
 scrape_configs:
   - job_name: ax-planner-api
+    # FastAPI app/monitoring/metrics.py에서 Prometheus text format으로 반환하는 endpoint다.
     metrics_path: /metrics
     static_configs:
       - targets:

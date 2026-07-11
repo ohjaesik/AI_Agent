@@ -1,3 +1,5 @@
+<!-- 파일 역할: Agent Evaluator 회귀/holdout 품질 평가 절차와 threshold를 설명한다. -->
+
 # Agent Quality Evaluation
 
 Agent Evaluator의 상태 분류와 Human Review gate 품질을 점검하기 위한 평가 절차다.

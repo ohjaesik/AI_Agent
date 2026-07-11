@@ -1,9 +1,12 @@
+# Grafana datasource provisioning 설정.
+# UI에서 수동 등록하지 않아도 Prometheus datasource가 자동으로 연결된다.
 apiVersion: 1
 
 datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
+    # docker-compose network 내부에서 Grafana가 Prometheus service 이름으로 접근한다.
     url: http://prometheus:9090
     isDefault: true
     editable: false

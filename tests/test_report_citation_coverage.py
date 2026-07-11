@@ -1,3 +1,6 @@
+"""보고서 문단 citation coverage와 validation 결과를 검증한다.
+"""
+
 from app.chains.report_writer import enforce_citation_coverage
 
 

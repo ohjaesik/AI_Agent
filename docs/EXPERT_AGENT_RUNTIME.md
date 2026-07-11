@@ -1,3 +1,5 @@
+<!-- 파일 역할: Expert Agent runtime 계층, registry, tool permission, package 구조를 설명한다. -->
+
 # Expert Agent Runtime Structure
 
 This project uses an Agent-stage workflow instead of creating one Agent for every tool or bare graph node.

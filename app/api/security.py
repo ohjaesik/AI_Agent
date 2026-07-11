@@ -1,5 +1,11 @@
 # app/api/security.py
 
+"""API key와 JWT 기반 접근 제어 helper.
+
+로컬/데모 API에서 X-API-Key, Bearer token을 검증하고 요청자의 user_id/role을
+AccessContext로 변환한다.
+"""
+
 from __future__ import annotations
 
 import secrets
@@ -14,10 +20,12 @@ from app.security.access_control import AccessContext, DEFAULT_ROLE, ROLE_MAX_LE
 
 
 def normalize_role(role: str | None) -> str:
+    """normalize_role 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
     return role if role in ROLE_MAX_LEVEL else DEFAULT_ROLE
 
 
 def create_access_token(user_id: str, role: str, expires_minutes: int | None = None) -> str:
+    """create_access_token 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     settings = get_settings()
     if not settings.app_jwt_secret:
         raise HTTPException(status_code=400, detail="APP_JWT_SECRET is not configured.")
@@ -34,6 +42,7 @@ def create_access_token(user_id: str, role: str, expires_minutes: int | None = N
 
 
 def decode_access_token(token: str) -> AccessContext:
+    """decode_access_token 함수. API key와 JWT 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     settings = get_settings()
     if not settings.app_jwt_secret:
         raise HTTPException(status_code=401, detail="JWT authentication is not configured.")
@@ -52,6 +61,7 @@ def decode_access_token(token: str) -> AccessContext:
 
 
 def validate_api_key(x_api_key: str | None) -> None:
+    """validate_api_key 함수. API key와 JWT 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     expected = get_settings().app_api_key
     if expected and (not x_api_key or not secrets.compare_digest(x_api_key, expected)):
         raise HTTPException(

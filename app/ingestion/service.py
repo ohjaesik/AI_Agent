@@ -1,5 +1,11 @@
 # app/ingestion/service.py
 
+"""문서 ingestion service layer.
+
+API/CLI가 공통으로 사용할 수 있도록 파일 저장, ProcessDocument 생성, chunk 색인 호출을
+하나의 함수로 묶는다.
+"""
+
 from __future__ import annotations
 
 import re
@@ -10,6 +16,7 @@ from typing import Any
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.llm import embed_documents_with_retry
 from app.db.models import BusinessProcess, Company, DocumentChunk, ProcessDocument
 from app.ingestion.loaders import load_document_text
@@ -32,6 +39,7 @@ SENSITIVE_PATTERNS = [
 
 @dataclass(frozen=True)
 class IngestResult:
+    """문서 ingestion 결과와 생성된 document/chunk 수를 담는 값 객체다."""
     document_id: int
     company_id: int
     process_id: int | None
@@ -49,6 +57,7 @@ class IngestResult:
     uploaded_by_user_id: str | None
 
     def to_dict(self) -> dict[str, Any]:
+        """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
         return {
             "document_id": self.document_id,
             "company_id": self.company_id,
@@ -69,11 +78,13 @@ class IngestResult:
 
 
 def detect_sensitive_info(text: str) -> bool:
+    """detect_sensitive_info 함수. 텍스트/state에서 특정 신호나 risk flag를 탐지한다."""
     lowered = text.lower()
     return any(re.search(pattern, lowered, re.IGNORECASE) for pattern in SENSITIVE_PATTERNS)
 
 
 def validate_company_and_process(db: Session, company_id: int, process_id: int | None = None) -> None:
+    """validate_company_and_process 함수. 문서 ingestion service layer. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     company = db.get(Company, company_id)
     if company is None:
         raise ValueError(f"Company not found: {company_id}")
@@ -103,6 +114,7 @@ def create_process_document(
     stored_file: StoredFile | None = None,
     uploaded_by_user_id: str | None = None,
 ) -> ProcessDocument:
+    """create_process_document 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
     validate_company_and_process(db, company_id=company_id, process_id=process_id)
 
     if contains_sensitive_info is None:
@@ -133,6 +145,7 @@ def create_process_document(
 
 
 def delete_document_chunks(db: Session, document_id: int) -> None:
+    """delete_document_chunks 함수. 재색인/정리 과정에서 기존 데이터를 안전하게 삭제한다."""
     db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
     db.commit()
 
@@ -144,9 +157,26 @@ def index_single_document(
     chunk_overlap: int = 120,
     batch_size: int = 64,
     reset_existing: bool = True,
+    chunk_strategy: str | None = None,
+    semantic_similarity_threshold: float | None = None,
+    semantic_min_chunk_chars: int | None = None,
 ) -> int:
+    """단일 ProcessDocument를 chunking/embedding하여 DocumentChunk로 저장한다."""
     if reset_existing:
         delete_document_chunks(db, document_id=document.id)
+
+    settings = get_settings()
+    resolved_chunk_strategy = chunk_strategy or settings.rag_chunk_strategy
+    resolved_similarity_threshold = (
+        semantic_similarity_threshold
+        if semantic_similarity_threshold is not None
+        else settings.rag_semantic_similarity_threshold
+    )
+    resolved_min_chunk_chars = (
+        semantic_min_chunk_chars
+        if semantic_min_chunk_chars is not None
+        else settings.rag_semantic_min_chunk_chars
+    )
 
     chunks = chunk_text(
         text=document.content,
@@ -164,9 +194,13 @@ def index_single_document(
             "file_storage_uri": getattr(document, "file_storage_uri", None),
             "original_filename": getattr(document, "original_filename", None),
             "uploaded_by_user_id": getattr(document, "uploaded_by_user_id", None),
+            "embedding_model": settings.embedding_model,
         },
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
+        strategy=resolved_chunk_strategy,
+        semantic_similarity_threshold=resolved_similarity_threshold,
+        semantic_min_chunk_chars=resolved_min_chunk_chars,
     )
 
     if not chunks:
@@ -196,6 +230,7 @@ def index_single_document(
 
 
 def infer_document_type(path: Path, provided: str | None = None) -> str:
+    """infer_document_type 함수. 명시 입력이 없을 때 텍스트나 metadata에서 보수적인 추정값을 만든다."""
     if provided:
         return provided
     suffix = path.suffix.lower().lstrip(".")
@@ -219,8 +254,12 @@ def ingest_file(
     index: bool = True,
     chunk_size: int = 800,
     chunk_overlap: int = 120,
+    chunk_strategy: str | None = None,
+    semantic_similarity_threshold: float | None = None,
+    semantic_min_chunk_chars: int | None = None,
     batch_size: int = 64,
 ) -> IngestResult:
+    """업로드/로컬 파일을 ProcessDocument로 저장하고 필요하면 RAG 색인까지 수행한다."""
     path = Path(file_path)
     content = load_document_text(path)
     if not content.strip():
@@ -245,7 +284,16 @@ def ingest_file(
 
     chunk_count = 0
     if index:
-        chunk_count = index_single_document(db=db, document=document, chunk_size=chunk_size, chunk_overlap=chunk_overlap, batch_size=batch_size)
+        chunk_count = index_single_document(
+            db=db,
+            document=document,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            batch_size=batch_size,
+            chunk_strategy=chunk_strategy,
+            semantic_similarity_threshold=semantic_similarity_threshold,
+            semantic_min_chunk_chars=semantic_min_chunk_chars,
+        )
 
     return IngestResult(
         document_id=document.id,

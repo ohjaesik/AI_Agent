@@ -1,5 +1,11 @@
 # app/agents/tool_guard.py
 
+"""Agent별 tool permission을 검증하는 guard 모듈.
+
+LLM이 임의의 tool 이름을 만들거나 다른 Agent의 tool을 사용하려 해도, registry에
+허용된 tool만 실행되도록 검사한다.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -13,14 +19,17 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 class AgentToolPermissionError(PermissionError):
+    """Agent가 허용되지 않은 tool을 요청했을 때 발생시키는 권한 오류다."""
     pass
 
 
 def normalize_tool_name(tool: str) -> str:
+    """tool 이름 비교가 안정적으로 되도록 대소문자/구분자를 정규화한다."""
     return " ".join(str(tool or "").lower().replace("_", " ").replace("-", " ").split())
 
 
 def get_allowed_tools(agent_id: str) -> set[str]:
+    """get_allowed_tools 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
     spec = get_agent_spec(agent_id)
     if not spec:
         raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
@@ -31,6 +40,7 @@ def get_allowed_tools(agent_id: str) -> set[str]:
 
 
 def assert_tools_allowed(agent_id: str, requested_tools: list[str]) -> None:
+    """요청된 tool 목록이 해당 Agent에게 허용되어 있는지 검증한다."""
     allowed = get_allowed_tools(agent_id)
     requested = {normalize_tool_name(tool) for tool in requested_tools}
     denied = sorted(tool for tool in requested if tool not in allowed)
@@ -42,6 +52,7 @@ def assert_tools_allowed(agent_id: str, requested_tools: list[str]) -> None:
 
 
 def assert_tool_spec_allowed(agent_id: str, tool_name: str) -> dict[str, Any]:
+    """단일 tool spec이 Agent registry 권한 안에 있는지 검증한다."""
     assert_tools_allowed(agent_id=agent_id, requested_tools=[tool_name])
     spec = get_tool_spec(agent_id, tool_name)
     if not spec:
@@ -68,8 +79,11 @@ def enforce_agent_tools(agent_id: str, requested_tools: list[str]) -> Callable[[
     Command-style tools can use run_allowed_command_tool for Docker isolation.
     """
     def decorator(fn: F) -> F:
+        """decorator 함수. Agent별 tool permission을 검증하는 guard 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+
         @wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
+            """wrapper 함수. Agent별 tool permission을 검증하는 guard 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
             assert_tools_allowed(agent_id=agent_id, requested_tools=requested_tools)
             return fn(*args, **kwargs)
 
@@ -79,6 +93,7 @@ def enforce_agent_tools(agent_id: str, requested_tools: list[str]) -> Callable[[
 
 
 def build_tool_permission_report() -> list[dict[str, Any]]:
+    """Agent별 허용 tool과 요청 tool의 차이를 사람이 읽을 수 있는 보고 형태로 만든다."""
     return [
         {
             "agent_id": agent.get("id"),

@@ -1,5 +1,10 @@
 # app/ingestion/loaders.py
 
+"""파일 확장자별 텍스트 추출 helper.
+
+txt, markdown, pdf, docx 등 업로드 문서에서 RAG 색인 가능한 plain text를 뽑는다.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,6 +16,7 @@ SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx"}
 
 
 def read_text_file(path: Path) -> str:
+    """read_text_file 함수. 파일 확장자별 텍스트 추출 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     for encoding in ["utf-8", "utf-8-sig", "cp949"]:
         try:
             return path.read_text(encoding=encoding)
@@ -21,6 +27,7 @@ def read_text_file(path: Path) -> str:
 
 
 def read_docx_file(path: Path) -> str:
+    """read_docx_file 함수. 파일 확장자별 텍스트 추출 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     document = Document(str(path))
     paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
     table_texts: list[str] = []
@@ -36,6 +43,7 @@ def read_docx_file(path: Path) -> str:
 
 
 def read_pdf_file(path: Path) -> str:
+    """read_pdf_file 함수. 파일 확장자별 텍스트 추출 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     reader = PdfReader(str(path))
     page_texts = []
 
@@ -50,6 +58,7 @@ def read_pdf_file(path: Path) -> str:
 
 
 def load_document_text(file_path: str | Path) -> str:
+    """파일 확장자에 맞는 loader를 선택해 plain text를 추출한다."""
     path = Path(file_path)
 
     if not path.exists():

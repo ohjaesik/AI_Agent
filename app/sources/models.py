@@ -1,5 +1,10 @@
 # app/sources/models.py
 
+"""source/evidence 관련 dataclass 모델.
+
+URL 로드 결과나 source document metadata를 구조화된 객체로 다룰 때 사용한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
@@ -15,6 +20,7 @@ SourceType = Literal[
 
 
 class EvidenceItem(TypedDict, total=False):
+    """보고서 citation과 평가에 사용할 표준 evidence item 모델이다."""
     evidence_id: str
     source_type: SourceType
 
@@ -40,6 +46,7 @@ class EvidenceItem(TypedDict, total=False):
 
 
 class UsedSource(TypedDict, total=False):
+    """최종 보고서 reference/source 목록에 들어갈 표준 source 모델이다."""
     source_key: str
     source_type: SourceType
     source_name: str

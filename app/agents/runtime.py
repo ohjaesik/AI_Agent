@@ -1,5 +1,11 @@
 # app/agents/runtime.py
 
+"""node 이름과 Agent registry를 연결하는 runtime helper 모듈.
+
+LangGraph 내부 node가 어떤 Expert Agent 소속인지 찾고, node 실행 전에 사용할
+Agent contract와 tool binding 정보를 구성한다.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -31,20 +37,24 @@ NODE_AGENT_BINDINGS: dict[str, dict[str, str]] = {
 
 
 def utc_now() -> str:
+    """UTC ISO timestamp를 생성해 audit log의 공통 시간값으로 사용한다."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def get_agent_id_for_node(node_name: str) -> str | None:
+    """get_agent_id_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     binding = NODE_AGENT_BINDINGS.get(node_name)
     return binding.get("agent_id") if binding else None
 
 
 def get_agent_binding_for_node(node_name: str) -> dict[str, str] | None:
+    """get_agent_binding_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     binding = NODE_AGENT_BINDINGS.get(node_name)
     return dict(binding) if binding else None
 
 
 def build_agent_contract(node_name: str) -> dict[str, Any] | None:
+    """build_agent_contract 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     binding = get_agent_binding_for_node(node_name)
     if not binding:
         return None
@@ -94,6 +104,7 @@ def build_agent_contract(node_name: str) -> dict[str, Any] | None:
 
 
 def build_contract_audit_log(node_name: str, contract: dict[str, Any]) -> dict[str, Any]:
+    """build_contract_audit_log 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     return {
         "node": node_name,
         "status": "agent_contract_bound",

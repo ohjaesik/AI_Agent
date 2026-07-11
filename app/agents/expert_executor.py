@@ -1,4 +1,16 @@
 # app/agents/expert_executor.py
+"""Expert Agent가 배정받은 내부 node/tool loop를 실행한다.
+
+Supervisor/Expert LLM은 "무엇을 실행할지"를 결정하지만, 실제 Python 함수 호출과
+tool permission 경계는 이 파일이 담당한다. 각 내부 node는 AgentSpec에 등록된
+tool 목록 안에서만 실행되고, 실행 전 결정과 실행 후 보정 결과가 trace로 남는다.
+
+핵심 개념:
+- 첫 번째 execute tool이 실제 node 함수를 호출한다.
+- 나머지 validate/review/guard tool은 기존 node 결과를 관찰하고 trace를 남긴다.
+- post-decision 단계에서 ranking/evaluation/delivery 결과를 보수적으로 보정한다.
+- loop는 Supervisor autonomy policy의 상한을 따르며 무한 반복하지 않는다.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +18,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, TypeVar
 
+from app.agents.autonomy import build_supervisor_autonomy_policy, resolve_stage_loop_limit
 from app.agents.registry import MAX_TOOL_CANDIDATES_PER_NODE, get_agent_spec, get_tool_specs_for_node
 from app.agents.runtime import build_agent_contract, build_contract_audit_log, get_agent_binding_for_node
 from app.agents.tool_runtime import call_agent_tool
@@ -16,10 +29,11 @@ StateT = TypeVar("StateT", bound=dict[str, Any])
 EVIDENCE_INSUFFICIENT_THRESHOLD = 0.15
 LOW_CONFIDENCE_THRESHOLD = 0.45
 DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS = 2
-EXPLICIT_EXTRA_LOOP_BONUS = 1
 
 
 def summarize_state_for_agent(state: dict[str, Any]) -> dict[str, Any]:
+    """tool decision trace에 넣을 state 요약을 만든다."""
+
     return {
         "project_id": state.get("project_id"),
         "company_id": state.get("company_id"),
@@ -37,15 +51,21 @@ def summarize_state_for_agent(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_names(tool_specs: list[dict[str, Any]]) -> list[str]:
+    """tool spec 목록에서 이름만 뽑는다."""
+
     return [str(item.get("name")) for item in tool_specs if item.get("name")]
 
 
 def tool_uses_llm(tool_spec: dict[str, Any]) -> bool:
+    """tool 이름/메타데이터를 보고 LLM 사용 가능성이 있는지 표시한다."""
+
     name = str(tool_spec.get("name") or "")
     return bool(tool_spec.get("uses_llm")) or "llm" in name.lower() or name in {"process_discovery_llm", "llm_critic", "report_writer"}
 
 
 def summarize_assigned_tool(tool_spec: dict[str, Any]) -> dict[str, Any]:
+    """Agent contract trace에 넣을 tool 요약을 만든다."""
+
     return {
         "name": tool_spec.get("name"),
         "description": tool_spec.get("description"),
@@ -56,6 +76,8 @@ def summarize_assigned_tool(tool_spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def as_float(value: Any, default: float = 0.0) -> float:
+    """score/status 보정에서 숫자 변환 실패를 안전하게 처리한다."""
+
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -63,29 +85,33 @@ def as_float(value: Any, default: float = 0.0) -> float:
 
 
 def get_agent_loop_settings(state: dict[str, Any]) -> tuple[int, bool, str | None]:
-    """Resolve loop policy without breaking tests when env settings are absent."""
+    """Agent 내부 tool loop 상한과 extra loop enable 여부를 계산한다.
+
+    Settings가 없거나 테스트 환경에서 `.env`가 부족해도 node 실행이 깨지지 않도록
+    fallback 값을 사용한다. 실제 상한 계산은 `autonomy.resolve_stage_loop_limit`을
+    재사용해 LangGraph stage loop와 tool loop가 같은 정책을 보게 한다.
+    """
     try:
         settings = get_settings()
-        max_loops = int(settings.agent_supervisor_max_tool_loops or DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS)
-        extra_loop_enabled = bool(settings.agent_supervisor_extra_loop_enabled)
+        policy = state.get("supervisor_autonomy_policy") or build_supervisor_autonomy_policy(
+            extra_loop_enabled=bool(state.get("agent_supervisor_extra_loop_enabled", settings.agent_supervisor_extra_loop_enabled)),
+        )
+        max_loops = resolve_stage_loop_limit(state, default_base_limit=DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS)
+        if "agent_supervisor_extra_loop_enabled" in state:
+            extra_loop_enabled = bool(state.get("agent_supervisor_extra_loop_enabled"))
+        else:
+            extra_loop_enabled = bool(policy.get("extra_loop_enabled", settings.agent_supervisor_extra_loop_enabled))
         settings_error = None
     except Exception as exc:
         max_loops = DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS
         extra_loop_enabled = False
         settings_error = f"settings_unavailable: {type(exc).__name__}: {exc}"
 
-    if state.get("agent_supervisor_extra_loop_enabled"):
-        extra_loop_enabled = True
-
-    max_loops = max(1, min(max_loops, DEFAULT_AGENT_SUPERVISOR_MAX_LOOPS))
-    if extra_loop_enabled:
-        max_loops += EXPLICIT_EXTRA_LOOP_BONUS
-
     return max_loops, extra_loop_enabled, settings_error
 
 
 def order_assigned_tools(candidate_tool_specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep registry order but make sure execute tools are first when present."""
+    """registry 순서를 유지하되 실제 execute tool이 가장 먼저 오게 한다."""
     execute_tools = [tool for tool in candidate_tool_specs if str(tool.get("purpose") or "execute") == "execute"]
     other_tools = [tool for tool in candidate_tool_specs if tool not in execute_tools]
     return [*execute_tools, *other_tools]
@@ -167,6 +193,7 @@ def build_agent_tool_decision(
     loop_limit: int,
     executes_node: bool,
 ) -> dict[str, Any]:
+    """build_agent_tool_decision 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     return {
         "phase": "agent_tool_loop",
         "node_name": node_name,
@@ -194,6 +221,7 @@ def build_agent_tool_decision(
 
 
 def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[int], set[int]]:
+    """split_evidence_decision_ids 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     insufficient_ids: set[int] = set()
     review_ids: set[int] = set()
 
@@ -224,11 +252,13 @@ def split_evidence_decision_ids(agent_evaluation: dict[str, Any]) -> tuple[set[i
 
 
 def count_llm_review_needs(agent_evaluation: dict[str, Any]) -> int:
+    """count_llm_review_needs 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     summary = agent_evaluation.get("summary", {}) or {}
     return int(summary.get("llm_critic_needs_review_count", 0) or 0)
 
 
 def rebuild_priority_summary(ranking: dict[str, Any]) -> dict[str, Any]:
+    """rebuild_priority_summary 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     items = ranking.get("items", []) or []
     status_counts: dict[str, int] = {}
     for item in items:
@@ -252,6 +282,7 @@ def rebuild_priority_summary(ranking: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_replan_hint_items(process_ids: set[int], state: dict[str, Any], ranking: dict[str, Any], evaluation: dict[str, Any]) -> list[dict[str, Any]]:
+    """build_replan_hint_items 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     ranking_items = ranking.get("items", []) or []
     evaluation_items = evaluation.get("items", []) or []
     items = []
@@ -277,6 +308,7 @@ def build_replan_hint_items(process_ids: set[int], state: dict[str, Any], rankin
 
 
 def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """apply_priority_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     ranking = deepcopy(result.get("priority_ranking") or {})
     items = list(ranking.get("items", []) or [])
     adjusted_count = 0
@@ -309,6 +341,7 @@ def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any
 
 
 def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """apply_evaluation_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     evaluation = deepcopy(result.get("agent_evaluation") or state.get("agent_evaluation") or {})
     ranking = deepcopy(result.get("priority_ranking") or state.get("priority_ranking") or {})
     summary = evaluation.setdefault("summary", {})
@@ -377,6 +410,7 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
 
 
 def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """apply_delivery_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     changed = False
     adjusted_count = 0
     node_name = str(decision.get("node_name"))
@@ -439,6 +473,7 @@ def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any
 
 
 def apply_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """apply_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
     node_name = str(decision.get("node_name"))
     mutable_result = deepcopy(result)
 
@@ -461,6 +496,7 @@ def apply_post_decision(result: dict[str, Any], decision: dict[str, Any], state:
 
 
 def agent_loop_condition(node_name: str, post_decision: dict[str, Any], result: dict[str, Any]) -> bool:
+    """agent_loop_condition 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     if node_name in {"agent_evaluator", "llm_critic"}:
         if int(post_decision.get("additional_evidence_required_count") or 0) > 0 and not result.get("replan_request"):
             return True
@@ -472,6 +508,7 @@ def agent_loop_condition(node_name: str, post_decision: dict[str, Any], result: 
 
 
 def agent_needs_next_loop(node_name: str, post_decision: dict[str, Any], result: dict[str, Any], loop_index: int, loop_limit: int) -> bool:
+    """agent_needs_next_loop 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return loop_index < loop_limit and agent_loop_condition(node_name, post_decision, result)
 
 
@@ -483,6 +520,7 @@ def build_extra_loop_request(
     state: dict[str, Any],
     loop_limit: int,
 ) -> dict[str, Any]:
+    """build_extra_loop_request 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
     project_id = state.get("project_id")
     command = "python -m app.main --auto-approve --allow-agent-extra-loop"
     if project_id:
@@ -499,6 +537,7 @@ def build_extra_loop_request(
 
 
 def validation_runner_result(current_result: dict[str, Any], tool_spec: dict[str, Any], loop_index: int) -> dict[str, Any]:
+    """validation_runner_result 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     result = dict(current_result)
     validations = list(result.get("agent_tool_validations", []))
     validations.append(
@@ -524,6 +563,7 @@ def run_agent_tool_loop(
     emphasized_tool_spec: dict[str, Any],
     emphasized_reason: str,
 ) -> dict[str, Any]:
+    """run_agent_tool_loop 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
     agent_id = str(agent_spec.get("id"))
     loop_limit, extra_loop_enabled, settings_note = get_agent_loop_settings(state)
     assigned_tools = order_assigned_tools(candidate_tool_specs)
@@ -680,6 +720,7 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
     """
 
     def _node(state: StateT) -> dict[str, Any]:
+        """_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
         binding = get_agent_binding_for_node(node_name)
         if not binding:
             return node_fn(state)

@@ -1,3 +1,5 @@
+<!-- 파일 역할: Supervisor가 Expert Agent를 통제하고 handoff loop를 구성하는 흐름을 설명한다. -->
+
 # Expert Agent Supervisor & Handoff Flow
 
 The runtime uses Agent-stage nodes instead of bare LangGraph workflow nodes.

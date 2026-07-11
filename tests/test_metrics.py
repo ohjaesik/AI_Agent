@@ -1,3 +1,6 @@
+"""Prometheus metric middleware와 render 결과를 검증한다.
+"""
+
 from app.monitoring.metrics import InMemoryMetrics
 
 

@@ -1,5 +1,10 @@
 # app/graph/poc_node.py
 
+"""승인된 후보를 6주 PoC 계획으로 변환하는 node.
+
+Human Review 결과와 ranking 상태를 보고 MVP Agent, milestone, KPI, exit criteria를 만든다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,6 +16,7 @@ from app.graph.state import AXPlannerState
 
 
 def select_poc_candidate(state: AXPlannerState) -> dict[str, Any] | None:
+    """ranking 결과에서 PoC 계획에 사용할 대표 후보를 고른다."""
     ranking_items = state.get("priority_ranking", {}).get("items", [])
     if not ranking_items:
         return None
@@ -39,6 +45,7 @@ def select_poc_candidate(state: AXPlannerState) -> dict[str, Any] | None:
 
 
 def poc_delivery_planner_node(state: AXPlannerState) -> dict[str, Any]:
+    """검토된 후보를 기반으로 MVP Agent와 PoC milestone/KPI를 생성한다."""
     node_name = "poc_delivery_planner"
 
     try:

@@ -1,3 +1,6 @@
+"""ESG/컴플라이언스 관련 평가 helper의 기본 동작을 검증한다.
+"""
+
 from app.tools.risk_checker import check_process_risk, check_risks_for_processes
 from app.tools.score_calculator import rank_agent_candidates
 

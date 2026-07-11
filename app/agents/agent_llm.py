@@ -1,4 +1,21 @@
 # app/agents/agent_llm.py
+"""Expert Agent의 command/reflection LLM 호출을 담당한다.
+
+Supervisor가 "이 stage는 어떤 목표와 tool policy로 실행하라"는 위임장을 만들면,
+각 Expert Agent는 두 번의 LLM 판단을 한다.
+
+1. command prompt
+   - 할당된 내부 node 목록과 tool 목록을 보고 실행 순서를 정한다.
+   - runtime은 이 순서를 참고하되, 허용되지 않은 node/tool은 실행하지 않는다.
+
+2. reflection prompt
+   - 내부 node 실행 후 결과를 보고 handoff/iterate/replan/human_review 여부를 판단한다.
+   - 실제 반복 여부는 Supervisor autonomy policy가 다시 검증한다.
+
+LLM 호출이 timeout되면 더 강한 모델로 재시도하고, 실패 trace는 `agent_llm_calls`와
+`agent_model_decisions`에 남긴다. LLM이 끝내 실패해도 deterministic fallback으로
+stage 실행은 이어진다.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +43,9 @@ Rules:
 - Return JSON only.
 """.strip()
 
+# Expert Agent가 "실행 전 계획"을 JSON으로 반환하도록 하는 prompt다.
+# Supervisor delegation, Agent contract, handoff context, 장기 목표를 함께 넣어
+# 단순 node 순서가 아니라 "왜 이 순서로 실행하는지"까지 trace에 남긴다.
 COMMAND_PROMPT = """
 Supervisor delegation:
 {delegation}
@@ -41,6 +61,9 @@ Incoming handoff context:
 
 Current state summary:
 {state_summary}
+
+Supervisor long-term goal and autonomy policy:
+{autonomy_context}
 
 Return JSON only:
 {{
@@ -70,6 +93,9 @@ Observe the produced result, decide whether the Agent stage is sufficient, and d
 Return JSON only.
 """.strip()
 
+# Expert Agent가 "실행 후 관찰"을 JSON으로 반환하도록 하는 prompt다.
+# 이 결과의 `needs_iteration`은 곧바로 반복을 의미하지 않고, Supervisor autonomy
+# 판단 함수가 비용/상한/필수 산출물과 함께 한 번 더 검증한다.
 REFLECT_PROMPT = """
 Supervisor delegation:
 {delegation}
@@ -89,6 +115,9 @@ Result summary:
 Available output keys:
 {available_output_keys}
 
+Supervisor long-term goal and autonomy policy:
+{autonomy_context}
+
 Return JSON only:
 {{
   "decision": "handoff|iterate|human_review|replan|stop",
@@ -106,11 +135,15 @@ Return JSON only:
 
 
 def compact_json(value: Any, max_chars: int = 6000) -> str:
+    """prompt에 넣을 JSON context를 지정 길이로 제한한다."""
+
     text = json.dumps(value, ensure_ascii=False, default=str)
     return text if len(text) <= max_chars else text[:max_chars] + "..."
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
+    """LLM 응답에서 JSON object를 추출한다."""
+
     cleaned = str(text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
@@ -130,6 +163,8 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
 
 def safe_settings_timeout(default: float = 8.0) -> float:
+    """Agent LLM timeout 설정을 안전하게 읽는다."""
+
     try:
         settings = get_settings()
         # Reuse vLLM timeout if a dedicated setting does not exist.
@@ -139,6 +174,8 @@ def safe_settings_timeout(default: float = 8.0) -> float:
 
 
 def safe_retry_count(default: int = 1) -> int:
+    """Agent LLM retry 횟수를 안전하게 읽는다."""
+
     try:
         settings = get_settings()
         return max(0, int(getattr(settings, "agent_llm_retry_count", default) or default))
@@ -147,6 +184,8 @@ def safe_retry_count(default: int = 1) -> int:
 
 
 def safe_retry_timeout_multiplier(default: float = 1.6) -> float:
+    """Agent LLM retry마다 timeout을 늘리는 배수를 읽는다."""
+
     try:
         settings = get_settings()
         return max(1.0, float(getattr(settings, "agent_llm_retry_timeout_multiplier", default) or default))
@@ -155,6 +194,8 @@ def safe_retry_timeout_multiplier(default: float = 1.6) -> float:
 
 
 def is_timeout_exception(exc: Exception) -> bool:
+    """provider별 timeout 예외 이름이 달라 문자열 기반으로도 timeout을 감지한다."""
+
     text = f"{type(exc).__name__}: {exc}".lower()
     return "timeout" in text or "timed out" in text or "readtimeout" in text
 
@@ -185,7 +226,17 @@ def invoke_chat_with_timeout_escalation(
     call_kind: str,
     state: dict[str, Any],
 ) -> tuple[Any, dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
-    """timeout이면 모델을 상향/대체해 재시도하고 모든 시도를 trace로 반환한다."""
+    """timeout이면 모델을 상향/대체해 재시도하고 모든 시도를 trace로 반환한다.
+
+    반환값:
+    - response: 최종 LLM 응답
+    - final_model_assignment: 성공한 시도의 모델 배정
+    - model_retry_assignments: retry 과정에서 새로 선택된 모델들
+    - retry_attempts: 각 시도의 timeout, status, error trace
+
+    timeout이 아닌 오류는 보통 재시도해도 해결되지 않는 경우가 많아서 즉시 예외로
+    올리고, 호출부가 deterministic fallback command/reflection을 만든다.
+    """
 
     retry_attempts: list[dict[str, Any]] = []
     model_retry_assignments: list[dict[str, Any]] = []
@@ -248,6 +299,8 @@ def invoke_chat_with_timeout_escalation(
 
 
 def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Agent prompt에 넣을 현재 state 요약을 만든다."""
+
     return {
         "project_id": state.get("project_id"),
         "company_id": state.get("company_id"),
@@ -260,11 +313,15 @@ def summarize_state(state: dict[str, Any]) -> dict[str, Any]:
         "has_replan_request": bool(state.get("replan_request")),
         "has_human_review": bool(state.get("human_review")),
         "has_report_data": bool(state.get("report_data")),
+        "supervisor_long_term_goal": state.get("supervisor_long_term_goal"),
+        "supervisor_autonomy_policy": state.get("supervisor_autonomy_policy"),
         "available_keys": sorted(state.keys()),
     }
 
 
 def summarize_result(result: dict[str, Any]) -> dict[str, Any]:
+    """reflection prompt가 볼 stage 실행 결과 요약을 만든다."""
+
     summary: dict[str, Any] = {
         "output_keys": sorted(k for k, v in result.items() if v not in (None, {}, [])),
         "errors": result.get("errors", []),
@@ -286,6 +343,8 @@ def summarize_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def assigned_work_for_nodes(agent_id: str, internal_nodes: list[str]) -> list[dict[str, Any]]:
+    """Agent가 사용할 수 있는 내부 node와 tool 목록을 prompt용 catalog로 만든다."""
+
     work = []
     for node_name in internal_nodes:
         tools = get_tool_specs_for_node(agent_id, node_name)
@@ -307,6 +366,8 @@ def assigned_work_for_nodes(agent_id: str, internal_nodes: list[str]) -> list[di
 
 
 def sanitize_node_order(raw_order: Any, internal_nodes: list[str]) -> list[str]:
+    """Agent command가 반환한 node 순서를 허용된 내부 node로 정규화한다."""
+
     if not isinstance(raw_order, list):
         return internal_nodes
     ordered = [str(item) for item in raw_order if str(item) in internal_nodes]
@@ -324,6 +385,8 @@ def fallback_agent_command(
     retry_attempts: list[dict[str, Any]] | None = None,
     model_retry_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """command LLM 실패 시 사용할 기본 실행 계획을 만든다."""
+
     return {
         "agent_id": agent_id,
         "stage_name": stage_name,
@@ -361,6 +424,13 @@ def run_agent_command_prompt(
     model_assignment: dict[str, Any] | None = None,
     supervisor_delegation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Expert Agent command LLM을 호출해 내부 node 실행 계획을 만든다.
+
+    이 함수는 실행 자체를 하지 않는다. 반환된 `node_order`와 `node_commands`는
+    workflow runtime이 읽어 실제 내부 node를 실행한다. LLM 실패 시에도 기본
+    node 순서로 fallback하므로 전체 graph는 계속 진행된다.
+    """
+
     agent_id = str(agent_spec.get("id") or stage_name)
     try:
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", COMMAND_PROMPT)])
@@ -390,6 +460,15 @@ def run_agent_command_prompt(
             assigned_work=compact_json(assigned_work_for_nodes(agent_id, internal_nodes), max_chars=4500),
             handoff_context=compact_json(incoming_handoffs or [], max_chars=3000),
             state_summary=compact_json(summarize_state(state), max_chars=3000),
+            autonomy_context=compact_json(
+                {
+                    "long_term_goal": state.get("supervisor_long_term_goal"),
+                    "autonomy_policy": state.get("supervisor_autonomy_policy"),
+                    "supervisor_iteration_policy": (supervisor_delegation or {}).get("iteration_policy", {}),
+                    "long_term_goal_alignment": (supervisor_delegation or {}).get("long_term_goal_alignment"),
+                },
+                max_chars=2600,
+            ),
         )
         response, final_model_assignment, retry_assignments, retry_attempts = invoke_chat_with_timeout_escalation(
             messages=messages,
@@ -441,6 +520,8 @@ def fallback_agent_reflection(
     retry_attempts: list[dict[str, Any]] | None = None,
     model_retry_assignments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """reflection LLM 실패 시 handoff를 계속하기 위한 기본 판단을 만든다."""
+
     return {
         "agent_id": agent_id,
         "stage_name": stage_name,
@@ -470,6 +551,13 @@ def run_agent_reflection_prompt(
     model_assignment: dict[str, Any] | None = None,
     supervisor_delegation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Expert Agent reflection LLM을 호출해 stage 결과의 충분성을 판단한다.
+
+    reflection은 "Agent 자신의 의견"이다. 최종 반복 여부는
+    `build_supervisor_loop_decision`에서 다시 판단하므로, LLM이 무조건 iterate를
+    요구해도 비용/상한/산출물 상태에 따라 handoff될 수 있다.
+    """
+
     agent_id = str(agent_spec.get("id") or stage_name)
     try:
         prompt = ChatPromptTemplate.from_messages([("system", REFLECT_SYSTEM_PROMPT), ("human", REFLECT_PROMPT)])
@@ -499,6 +587,18 @@ def run_agent_reflection_prompt(
             executed_nodes=compact_json(executed_nodes, max_chars=800),
             result_summary=compact_json(summarize_result(result), max_chars=3600),
             available_output_keys=compact_json(sorted(k for k, v in {**state, **result}.items() if v not in (None, {}, [])), max_chars=2500),
+            autonomy_context=compact_json(
+                {
+                    "long_term_goal": state.get("supervisor_long_term_goal"),
+                    "autonomy_policy": state.get("supervisor_autonomy_policy"),
+                    "supervisor_iteration_policy": (supervisor_delegation or {}).get("iteration_policy", {}),
+                    "reflection_instruction": (
+                        "needs_iteration=true는 같은 stage를 한 번 더 실행하면 산출물 부족이나 실패가 실제로 개선될 때만 사용한다. "
+                        "새 출처 수집이 필요한 근거 부족은 replan, 책임자 판단이 필요한 위험은 human_review로 보낸다."
+                    ),
+                },
+                max_chars=2800,
+            ),
         )
         response, final_model_assignment, retry_assignments, retry_attempts = invoke_chat_with_timeout_escalation(
             messages=messages,
@@ -539,6 +639,8 @@ def run_agent_reflection_prompt(
 
 
 def build_agent_llm_call_record(kind: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """command/reflection payload를 UI와 workflow_state에서 보기 쉬운 trace로 줄인다."""
+
     return {
         "kind": kind,
         "agent_id": payload.get("agent_id"),

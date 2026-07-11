@@ -1,4 +1,5 @@
 {
+  // Frontend TypeScript project reference root. app/node 설정 파일을 묶어 `tsc -b`가 한 번에 빌드하게 한다.
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },

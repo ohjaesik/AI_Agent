@@ -1,5 +1,11 @@
 # app/company_bootstrap/nodes.py
 
+"""회사 bootstrap LangGraph node 구현.
+
+회사 profile 조회, 공식자료 수집/저장, process discovery를 실제로 수행하는 node들이
+들어 있다.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -24,10 +30,12 @@ from app.rag.indexer import delete_existing_chunks
 
 
 def utc_now() -> str:
+    """UTC ISO timestamp를 생성해 audit log의 공통 시간값으로 사용한다."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def audit(node_name: str, status: str, payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """audit 함수. 회사 bootstrap LangGraph node 구현. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return [
         {
             "node": node_name,
@@ -39,10 +47,12 @@ def audit(node_name: str, status: str, payload: dict[str, Any] | None = None) ->
 
 
 def error(node_name: str, exc: Exception) -> list[str]:
+    """error 함수. 회사 bootstrap LangGraph node 구현. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return [f"[{node_name}] {type(exc).__name__}: {exc}"]
 
 
 def company_profile_agent_node(state: BootstrapState) -> dict[str, Any]:
+    """company_profile_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     node_name = "company_profile_agent"
 
     try:
@@ -107,6 +117,7 @@ def company_profile_agent_node(state: BootstrapState) -> dict[str, Any]:
 
 
 def source_ingestion_agent_node(state: BootstrapState) -> dict[str, Any]:
+    """source_ingestion_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     node_name = "source_ingestion_agent"
 
     try:
@@ -180,6 +191,7 @@ def source_ingestion_agent_node(state: BootstrapState) -> dict[str, Any]:
 
 
 def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
+    """process_discovery_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
     node_name = "process_discovery_agent"
 
     try:
