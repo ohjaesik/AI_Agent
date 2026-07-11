@@ -360,21 +360,3 @@ flowchart LR
 ```
 
 ---
-
-## 4. Mermaid 렌더링 방법
-
-VS Code 기준:
-
-1. `Markdown Preview Mermaid Support` 확장 설치
-2. 이 파일 열기
-3. `Open Preview` 또는 `Markdown Preview` 실행
-4. 다이어그램을 캡처하거나 PDF로 인쇄
-
-CLI 기준:
-
-```bash
-npm install -g @mermaid-js/mermaid-cli
-mmdc -i AX_Delivery_Planner_AI_Agent_설계도_mermaid.md -o ax_delivery_planner_diagram.pdf
-```
-
-Mermaid CLI에서 Markdown 전체 파일 변환이 불안정하면, 코드블록을 개별 `.mmd` 파일로 분리해 변환하면 된다.
