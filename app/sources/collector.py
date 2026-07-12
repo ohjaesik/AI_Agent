@@ -13,7 +13,7 @@ from typing import Any
 
 
 def make_citation_label(prefix: str, source_id: Any) -> str:
-    """make_citation_label 함수. RAG chunk와 내부 문서를 evidence item/source 목록으로 변환한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """보고서 citation과 evidence dedupe에 사용할 짧은 source label을 만든다."""
     return f"[{prefix}-{source_id}]"
 
 
@@ -96,7 +96,7 @@ def agent_output_to_evidence(
     used_for: list[str],
     source_agent: str,
 ) -> dict[str, Any]:
-    """agent_output_to_evidence 함수. RAG chunk와 내부 문서를 evidence item/source 목록으로 변환한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Agent 산출물을 보고서에서 인용 가능한 evidence item 형식으로 감싼다."""
     return {
         "evidence_id": evidence_id,
         "source_type": "agent_output",

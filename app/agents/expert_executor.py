@@ -226,7 +226,13 @@ def build_agent_tool_decision(
     loop_limit: int,
     executes_node: bool,
 ) -> dict[str, Any]:
-    """build_agent_tool_decision 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """tool 실행 직전에 남길 Agent decision trace를 만든다.
+
+    이 trace는 "어떤 Agent가 어떤 후보 tool 중 무엇을 선택했고, 왜 실행했는지"를
+    사람이 나중에 검토할 수 있게 만드는 감사 기록이다. 실제 권한 검사는
+    `candidate_tool_specs`와 registry binding에서 이미 끝난 상태라, 여기서는
+    실행 계획을 설명 가능한 JSON으로 정리하는 역할만 한다.
+    """
     return {
         "phase": "agent_tool_loop",
         "node_name": node_name,
@@ -254,13 +260,13 @@ def build_agent_tool_decision(
 
 
 def count_llm_review_needs(agent_evaluation: dict[str, Any]) -> int:
-    """count_llm_review_needs 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """평가 결과 중 LLM critic 재검토가 필요한 후보 수를 읽는다."""
     summary = agent_evaluation.get("summary", {}) or {}
     return int(summary.get("llm_critic_needs_review_count", 0) or 0)
 
 
 def rebuild_priority_summary(ranking: dict[str, Any]) -> dict[str, Any]:
-    """rebuild_priority_summary 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """후보 status를 수정한 뒤 ranking summary count를 다시 계산한다."""
     items = ranking.get("items", []) or []
     status_counts: dict[str, int] = {}
     for item in items:
@@ -284,7 +290,7 @@ def rebuild_priority_summary(ranking: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_replan_hint_items(process_ids: set[int], state: dict[str, Any], ranking: dict[str, Any], evaluation: dict[str, Any]) -> list[dict[str, Any]]:
-    """build_replan_hint_items 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """재계획 node가 어떤 후보의 근거를 보강해야 하는지 hint payload를 만든다."""
     ranking_items = ranking.get("items", []) or []
     evaluation_items = evaluation.get("items", []) or []
     items = []
@@ -310,7 +316,12 @@ def build_replan_hint_items(process_ids: set[int], state: dict[str, Any], rankin
 
 
 def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """apply_priority_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
+    """Business Case Agent 실행 후 보수적인 검토 상태를 보존한다.
+
+    ROI/점수 계산이 끝난 뒤에도 governance나 evidence 단계에서 보류된 후보가
+    다시 추천 상태로 되돌아가면 안 된다. 이 함수는 그런 status를 보존하고
+    summary count를 갱신한다.
+    """
     ranking = deepcopy(result.get("priority_ranking") or {})
     items = list(ranking.get("items", []) or [])
     adjusted_count = 0
@@ -343,7 +354,13 @@ def apply_priority_post_decision(result: dict[str, Any], decision: dict[str, Any
 
 
 def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """apply_evaluation_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
+    """Evaluation/Critic 결과를 ranking과 replan_request에 반영한다.
+
+    근거 부족을 세 단계로 나눈다.
+    - severe: evidence_insufficient로 보류
+    - moderate: bounded autonomous replan 요청
+    - review: Human Review로 넘김
+    """
     evaluation = deepcopy(result.get("agent_evaluation") or state.get("agent_evaluation") or {})
     ranking = deepcopy(result.get("priority_ranking") or state.get("priority_ranking") or {})
     summary = evaluation.setdefault("summary", {})
@@ -425,7 +442,7 @@ def apply_evaluation_post_decision(result: dict[str, Any], decision: dict[str, A
 
 
 def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """apply_delivery_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
+    """Delivery Agent 산출물이 미검토 후보를 확정처럼 말하지 않게 보호한다."""
     changed = False
     adjusted_count = 0
     node_name = str(decision.get("node_name"))
@@ -488,7 +505,7 @@ def apply_delivery_post_decision(result: dict[str, Any], decision: dict[str, Any
 
 
 def apply_post_decision(result: dict[str, Any], decision: dict[str, Any], state: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """apply_post_decision 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
+    """node별 post-decision 보정 규칙을 dispatch한다."""
     node_name = str(decision.get("node_name"))
     mutable_result = deepcopy(result)
 
@@ -511,7 +528,7 @@ def apply_post_decision(result: dict[str, Any], decision: dict[str, Any], state:
 
 
 def agent_loop_condition(node_name: str, post_decision: dict[str, Any], result: dict[str, Any]) -> bool:
-    """agent_loop_condition 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """현재 post-decision만 봤을 때 같은 Agent loop를 한 번 더 돌릴 필요가 있는지 판단한다."""
     if node_name in {"agent_evaluator", "llm_critic"}:
         if int(post_decision.get("additional_evidence_required_count") or 0) > 0 and not result.get("replan_request"):
             return True
@@ -523,7 +540,7 @@ def agent_loop_condition(node_name: str, post_decision: dict[str, Any], result: 
 
 
 def agent_needs_next_loop(node_name: str, post_decision: dict[str, Any], result: dict[str, Any], loop_index: int, loop_limit: int) -> bool:
-    """agent_needs_next_loop 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """반복 필요성과 loop 상한을 함께 적용한다."""
     return loop_index < loop_limit and agent_loop_condition(node_name, post_decision, result)
 
 
@@ -535,7 +552,7 @@ def build_extra_loop_request(
     state: dict[str, Any],
     loop_limit: int,
 ) -> dict[str, Any]:
-    """build_extra_loop_request 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """자동 반복 상한에 걸렸을 때 사람이 재실행할 수 있는 command hint를 만든다."""
     project_id = state.get("project_id")
     command = "python -m app.main --auto-approve --allow-agent-extra-loop"
     if project_id:
@@ -552,7 +569,7 @@ def build_extra_loop_request(
 
 
 def validation_runner_result(current_result: dict[str, Any], tool_spec: dict[str, Any], loop_index: int) -> dict[str, Any]:
-    """validation_runner_result 함수. Expert Agent가 배정받은 내부 node/tool loop를 실행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """validate/guard 계열 tool이 기존 node 결과를 관찰했다는 기록을 추가한다."""
     result = dict(current_result)
     validations = list(result.get("agent_tool_validations", []))
     tool_purpose = str(tool_spec.get("purpose", "execute"))
@@ -583,7 +600,11 @@ def run_agent_tool_loop(
     emphasized_tool_spec: dict[str, Any],
     emphasized_reason: str,
 ) -> dict[str, Any]:
-    """run_agent_tool_loop 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """Agent에게 배정된 tool 목록을 순서대로 실행하고 trace를 합친다.
+
+    첫 tool은 실제 node 함수를 실행하고, 이후 tool은 검증/관찰 결과를 남긴다.
+    loop마다 post-decision을 적용해 보수적 status와 replan hint를 보강한다.
+    """
     agent_id = str(agent_spec.get("id"))
     loop_limit, extra_loop_enabled, settings_note = get_agent_loop_settings(state)
     assigned_tools = order_assigned_tools(candidate_tool_specs)
@@ -746,7 +767,7 @@ def expert_executed_node(node_name: str, node_fn: Callable[[StateT], dict[str, A
     """
 
     def _node(state: StateT) -> dict[str, Any]:
-        """_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+        """LangGraph가 호출하는 wrapper node다."""
         binding = get_agent_binding_for_node(node_name)
         if not binding:
             return node_fn(state)

@@ -71,7 +71,7 @@ class BootstrapGraphResult:
 
 
 def resolve_dart_api_key(explicit_key: str | None) -> str | None:
-    """resolve_dart_api_key 함수. bootstrap Supervisor graph 실행 wrapper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """CLI/API 인자로 받은 OpenDART key가 없으면 .env 설정값을 사용한다."""
     if explicit_key:
         return explicit_key
     return get_settings().dart_api_key
@@ -89,7 +89,7 @@ def run_bootstrap_supervisor_graph(
     thread_id: str = "bootstrap-supervisor-cli",
     allow_agent_extra_loop: bool | None = None,
 ) -> BootstrapGraphResult:
-    """run_bootstrap_supervisor_graph 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """초기 bootstrap state를 구성해 Supervisor graph를 실행하고 결과 dataclass로 축약한다."""
     graph = build_bootstrap_supervisor_graph()
     resolved_extra_loop = resolve_extra_loop_enabled(allow_agent_extra_loop)
     supervisor_goal = build_supervisor_long_term_goal(

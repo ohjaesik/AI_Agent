@@ -134,7 +134,7 @@ ON document_chunks (document_id, chunk_index);
 
 
 def migrate_operational_hardening() -> None:
-    """migrate_operational_hardening 함수. 운영 안정성 강화를 위한 DB migration script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """운영 안정성에 필요한 컬럼, index, constraint DDL을 idempotent하게 적용한다."""
     with engine.begin() as conn:
         conn.execute(text(DDL))
 

@@ -21,7 +21,7 @@ from app.tools.review_applier import apply_human_review_to_ranking
 
 
 def priority_status_counts(state: AXPlannerState) -> dict[str, int]:
-    """priority_status_counts 함수. Human Review interrupt/auto approval을 담당하는 node. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """priority_ranking 후보들의 status 분포를 계산해 승인 필요 여부 판단에 사용한다."""
     counts: dict[str, int] = {}
     for item in (state.get("priority_ranking", {}) or {}).get("items", []) or []:
         status = str(item.get("status") or "unknown")

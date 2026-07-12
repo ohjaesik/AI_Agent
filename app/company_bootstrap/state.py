@@ -13,7 +13,7 @@ from typing import Annotated, Any, TypedDict
 
 
 def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """merge_unique_dicts 함수. bootstrap Supervisor graph의 state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """bootstrap graph의 병렬 trace list를 JSON 기준으로 중복 없이 합친다."""
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -31,7 +31,7 @@ def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, 
 
 
 def merge_unique_strings(left: list[str] | None, right: list[str] | None) -> list[str]:
-    """merge_unique_strings 함수. bootstrap Supervisor graph의 state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """warnings/errors처럼 여러 node가 쓰는 문자열 list를 순서 유지하며 dedupe한다."""
     result: list[str] = []
     seen: set[str] = set()
 

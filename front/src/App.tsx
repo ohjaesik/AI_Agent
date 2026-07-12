@@ -1,5 +1,11 @@
 // AX Delivery Planner dashboard SPA.
 // 백엔드 FastAPI endpoint를 호출해 문서 ingestion, RAG 검색, Supervisor 분석, HITL review를 한 화면에서 실행한다.
+//
+// 읽는 순서:
+// 1. 파일 상단 helper 함수들은 backend 응답값을 화면 표시용 문자열/숫자로 정규화한다.
+// 2. App 내부 state는 탭별 업무 흐름(대시보드, 문서/RAG, 분석/HITL, 설정) 순서로 묶여 있다.
+// 3. handler 함수들은 backend API 호출을 담당하고, 완료 후 관련 summary를 다시 불러온다.
+// 4. return 아래 JSX는 탭 조건부 렌더링만 담당한다. mock 후보를 만들지 않고 API 응답만 표시한다.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from './api';
 import './App.css';
@@ -16,6 +22,8 @@ interface LogLine {
 
 type Candidate = Record<string, any>;
 
+// Backend payload는 분석 단계마다 조금씩 다른 key 이름을 가질 수 있다.
+// 아래 helper들은 그 차이를 화면 컴포넌트 밖으로 밀어내기 위한 adapter 역할을 한다.
 function asNumber(value: any): number | null {
   // backend가 숫자를 문자열로 내려줘도 화면 계산에는 숫자로 정규화한다.
   if (value === null || value === undefined || value === '') return null;
@@ -146,6 +154,9 @@ function getAfterCostPercent(candidate: Candidate | null): number | null {
 }
 
 export default function App() {
+  // ---------------------------------------------------------------------------
+  // 1. 전역 화면 상태
+  // ---------------------------------------------------------------------------
   // Navigation & Health: 현재 탭과 backend 연결 상태를 관리한다.
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [apiStatus, setApiStatus] = useState<'checking' | 'ok' | 'unreachable'>('checking');
@@ -195,6 +206,9 @@ export default function App() {
   const [consoleLogs, setConsoleLogs] = useState<LogLine[]>([]);
   const consoleBottomRef = useRef<HTMLDivElement>(null);
 
+  // ---------------------------------------------------------------------------
+  // 2. 공통 로그/요약 조회 helper
+  // ---------------------------------------------------------------------------
   const addLog = (text: string, type: 'info' | 'success' | 'error' = 'info') => {
     // 로그마다 표시 시간을 붙여 실행 순서를 눈으로 추적하기 쉽게 만든다.
     const time = new Date().toLocaleTimeString();
@@ -245,6 +259,9 @@ export default function App() {
       });
   }, [apiKey, userRole, userId]);
 
+  // ---------------------------------------------------------------------------
+  // 3. 사용자가 누르는 버튼/폼의 backend API 이벤트 handler
+  // ---------------------------------------------------------------------------
   // 설정 탭에서 입력한 인증/사용자 정보를 localStorage에 저장한다.
   const saveSettings = () => {
     localStorage.setItem('ax_api_key', apiKey);
@@ -437,6 +454,11 @@ export default function App() {
       });
   };
 
+  // ---------------------------------------------------------------------------
+  // 4. 렌더링 직전에 계산하는 표시 전용 derived 값
+  // ---------------------------------------------------------------------------
+  // JSX 안에서 복잡한 null-check와 포맷 계산이 반복되지 않게, API 응답을
+  // 화면이 바로 읽을 수 있는 label/count/status 값으로 미리 풀어둔다.
   const analysisCandidates = getAnalysisCandidates(analysisResult);
   const complianceEntries = getComplianceEntries(analysisResult?.compliance_summary);
   const roiCandidate = getRoiCandidate(analysisCandidates);

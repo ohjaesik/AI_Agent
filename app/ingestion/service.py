@@ -84,7 +84,7 @@ def detect_sensitive_info(text: str) -> bool:
 
 
 def validate_company_and_process(db: Session, company_id: int, process_id: int | None = None) -> None:
-    """validate_company_and_process 함수. 문서 ingestion service layer. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """업로드 문서가 존재하는 회사와 그 회사 소속 업무에만 연결되도록 검증한다."""
     company = db.get(Company, company_id)
     if company is None:
         raise ValueError(f"Company not found: {company_id}")
@@ -114,7 +114,7 @@ def create_process_document(
     stored_file: StoredFile | None = None,
     uploaded_by_user_id: str | None = None,
 ) -> ProcessDocument:
-    """create_process_document 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """업로드/수집 문서 내용을 ProcessDocument row로 저장하고 민감정보 flag를 보정한다."""
     validate_company_and_process(db, company_id=company_id, process_id=process_id)
 
     if contains_sensitive_info is None:

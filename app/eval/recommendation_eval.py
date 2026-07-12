@@ -19,7 +19,7 @@ from app.db.models import AnalysisResult
 
 
 def load_gold(path: str | Path) -> dict[str, Any]:
-    """load_gold 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
+    """추천 평가용 gold JSON에서 relevant_process_ids를 읽고 검증한다."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
 
     if "relevant_process_ids" not in data:
@@ -29,7 +29,7 @@ def load_gold(path: str | Path) -> dict[str, Any]:
 
 
 def load_latest_priority_ranking(project_id: int) -> dict[str, Any]:
-    """load_latest_priority_ranking 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
+    """AnalysisResult table에서 특정 project의 최신 priority_ranking 결과를 읽는다."""
     with SessionLocal() as db:
         stmt = (
             select(AnalysisResult)
@@ -46,7 +46,7 @@ def load_latest_priority_ranking(project_id: int) -> dict[str, Any]:
 
 
 def load_prediction(path: str | Path | None, project_id: int | None) -> dict[str, Any]:
-    """load_prediction 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
+    """prediction 파일 또는 DB project_id 중 하나에서 ranking payload를 로드한다."""
     if path:
         return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -61,7 +61,7 @@ def evaluate_ranking(
     relevant_process_ids: list[int],
     k: int = 5,
 ) -> dict[str, Any]:
-    """evaluate_ranking 함수. 추천 결과의 간단한 품질 지표를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """ranking 결과와 relevant process id를 비교해 hit/precision/recall/MRR을 계산한다."""
     items = prediction.get("items", [])
     ranked_process_ids = [int(item.get("process_id")) for item in items if item.get("process_id")]
     relevant = set(int(value) for value in relevant_process_ids)

@@ -22,7 +22,7 @@ PARTIAL_RATIONALE_2 = {"expected_effect": "ok", "repeatability": "ok"}
 
 
 def rationale(kind: str) -> dict[str, str]:
-    """rationale 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """gold case에 넣을 score_rationale 충실도 패턴을 반환한다."""
     if kind == "full":
         return dict(FULL_RATIONALE)
     if kind == "partial3":
@@ -33,12 +33,12 @@ def rationale(kind: str) -> dict[str, str]:
 
 
 def labels(count: int) -> list[str]:
-    """labels 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """요청한 개수만큼 공식자료 citation label 샘플을 반환한다."""
     return ["[공식URL-1]", "[공식URL-2]", "[DART-기업개황]"][:count]
 
 
 def compliance(process_id: int, level: str, blocked: bool = False) -> dict[str, Any]:
-    """compliance 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """gold case에 붙일 compliance assessment 샘플 payload를 만든다."""
     return {"process_id": process_id, "compliance_level": level, "human_review_required": True, "blocked": blocked}
 
 
@@ -59,7 +59,7 @@ def make_case(
     blocked: bool = False,
     replan: bool = False,
 ) -> dict[str, Any]:
-    """make_case 함수. Agent 품질 평가용 gold data를 생성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Agent evaluator 회귀 테스트용 gold case 하나를 생성한다."""
     process_id = 100 + idx
     case: dict[str, Any] = {
         "case_id": f"gold-{idx:03d}",

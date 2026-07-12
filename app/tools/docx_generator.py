@@ -41,28 +41,28 @@ STATUS_NOTES = {
 
 
 def report_status(report_data: dict[str, Any]) -> str:
-    """report_status 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """report_data.status를 draft/reviewed/final 중 하나로 정규화한다."""
     status = str(report_data.get("status") or "draft").lower()
     return status if status in STATUS_LABELS else "draft"
 
 
 def report_status_label(report_data: dict[str, Any]) -> str:
-    """report_status_label 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """표지에 표시할 영문 보고서 상태 label을 반환한다."""
     return STATUS_LABELS[report_status(report_data)]
 
 
 def report_status_note(report_data: dict[str, Any]) -> str:
-    """report_status_note 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """표지/본문에 넣을 보고서 상태 설명 문구를 반환한다."""
     return STATUS_NOTES[report_status(report_data)]
 
 
 def section_title_without_number(heading: str) -> str:
-    """section_title_without_number 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """목차/본문 표시용으로 section heading 앞 번호를 제거한다."""
     return re.sub(r"^\s*\d+\.\s*", "", str(heading or "제목 없음")).strip()
 
 
 def toc_display_items(sections: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    """toc_display_items 함수. report_data를 DOCX 보고서 파일로 내보내는 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """DOCX 목차에 표시할 section 번호와 제목 목록을 만든다."""
     items: list[tuple[str, str]] = [
         ("A", "Executive Dashboard"),
         ("B", "Top Candidate Detail"),

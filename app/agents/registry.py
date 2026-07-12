@@ -37,7 +37,7 @@ NODE_OUTPUT_SCHEMA = {
 
 
 def tool_spec(name: str, description: str, nodes: list[str], purpose: str = "execute") -> dict[str, Any]:
-    """tool_spec 함수. 시스템에 등록된 Expert Agent와 tool specification을 정의한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Agent registry에 넣을 tool 계약서를 공통 schema와 함께 만든다."""
     return {
         "name": name,
         "description": description,
@@ -50,7 +50,7 @@ def tool_spec(name: str, description: str, nodes: list[str], purpose: str = "exe
 
 @dataclass(frozen=True)
 class AgentSpec:
-    """AgentSpec 클래스. 시스템에 등록된 Expert Agent와 tool specification을 정의한다.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """Expert Agent 하나의 역할, 담당 node, tool, 품질 기준을 담는 registry 항목이다."""
     id: str
     name: str
     category: str
@@ -334,12 +334,12 @@ AGENT_REGISTRY: list[AgentSpec] = [
 
 
 def get_agent_registry() -> list[dict[str, Any]]:
-    """get_agent_registry 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """Supervisor prompt와 permission report가 사용할 전체 Agent catalog를 반환한다."""
     return [item.to_dict() for item in AGENT_REGISTRY]
 
 
 def get_agent_spec(agent_id: str) -> dict[str, Any] | None:
-    """get_agent_spec 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """agent_id에 해당하는 Agent 계약서를 dict 형태로 조회한다."""
     for item in AGENT_REGISTRY:
         if item.id == agent_id:
             return item.to_dict()
@@ -347,7 +347,7 @@ def get_agent_spec(agent_id: str) -> dict[str, Any] | None:
 
 
 def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[str, Any] | None:
-    """get_capability_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """Agent 계약서 안에서 특정 LangGraph node가 수행하는 capability를 찾는다."""
     for capability in agent_spec.get("capabilities", []) or []:
         if node_name in capability.get("nodes", []):
             return dict(capability)
@@ -355,7 +355,7 @@ def get_capability_for_node(agent_spec: dict[str, Any], node_name: str) -> dict[
 
 
 def get_tool_specs_for_node(agent_id: str, node_name: str, max_tools: int = MAX_TOOL_CANDIDATES_PER_NODE) -> list[dict[str, Any]]:
-    """get_tool_specs_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """특정 Agent/node 조합에서 Supervisor와 runtime이 노출해도 되는 tool 후보만 반환한다."""
     spec = get_agent_spec(agent_id)
     if not spec:
         return []
@@ -364,7 +364,7 @@ def get_tool_specs_for_node(agent_id: str, node_name: str, max_tools: int = MAX_
 
 
 def get_tool_spec(agent_id: str, tool_name: str) -> dict[str, Any] | None:
-    """get_tool_spec 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """tool 이름을 정규화해 Agent에게 허용된 단일 tool 계약서를 찾는다."""
     spec = get_agent_spec(agent_id)
     if not spec:
         return None
@@ -376,7 +376,7 @@ def get_tool_spec(agent_id: str, tool_name: str) -> dict[str, Any] | None:
 
 
 def get_tool_spec_for_node(agent_id: str, node_name: str) -> dict[str, Any] | None:
-    """get_tool_spec_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """node 실행용 대표 tool spec 하나를 반환한다."""
     specs = get_tool_specs_for_node(agent_id, node_name, max_tools=1)
     return specs[0] if specs else None
 

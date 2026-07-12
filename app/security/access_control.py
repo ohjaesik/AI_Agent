@@ -29,31 +29,31 @@ DEFAULT_ROLE = "analyst"
 
 @dataclass(frozen=True)
 class AccessContext:
-    """AccessContext 클래스. 문서 보안 레벨과 사용자 role 기반 접근 제어 helper.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """현재 요청 사용자의 id와 role을 담아 RAG/문서 조회 권한 판단에 넘기는 값 객체다."""
     user_id: str = "local-user"
     role: str = DEFAULT_ROLE
 
     @property
     def normalized_role(self) -> str:
-        """normalized_role 함수. 문서 보안 레벨과 사용자 role 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+        """알 수 없는 role이면 DEFAULT_ROLE로 낮춰 권한이 과도하게 열리지 않게 한다."""
         return self.role if self.role in ROLE_MAX_LEVEL else DEFAULT_ROLE
 
 
 def allowed_security_levels(role: str | None) -> list[str]:
-    """allowed_security_levels 함수. 문서 보안 레벨과 사용자 role 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """role이 읽을 수 있는 security_level 목록을 낮은 등급부터 모두 반환한다."""
     normalized_role = role if role in ROLE_MAX_LEVEL else DEFAULT_ROLE
     max_level = ROLE_MAX_LEVEL[normalized_role]
     return [level for level, order in SECURITY_ORDER.items() if order <= max_level]
 
 
 def can_access_security_level(role: str | None, security_level: str | None) -> bool:
-    """can_access_security_level 함수. 문서 보안 레벨과 사용자 role 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """문서 security_level이 사용자 role의 최대 허용 등급 안에 있는지 판단한다."""
     normalized_level = security_level or "internal"
     return normalized_level in allowed_security_levels(role)
 
 
 def can_access_allowed_roles(role: str | None, allowed_roles: list[str] | None) -> bool:
-    """can_access_allowed_roles 함수. 문서 보안 레벨과 사용자 role 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """문서별 allowed_roles 제한이 있을 때 현재 role이 포함되는지 확인한다."""
     if not allowed_roles:
         return True
     normalized_role = role if role in ROLE_MAX_LEVEL else DEFAULT_ROLE

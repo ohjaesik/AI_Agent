@@ -39,12 +39,12 @@ REQUIRED_PROCESS_FIELDS = [
 
 
 def safe_div(numerator: float, denominator: float) -> float:
-    """safe_div 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """0으로 나누는 경우를 0.0으로 처리해 metric 계산을 안전하게 한다."""
     return round(numerator / denominator, 4) if denominator else 0.0
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    """load_jsonl 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
+    """LLM 품질 평가 case JSONL 파일을 dict 목록으로 읽는다."""
     rows: list[dict[str, Any]] = []
     with Path(path).open("r", encoding="utf-8") as file:
         for line in file:
@@ -55,7 +55,7 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
 
 
 def extract_payload(case: dict[str, Any]) -> tuple[dict[str, Any], bool, str | None]:
-    """extract_payload 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """case의 payload 또는 raw_text에서 평가할 JSON payload를 추출한다."""
     if isinstance(case.get("payload"), dict):
         return case["payload"], True, None
 
@@ -75,7 +75,7 @@ def extract_payload(case: dict[str, Any]) -> tuple[dict[str, Any], bool, str | N
 
 
 def is_fallback_payload(target: str, payload: dict[str, Any]) -> bool:
-    """is_fallback_payload 함수. 조건을 검사해 True/False 판단값을 반환한다."""
+    """평가 대상 output이 deterministic/template fallback 경로에서 나온 것인지 판단한다."""
     if target == "company_process_discovery":
         processes = payload.get("processes", [])
         return any(str(item.get("discovery_mode")) == "template_fallback" for item in processes if isinstance(item, dict))
@@ -88,12 +88,12 @@ def is_fallback_payload(target: str, payload: dict[str, Any]) -> bool:
 
 
 def process_has_required_fields(process: dict[str, Any]) -> bool:
-    """process_has_required_fields 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """process discovery 결과가 필수 텍스트 필드를 모두 채웠는지 확인한다."""
     return all(str(process.get(field) or "").strip() for field in REQUIRED_PROCESS_FIELDS)
 
 
 def scores_are_in_range(process: dict[str, Any]) -> bool:
-    """scores_are_in_range 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """process discovery 점수가 1-5 범위를 벗어나지 않았는지 확인한다."""
     for key in SCORE_KEYS:
         if key not in process:
             continue
@@ -107,7 +107,7 @@ def scores_are_in_range(process: dict[str, Any]) -> bool:
 
 
 def evidence_labels_are_allowed(process: dict[str, Any], allowed_labels: set[str]) -> bool:
-    """evidence_labels_are_allowed 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM이 생성한 evidence label이 제공된 공식 source label 안에만 있는지 확인한다."""
     labels = process.get("evidence_labels", [])
     if not isinstance(labels, list) or not labels:
         return False
@@ -115,7 +115,7 @@ def evidence_labels_are_allowed(process: dict[str, Any], allowed_labels: set[str
 
 
 def evaluate_company_process_discovery_case(case: dict[str, Any], payload: dict[str, Any], json_ok: bool, parse_error: str | None) -> dict[str, Any]:
-    """evaluate_company_process_discovery_case 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """process discovery LLM output을 필드/점수/근거 label/후보 개수 기준으로 평가한다."""
     allowed_labels = {str(label) for label in case.get("allowed_labels", [])}
     processes = payload.get("processes", []) if json_ok else []
     process_count = len(processes) if isinstance(processes, list) else 0
@@ -178,7 +178,7 @@ def evaluate_company_process_discovery_case(case: dict[str, Any], payload: dict[
 
 
 def evaluate_llm_critic_case(case: dict[str, Any], payload: dict[str, Any], json_ok: bool, parse_error: str | None) -> dict[str, Any]:
-    """evaluate_llm_critic_case 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM Critic output을 verdict/adjustment/list field/reason 기준으로 평가한다."""
     verdict = str(payload.get("critic_verdict") or "").strip()
     expected_verdict = case.get("expected_verdict")
     expected_not_pass = bool(case.get("expected_not_pass", False))
@@ -226,7 +226,7 @@ def evaluate_llm_critic_case(case: dict[str, Any], payload: dict[str, Any], json
 
 
 def count_report_paragraphs(report_data: dict[str, Any]) -> int:
-    """count_report_paragraphs 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """report_data section 안의 paragraph block 개수를 센다."""
     count = 0
     for section in report_data.get("sections", []):
         for block in section.get("blocks", []):
@@ -236,7 +236,7 @@ def count_report_paragraphs(report_data: dict[str, Any]) -> int:
 
 
 def evaluate_report_writer_case(case: dict[str, Any], payload: dict[str, Any], json_ok: bool, parse_error: str | None) -> dict[str, Any]:
-    """evaluate_report_writer_case 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Report Writer output을 section 구조, paragraph 수, citation validation 기준으로 평가한다."""
     validation = {"valid": False, "invalid_labels": ["not_evaluated"]}
     citation_validation_pass = False
     if json_ok:
@@ -287,7 +287,7 @@ def evaluate_report_writer_case(case: dict[str, Any], payload: dict[str, Any], j
 
 
 def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
-    """evaluate_case 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """case target에 맞는 세부 평가 함수를 선택해 단일 case 결과를 만든다."""
     target = str(case.get("target") or "")
     payload, json_ok, parse_error = extract_payload(case)
 
@@ -312,7 +312,7 @@ def evaluate_case(case: dict[str, Any]) -> dict[str, Any]:
 
 
 def summarize_results(results: list[dict[str, Any]], case_source: str | None = None) -> dict[str, Any]:
-    """summarize_results 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """case별 평가 결과를 전체/target별 pass rate와 실패 case 목록으로 요약한다."""
     total = len(results)
     target_summaries: dict[str, dict[str, Any]] = {}
 
@@ -342,7 +342,7 @@ def summarize_results(results: list[dict[str, Any]], case_source: str | None = N
 
 
 def evaluate_cases(cases: list[dict[str, Any]], case_source: str | None = None) -> dict[str, Any]:
-    """evaluate_cases 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """여러 LLM 품질 case를 평가하고 summary payload를 반환한다."""
     return summarize_results([evaluate_case(case) for case in cases], case_source=case_source)
 
 
@@ -353,7 +353,7 @@ def quality_gate(
     min_schema_valid_rate: float,
     min_fallback_free_rate: float,
 ) -> dict[str, Any]:
-    """quality_gate 함수. LLM 출력 품질을 평가하는 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM 품질 metric이 CLI/CI에서 요구하는 최소 기준을 넘었는지 판단한다."""
     checks = {
         "pass_rate": float(metrics.get("pass_rate", 0.0)) >= min_pass_rate,
         "json_parse_success_rate": float(metrics.get("json_parse_success_rate", 0.0)) >= min_json_parse_success_rate,

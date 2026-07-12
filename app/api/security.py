@@ -20,12 +20,12 @@ from app.security.access_control import AccessContext, DEFAULT_ROLE, ROLE_MAX_LE
 
 
 def normalize_role(role: str | None) -> str:
-    """normalize_role 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
+    """알 수 없는 role은 기본 analyst 권한으로 낮춘다."""
     return role if role in ROLE_MAX_LEVEL else DEFAULT_ROLE
 
 
 def create_access_token(user_id: str, role: str, expires_minutes: int | None = None) -> str:
-    """create_access_token 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """로컬 로그인/API 테스트용 JWT access token을 생성한다."""
     settings = get_settings()
     if not settings.app_jwt_secret:
         raise HTTPException(status_code=400, detail="APP_JWT_SECRET is not configured.")
@@ -42,7 +42,7 @@ def create_access_token(user_id: str, role: str, expires_minutes: int | None = N
 
 
 def decode_access_token(token: str) -> AccessContext:
-    """decode_access_token 함수. API key와 JWT 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Bearer JWT를 검증하고 요청자 정보를 AccessContext로 변환한다."""
     settings = get_settings()
     if not settings.app_jwt_secret:
         raise HTTPException(status_code=401, detail="JWT authentication is not configured.")
@@ -61,7 +61,7 @@ def decode_access_token(token: str) -> AccessContext:
 
 
 def validate_api_key(x_api_key: str | None) -> None:
-    """validate_api_key 함수. API key와 JWT 기반 접근 제어 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """APP_API_KEY가 설정된 환경에서 X-API-Key header를 검증한다."""
     expected = get_settings().app_api_key
     if expected and (not x_api_key or not secrets.compare_digest(x_api_key, expected)):
         raise HTTPException(
@@ -76,12 +76,12 @@ def require_api_key(
     x_user_id: Annotated[str | None, Header(alias="X-User-Id")] = None,
     x_user_role: Annotated[str | None, Header(alias="X-User-Role")] = None,
 ) -> AccessContext:
-    """Protect API endpoints.
+    """API endpoint 공통 인증 dependency.
 
-    Priority:
-    1. Bearer JWT when Authorization header is present.
-    2. X-API-Key with optional X-User-Id/X-User-Role.
-    3. Open local/dev mode only when APP_API_KEY and APP_JWT_SECRET are both unset.
+    우선순위:
+    1. Authorization Bearer JWT가 있으면 JWT를 검증한다.
+    2. 없으면 X-API-Key와 X-User-* header를 검증/해석한다.
+    3. APP_API_KEY와 APP_JWT_SECRET이 모두 비어 있는 로컬 개발 환경만 열린 모드로 둔다.
     """
     settings = get_settings()
 

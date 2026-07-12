@@ -1,6 +1,6 @@
 # app/evaluation/external_holdout_builder.py
 
-"""외부 holdout 평가 데이터를 구성한다.
+"""독립 holdout 평가 데이터를 구성한다.
 
 학습/개발에 직접 쓰지 않은 문서나 업무 후보를 모아 일반화 성능을 점검할 때 사용한다.
 """
@@ -37,7 +37,7 @@ def normalize_value(value: Any) -> str:
 
 
 def read_text_with_fallback(path: str | Path) -> tuple[str, str]:
-    """read_text_with_fallback 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """여러 CSV 인코딩을 순서대로 시도해 외부 데이터셋 텍스트를 읽는다."""
     input_path = Path(path)
     last_error: UnicodeDecodeError | None = None
     for encoding in CSV_ENCODINGS:
@@ -51,7 +51,7 @@ def read_text_with_fallback(path: str | Path) -> tuple[str, str]:
 
 
 def read_csv_rows(path: str | Path) -> list[dict[str, str]]:
-    """read_csv_rows 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """CSV header/value를 정규화해 비어 있지 않은 row 목록으로 반환한다."""
     text, _ = read_text_with_fallback(path)
     reader = csv.DictReader(text.splitlines())
     rows: list[dict[str, str]] = []
@@ -79,12 +79,12 @@ def parse_int(value: Any, default: int = 0) -> int:
 
 
 def truthy(value: Any) -> bool:
-    """truthy 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """외부 데이터셋의 다양한 참값 표현을 bool로 해석한다."""
     return normalize_value(value).lower() in {"1", "true", "yes", "y", "default", "failure"}
 
 
 def first_value(row: dict[str, str], aliases: list[str]) -> str:
-    """first_value 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """여러 alias 중 row에 존재하는 첫 번째 값을 반환한다."""
     for alias in aliases:
         key = normalize_key(alias)
         if row.get(key):
@@ -93,7 +93,7 @@ def first_value(row: dict[str, str], aliases: list[str]) -> str:
 
 
 def score_rationale(*keys: str) -> dict[str, str]:
-    """score_rationale 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
+    """외부 데이터셋에서 유도한 score_rationale 필드 샘플을 만든다."""
     selected = set(keys) | {"expected_effect", "repeatability"}
     return {key: "derived_from_external_dataset" for key in REQUIRED_SCORE_KEYS if key in selected}
 
@@ -115,7 +115,7 @@ def base_case(
     saving_rate: float,
     compliance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """base_case 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """외부 row 하나를 Agent evaluator gold case의 공통 payload 형식으로 만든다."""
     payload: dict[str, Any] = {
         "case_id": case_id,
         "process_id": process_id,
@@ -138,7 +138,7 @@ def base_case(
 
 
 def map_online_retail(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
-    """map_online_retail 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Online Retail row를 재고/고객세분화/근거부족 gold case로 매핑한다."""
     description = first_value(row, ["Description", "description", "item_description"])
     quantity = parse_float(first_value(row, ["Quantity", "quantity"]), default=0.0)
     unit_price = parse_float(first_value(row, ["UnitPrice", "unit_price", "price"]), default=0.0)
@@ -197,7 +197,7 @@ def map_online_retail(row: dict[str, str], case_id: str, process_id: int) -> dic
 
 
 def map_bank_marketing(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
-    """map_bank_marketing 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Bank Marketing row를 금융 마케팅 high-impact review gold case로 매핑한다."""
     has_loan = normalize_value(first_value(row, ["loan", "housing", "default"])).lower() in {"yes", "true", "1"}
     campaign = parse_int(first_value(row, ["campaign", "previous"]), default=0)
     data_accessibility = 4 if row else 2
@@ -222,7 +222,7 @@ def map_bank_marketing(row: dict[str, str], case_id: str, process_id: int) -> di
 
 
 def map_credit_default(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
-    """map_credit_default 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Credit Default row를 신용 리스크/자동 거절 금지 gold case로 매핑한다."""
     default_next_month = truthy(first_value(row, ["default_payment_next_month", "default", "y", "target"]))
     delinquency = max(
         parse_int(first_value(row, ["PAY_0", "pay_0", "pay_status", "delay"]), default=0),
@@ -269,7 +269,7 @@ def map_credit_default(row: dict[str, str], case_id: str, process_id: int) -> di
 
 
 def map_process_mining(row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
-    """map_process_mining 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Process Mining row를 병목 탐색/인사 모니터링/근거부족 gold case로 매핑한다."""
     activity = first_value(row, ["activity", "concept_name", "event", "task"])
     timestamp = first_value(row, ["timestamp", "time_timestamp", "complete_timestamp", "date"])
     resource = first_value(row, ["resource", "org_resource", "user", "role"])
@@ -328,7 +328,7 @@ def map_process_mining(row: dict[str, str], case_id: str, process_id: int) -> di
 
 
 def map_row(dataset_type: str, row: dict[str, str], case_id: str, process_id: int) -> dict[str, Any]:
-    """map_row 함수. 외부 holdout 평가 데이터를 구성한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """dataset_type에 맞는 mapper를 선택해 CSV row 하나를 holdout case로 변환한다."""
     if dataset_type == "online_retail":
         return map_online_retail(row, case_id, process_id)
     if dataset_type == "bank_marketing":
@@ -347,7 +347,7 @@ def build_external_holdout_cases(
     process_id_start: int = 10_000,
     max_cases: int | None = None,
 ) -> list[dict[str, Any]]:
-    """build_external_holdout_cases 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """외부 CSV 전체를 Agent evaluator holdout gold case 목록으로 변환한다."""
     if dataset_type not in SUPPORTED_DATASET_TYPES:
         raise ValueError(f"dataset_type must be one of {sorted(SUPPORTED_DATASET_TYPES)}")
     rows = read_csv_rows(input_path)

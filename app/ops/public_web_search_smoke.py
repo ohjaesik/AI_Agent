@@ -17,7 +17,7 @@ from app.core.config import get_settings
 
 
 def validate_provider_config() -> list[str]:
-    """validate_provider_config 함수. public web search provider 설정을 확인하는 smoke test script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """public web search smoke 실행에 필요한 provider와 API key 설정 오류를 수집한다."""
     settings = get_settings()
     errors: list[str] = []
     if not settings.external_web_discovery_enabled:
@@ -33,7 +33,7 @@ def validate_provider_config() -> list[str]:
 
 
 def run_smoke(company_name: str, query_terms: list[str], max_results: int) -> dict[str, Any]:
-    """run_smoke 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """실제 provider 검색을 한 번 실행해 결과 수와 warning을 smoke payload로 반환한다."""
     config_errors = validate_provider_config()
     if config_errors:
         return {"ok": False, "stage": "config", "errors": config_errors, "result": None}

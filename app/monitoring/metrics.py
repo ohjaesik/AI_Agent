@@ -19,7 +19,7 @@ from starlette.responses import Response
 
 
 class InMemoryMetrics:
-    """InMemoryMetrics 클래스. FastAPI 요청/latency Prometheus metric을 수집한다.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """프로세스 메모리에 HTTP/Agent 실행 횟수와 latency 집계를 보관하는 metric store다."""
     def __init__(self) -> None:
         self._lock = Lock()
         self.request_count: dict[tuple[str, str, int], int] = defaultdict(int)
@@ -30,7 +30,7 @@ class InMemoryMetrics:
         self.agent_node_latency_max: dict[tuple[str, str, str], float] = defaultdict(float)
 
     def observe(self, method: str, path: str, status_code: int, latency_seconds: float) -> None:
-        """observe 함수. FastAPI 요청/latency Prometheus metric을 수집한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+        """HTTP 요청 1건의 count, latency sum, max latency를 누적한다."""
         key = (method, path, status_code)
         with self._lock:
             self.request_count[key] += 1
@@ -38,7 +38,7 @@ class InMemoryMetrics:
             self.request_latency_max[key] = max(self.request_latency_max[key], latency_seconds)
 
     def observe_agent_node(self, node_name: str, mode: str, status: str, latency_seconds: float) -> None:
-        """observe_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+        """LangGraph node 실행 1건의 mode/status별 count와 latency를 누적한다."""
         key = (node_name, mode, status)
         with self._lock:
             self.agent_node_count[key] += 1
@@ -46,7 +46,7 @@ class InMemoryMetrics:
             self.agent_node_latency_max[key] = max(self.agent_node_latency_max[key], latency_seconds)
 
     def render_prometheus(self) -> str:
-        """render_prometheus 함수. FastAPI 요청/latency Prometheus metric을 수집한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+        """현재 누적 metric을 Prometheus text exposition format으로 렌더링한다."""
         lines = [
             "# HELP ax_http_requests_total Total HTTP requests.",
             "# TYPE ax_http_requests_total counter",
@@ -103,12 +103,12 @@ metrics = InMemoryMetrics()
 
 
 def log_event(event: dict[str, Any]) -> None:
-    """log_event 함수. FastAPI 요청/latency Prometheus metric을 수집한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """운영 로그 수집기가 읽기 쉽도록 event dict를 한 줄 JSON으로 출력한다."""
     print(json.dumps(event, ensure_ascii=False, default=str), flush=True)
 
 
 def record_agent_node(node_name: str, mode: str, status: str, latency_seconds: float) -> None:
-    """record_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """node worker 실행 결과를 metric store와 JSON log 양쪽에 기록한다."""
     metrics.observe_agent_node(node_name=node_name, mode=mode, status=status, latency_seconds=latency_seconds)
     log_event(
         {
@@ -122,9 +122,9 @@ def record_agent_node(node_name: str, mode: str, status: str, latency_seconds: f
 
 
 class RequestMetricsMiddleware(BaseHTTPMiddleware):
-    """RequestMetricsMiddleware 클래스. FastAPI 요청/latency Prometheus metric을 수집한다.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """FastAPI 요청을 감싸 latency와 status code metric을 자동 기록하는 middleware다."""
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
-        """dispatch 함수. FastAPI 요청/latency Prometheus metric을 수집한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+        """요청 처리 전후 시간을 측정하고 route pattern 기준으로 metric label을 기록한다."""
         start = time.perf_counter()
         status_code = 500
         try:

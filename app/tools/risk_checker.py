@@ -148,7 +148,7 @@ def safe_int(value: Any, default: int = 0) -> int:
 
 
 def contains_high_risk_keyword(text: str | None) -> list[str]:
-    """contains_high_risk_keyword 함수. 조건을 검사해 True/False 판단값을 반환한다."""
+    """업무 설명에 포함된 high-risk keyword를 목록으로 반환한다."""
     if not text:
         return []
 
@@ -174,7 +174,7 @@ def merge_esg_signals(
     base: dict[str, dict[str, list[str]]],
     addition: dict[str, dict[str, list[str]]],
 ) -> dict[str, dict[str, list[str]]]:
-    """merge_esg_signals 함수. 업무 후보의 privacy/security/high-impact risk signal을 탐지한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """여러 텍스트에서 탐지한 ESG signal을 pillar/category별로 누적한다."""
     for pillar, categories in addition.items():
         base.setdefault(pillar, {})
         for category, hits in categories.items():
@@ -184,7 +184,7 @@ def merge_esg_signals(
 
 
 def flatten_esg_pillars(signals: dict[str, dict[str, list[str]]]) -> list[dict[str, Any]]:
-    """flatten_esg_pillars 함수. 업무 후보의 privacy/security/high-impact risk signal을 탐지한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """중첩된 ESG signal map을 보고서/JSON에 넣기 쉬운 list 형태로 펼친다."""
     result = []
     for pillar, categories in sorted(signals.items()):
         result.append(
@@ -198,7 +198,7 @@ def flatten_esg_pillars(signals: dict[str, dict[str, list[str]]]) -> list[dict[s
 
 
 def build_esg_controls(signals: dict[str, dict[str, list[str]]]) -> list[str]:
-    """build_esg_controls 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """탐지된 ESG signal에 따라 PoC 전 확인해야 할 통제 문구를 만든다."""
     controls: list[str] = []
     environmental = signals.get("environmental", {})
     social = signals.get("social", {})
@@ -221,7 +221,7 @@ def build_esg_controls(signals: dict[str, dict[str, list[str]]]) -> list[str]:
 
 
 def build_esg_assessment(signals: dict[str, dict[str, list[str]]]) -> dict[str, Any]:
-    """build_esg_assessment 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """ESG signal을 impact level, review 필요 여부, 통제 목록, summary로 요약한다."""
     pillars = flatten_esg_pillars(signals)
     controls = build_esg_controls(signals)
     review_required = bool(signals.get("social") or signals.get("governance"))
@@ -244,7 +244,7 @@ def build_esg_assessment(signals: dict[str, dict[str, list[str]]]) -> dict[str, 
 
 
 def determine_risk_level(risk_score: int) -> str:
-    """determine_risk_level 함수. 업무 후보의 privacy/security/high-impact risk signal을 탐지한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """1-5 risk_score를 low/medium/high/critical label로 변환한다."""
     if risk_score >= 5:
         return "critical"
     if risk_score >= 4:

@@ -25,7 +25,7 @@ PBKDF2_ITERATIONS = 260_000
 
 @dataclass(frozen=True)
 class AuthenticatedUser:
-    """AuthenticatedUser 클래스. 로컬 사용자 계정 생성과 비밀번호 검증 로직.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """인증을 통과한 사용자 정보를 API dependency가 넘겨받는 간단한 값 객체다."""
     id: int
     username: str
     role: str
@@ -37,7 +37,7 @@ def normalize_role(role: str | None) -> str:
 
 
 def hash_password(password: str) -> str:
-    """hash_password 함수. 로컬 사용자 계정 생성과 비밀번호 검증 로직. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """비밀번호를 salt가 포함된 PBKDF2-SHA256 문자열로 변환해 DB 저장용으로 만든다."""
     if len(password) < 8:
         raise ValueError("Password must be at least 8 characters.")
     salt = secrets.token_hex(16)
@@ -46,7 +46,7 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """verify_password 함수. 로컬 사용자 계정 생성과 비밀번호 검증 로직. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """입력 비밀번호를 저장된 PBKDF2 hash와 constant-time 방식으로 비교한다."""
     try:
         algorithm, iterations, salt, expected_hex = password_hash.split("$", 3)
         if algorithm != "pbkdf2_sha256":
@@ -58,12 +58,12 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def get_user_by_username(db: Session, username: str) -> AppUser | None:
-    """get_user_by_username 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """username으로 활성 여부 확인 전의 AppUser row를 조회한다."""
     return db.execute(select(AppUser).where(AppUser.username == username)).scalars().first()
 
 
 def create_user(db: Session, username: str, password: str, role: str = DEFAULT_ROLE) -> AppUser:
-    """create_user 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """로컬 사용자 row를 생성하고 role 정규화와 비밀번호 hash 저장을 함께 처리한다."""
     user = AppUser(username=username.strip(), password_hash=hash_password(password), role=normalize_role(role), is_active=True)
     db.add(user)
     try:
@@ -76,7 +76,7 @@ def create_user(db: Session, username: str, password: str, role: str = DEFAULT_R
 
 
 def authenticate_user(db: Session, username: str, password: str) -> AuthenticatedUser:
-    """authenticate_user 함수. 로컬 사용자 계정 생성과 비밀번호 검증 로직. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """username/password를 검증하고 API에서 사용할 AuthenticatedUser로 축약한다."""
     user = get_user_by_username(db, username=username.strip())
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
         raise ValueError("Invalid username or password.")

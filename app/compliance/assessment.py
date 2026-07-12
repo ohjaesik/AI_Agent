@@ -112,12 +112,12 @@ def normalize_text(*values: Any) -> str:
 
 
 def find_keywords(text: str, keywords: list[str]) -> list[str]:
-    """find_keywords 함수. 후보 업무의 개인정보/보안/고영향/금지 가능 사용 리스크를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """정규화된 후보 설명에서 규제/민감정보 keyword가 실제로 등장한 항목만 반환한다."""
     return [keyword for keyword in keywords if keyword.lower() in text]
 
 
 def classify_high_impact(text: str) -> list[str]:
-    """classify_high_impact 함수. 후보 업무의 개인정보/보안/고영향/금지 가능 사용 리스크를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """고영향 가능성이 있는 도메인 category를 keyword 기반으로 분류한다."""
     categories = []
     for category, keywords in HIGH_IMPACT_KEYWORDS.items():
         if find_keywords(text, keywords):
@@ -126,12 +126,12 @@ def classify_high_impact(text: str) -> list[str]:
 
 
 def korea_ai_basic_act_requirements_for_level(level: str) -> list[str]:
-    """korea_ai_basic_act_requirements_for_level 함수. 후보 업무의 개인정보/보안/고영향/금지 가능 사용 리스크를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """compliance level에 맞는 한국 AI 기본법 대응 요구사항 목록을 반환한다."""
     return KOREA_AI_BASIC_ACT_REQUIREMENTS.get(level, KOREA_AI_BASIC_ACT_REQUIREMENTS["standard"])
 
 
 def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None = None) -> dict[str, Any]:
-    """classify_process 함수. 후보 업무의 개인정보/보안/고영향/금지 가능 사용 리스크를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """업무 후보 하나를 standard/sensitive/enhanced/blocked compliance level로 분류한다."""
     text = normalize_text(
         process.get("name"),
         process.get("problem"),
@@ -220,7 +220,7 @@ def classify_process(process: dict[str, Any], risk_item: dict[str, Any] | None =
 
 
 def build_risk_map(risk_governance: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
-    """build_risk_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """risk_governance 결과를 process_id 기준으로 찾아볼 수 있게 변환한다."""
     result: dict[int, dict[str, Any]] = {}
     for item in (risk_governance or {}).get("items", []):
         try:
@@ -235,7 +235,7 @@ def assess_ai_compliance(
     processes: list[dict[str, Any]],
     risk_governance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """assess_ai_compliance 함수. 후보 업무의 개인정보/보안/고영향/금지 가능 사용 리스크를 평가한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """전체 업무 후보에 compliance 분류를 적용하고 dashboard/report용 summary를 만든다."""
     risk_map = build_risk_map(risk_governance)
     items = []
 

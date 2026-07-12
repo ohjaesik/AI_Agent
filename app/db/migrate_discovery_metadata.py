@@ -14,7 +14,7 @@ from app.db.database import engine
 
 
 def ensure_discovery_metadata_column() -> None:
-    """ensure_discovery_metadata_column 함수. 업무 discovery metadata 관련 DB migration script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """business_processes에 LLM discovery metadata를 저장할 JSONB 컬럼을 보장한다."""
     with engine.begin() as conn:
         conn.execute(
             text(

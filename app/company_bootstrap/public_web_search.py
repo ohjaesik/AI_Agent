@@ -63,12 +63,12 @@ def normalize_url(url: str) -> str:
 
 
 def domain_of(url: str) -> str:
-    """domain_of 함수. replan/bootstrap에서 사용할 선택적 public web search helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """URL에서 비교용 domain을 추출하고 www 접두어를 제거한다."""
     return urllib.parse.urlparse(url).netloc.lower().removeprefix("www.")
 
 
 def is_allowed_public_result(url: str, existing_domains: set[str] | None = None) -> bool:
-    """is_allowed_public_result 함수. 조건을 검사해 True/False 판단값을 반환한다."""
+    """검색 결과 URL이 차단 domain이 아니고 http/https 결과인지 확인한다."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in {"http", "https"}:
         return False
@@ -83,7 +83,7 @@ def is_allowed_public_result(url: str, existing_domains: set[str] | None = None)
 
 
 def build_search_query(company_name: str, query_terms: list[str] | None = None) -> str:
-    """build_search_query 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """회사명과 governance/report 관련 keyword를 조합해 public search query를 만든다."""
     terms = [company_name, "AI", "automation", "governance", "sustainability", "report"]
     terms.extend(term for term in (query_terms or []) if term)
     deduped: list[str] = []
@@ -98,7 +98,7 @@ def build_search_query(company_name: str, query_terms: list[str] | None = None) 
 
 
 def score_result(result: PublicWebResult, company_name: str, existing_domains: set[str]) -> int:
-    """score_result 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
+    """회사명, 거버넌스 keyword, 기존 공식 domain 일치 여부로 검색 결과 우선순위를 계산한다."""
     score = result.score
     text = f"{result.title} {result.url} {result.snippet}".lower()
     if company_name.lower() in text:
@@ -111,7 +111,7 @@ def score_result(result: PublicWebResult, company_name: str, existing_domains: s
 
 
 def brave_search(query: str, max_results: int) -> list[PublicWebResult]:
-    """brave_search 함수. replan/bootstrap에서 사용할 선택적 public web search helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Brave Search API를 호출해 표준 PublicWebResult 목록으로 변환한다."""
     settings = get_settings()
     if not settings.brave_search_api_key:
         return []
@@ -142,7 +142,7 @@ def brave_search(query: str, max_results: int) -> list[PublicWebResult]:
 
 
 def serpapi_search(query: str, max_results: int) -> list[PublicWebResult]:
-    """serpapi_search 함수. replan/bootstrap에서 사용할 선택적 public web search helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """SerpAPI Google 결과를 표준 PublicWebResult 목록으로 변환한다."""
     settings = get_settings()
     if not settings.serpapi_api_key:
         return []
@@ -174,7 +174,7 @@ def discover_public_web_sources(
     existing_urls: set[str] | None = None,
     max_results: int | None = None,
 ) -> dict[str, Any]:
-    """discover_public_web_sources 함수. replan/bootstrap에서 사용할 선택적 public web search helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """설정된 외부 검색 provider로 추가 근거 후보를 찾고 score/dedupe/filter 결과를 반환한다."""
     settings = get_settings()
     if not settings.external_web_discovery_enabled:
         return {"enabled": False, "provider": settings.external_web_search_provider, "query": None, "results": [], "warnings": ["External web discovery is disabled."]}

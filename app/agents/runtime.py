@@ -42,19 +42,19 @@ def utc_now() -> str:
 
 
 def get_agent_id_for_node(node_name: str) -> str | None:
-    """get_agent_id_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """LangGraph node 이름을 담당 Expert Agent id로 변환한다."""
     binding = NODE_AGENT_BINDINGS.get(node_name)
     return binding.get("agent_id") if binding else None
 
 
 def get_agent_binding_for_node(node_name: str) -> dict[str, str] | None:
-    """get_agent_binding_for_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """node가 어떤 Agent/capability/역할에 묶여 있는지 binding 정보를 반환한다."""
     binding = NODE_AGENT_BINDINGS.get(node_name)
     return dict(binding) if binding else None
 
 
 def build_agent_contract(node_name: str) -> dict[str, Any] | None:
-    """build_agent_contract 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """Supervisor/Expert LLM prompt와 tool runtime이 공유하는 node 실행 계약서를 만든다."""
     binding = get_agent_binding_for_node(node_name)
     if not binding:
         return None

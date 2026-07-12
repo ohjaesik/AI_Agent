@@ -13,7 +13,7 @@ from typing import Annotated, Any, TypedDict
 
 
 def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-    """merge_unique_dicts 함수. AX 분석 LangGraph state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """병렬 node가 같은 list trace를 갱신할 때 dict 항목을 중복 없이 합친다."""
     result: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -31,7 +31,7 @@ def merge_unique_dicts(left: list[dict[str, Any]] | None, right: list[dict[str, 
 
 
 def merge_unique_strings(left: list[str] | None, right: list[str] | None) -> list[str]:
-    """merge_unique_strings 함수. AX 분석 LangGraph state schema. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LangGraph Annotated merge용 문자열 list reducer로, 순서를 유지하며 중복을 제거한다."""
     result: list[str] = []
     seen: set[str] = set()
 

@@ -35,7 +35,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
 
 
 def clamp_score(value: int) -> int:
-    """clamp_score 함수. 후보 업무의 PoC 우선순위 점수를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """업무 평가 점수를 1-5 범위로 제한한다."""
     return max(1, min(value, 5))
 
 
@@ -54,7 +54,7 @@ def calculate_priority_score(expected_effect: int, data_accessibility: int, repe
 
 
 def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> float:
-    """calculate_discovery_bonus 함수. 후보 업무의 PoC 우선순위 점수를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """공식자료 기반 LLM discovery와 evidence/rationale 충실도에 따른 가산점을 계산한다."""
     if not discovery_metadata:
         return 0.0
     bonus = 0.0
@@ -76,7 +76,7 @@ def calculate_discovery_bonus(discovery_metadata: dict[str, Any] | None) -> floa
 
 
 def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[int, dict[str, Any]]:
-    """build_compliance_map 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """compliance assessment 결과를 ranking 계산 중 process_id로 찾아볼 수 있게 만든다."""
     result: dict[int, dict[str, Any]] = {}
     for item in (compliance_assessment or {}).get("items", []):
         process_id = safe_int(item.get("process_id"), 0)
@@ -86,7 +86,7 @@ def build_compliance_map(compliance_assessment: dict[str, Any] | None) -> dict[i
 
 
 def apply_compliance_status(base_status: str, compliance_item: dict[str, Any] | None) -> str:
-    """apply_compliance_status 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
+    """규제상 blocked/review 필요 신호가 있으면 ranking status를 보수적으로 조정한다."""
     if not compliance_item:
         return base_status
     if compliance_item.get("blocked"):
@@ -99,7 +99,7 @@ def apply_compliance_status(base_status: str, compliance_item: dict[str, Any] | 
 
 
 def determine_candidate_status(risk_score: int, data_accessibility: int, saving_rate: float, risk_flags: list[str] | None = None) -> str:
-    """determine_candidate_status 함수. 후보 업무의 PoC 우선순위 점수를 계산한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """risk, 데이터 준비도, 절감률을 기준으로 후보의 기본 추천 상태를 결정한다."""
     risk_flags = risk_flags or []
     if "excluded_from_mvp" in risk_flags:
         return "excluded"
@@ -117,7 +117,7 @@ def determine_candidate_status(risk_score: int, data_accessibility: int, saving_
 
 
 def build_compliance_reason(compliance_item: dict[str, Any] | None) -> str:
-    """build_compliance_reason 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """compliance status가 ranking reason에 반영될 수 있도록 설명 문장을 만든다."""
     if not compliance_item:
         return ""
     parts = []

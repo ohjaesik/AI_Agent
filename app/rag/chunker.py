@@ -231,6 +231,9 @@ def split_semantic_units(normalized: str) -> list[str]:
         stripped = line.strip()
         if not stripped:
             continue
+        # 한 줄이 이미 목록/표의 한 행일 수도 있으므로 먼저 line 단위를 보존한다.
+        # 다만 너무 긴 설명문 한 줄은 문장 경계로 다시 나눠 RAG 검색 결과가
+        # 지나치게 큰 chunk 하나에 묻히지 않게 한다.
         sentence_parts = [part.strip() for part in SENTENCE_BOUNDARY_PATTERN.split(stripped) if part.strip()]
         if len(sentence_parts) <= 1:
             units.append(stripped)
@@ -288,6 +291,8 @@ def semantic_tail_overlap(units: list[str], chunk_overlap: int) -> list[str]:
     current_chars = 0
     for unit in reversed(units):
         unit_len = len(unit)
+        # overlap은 chunk 앞뒤 문맥을 이어주는 용도라, 글자 수보다 문장 단위 보존이 중요하다.
+        # 그래서 마지막 단위 하나가 살짝 길어도 이미 선택된 문장이 없으면 포함한다.
         if selected and current_chars + unit_len > chunk_overlap:
             break
         selected.append(unit)
@@ -419,6 +424,9 @@ def semantic_similarity_chunk_text(
             continue
 
         if len(unit) > safe_chunk_size and not current_units:
+            # 표, 긴 규정 조항, 복사된 PDF 문단처럼 "문장 하나"가 너무 길면
+            # semantic 기준으로는 더 쪼갤 수 없다. 이때만 recursive fallback을 써서
+            # embedding context window와 검색 latency를 보호한다.
             fallback = split_oversized_unit(
                 unit=unit,
                 base_metadata=base_metadata,
@@ -447,6 +455,8 @@ def semantic_similarity_chunk_text(
                 flush("size_overflow" if size_overflow else "low_adjacent_similarity")
 
         if len(unit) > safe_chunk_size and not current_units:
+            # flush 직후 overlap만 남은 상태에서도 다음 unit이 너무 길 수 있다.
+            # 위쪽 oversized 처리와 같은 보호 로직을 한 번 더 적용한다.
             fallback = split_oversized_unit(
                 unit=unit,
                 base_metadata=base_metadata,

@@ -19,7 +19,7 @@ from app.db.database import engine
 
 
 def probe_database() -> dict[str, object]:
-    """probe_database 함수. node worker 프로세스가 받을 수 있는 probe script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """worker 환경에서 DATABASE_URL 연결이 가능한지 확인한다."""
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -29,7 +29,7 @@ def probe_database() -> dict[str, object]:
 
 
 def probe_vllm() -> dict[str, object]:
-    """probe_vllm 함수. node worker 프로세스가 받을 수 있는 probe script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """worker 환경에서 vLLM endpoint host/port에 TCP 연결이 가능한지 확인한다."""
     settings = get_settings()
     parsed = urlparse(settings.vllm_base_url)
     if not parsed.hostname:
@@ -43,7 +43,7 @@ def probe_vllm() -> dict[str, object]:
 
 
 def run_probe(check_vllm: bool = True) -> dict[str, object]:
-    """run_probe 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """DB와 선택적 vLLM probe를 실행해 worker 내부 헬스체크 결과를 만든다."""
     checks = [probe_database()]
     if check_vllm:
         checks.append(probe_vllm())

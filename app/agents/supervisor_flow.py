@@ -196,7 +196,7 @@ HANDOFFS_BY_NODE: dict[str, list[dict[str, Any]]] = {
 
 
 def present_payload_keys(result: dict[str, Any], keys: list[str]) -> list[str]:
-    """present_payload_keys 함수. 정적 Supervisor handoff flow 정의 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """handoff payload 후보 중 실제 결과에 존재하고 비어 있지 않은 key만 반환한다."""
     return [key for key in keys if key in result and result.get(key) not in (None, [], {}, "")]
 
 
@@ -208,7 +208,7 @@ def build_supervisor_step(
     assigned_tools: list[dict[str, Any]],
     loop_limit: int,
 ) -> dict[str, Any]:
-    """build_supervisor_step 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """정적 supervisor flow에서 node 위임 정보를 agent_supervisor_steps 형식으로 만든다."""
     return {
         "supervisor_agent_id": SUPERVISOR_AGENT_ID,
         "supervisor_agent_name": SUPERVISOR_AGENT_NAME,

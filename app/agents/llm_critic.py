@@ -57,13 +57,13 @@ Return JSON:
 
 
 def compact_json(value: Any, max_chars: int = 5000) -> str:
-    """compact_json 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """후보/evaluation payload를 prompt에 넣기 좋은 길이의 JSON 문자열로 줄인다."""
     text = json.dumps(value, ensure_ascii=False, default=str)
     return text if len(text) <= max_chars else text[:max_chars] + "..."
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
-    """extract_json_object 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM 응답에서 fenced block 또는 주변 설명을 제거하고 JSON object만 파싱한다."""
     cleaned = str(text or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
@@ -83,7 +83,7 @@ def normalize_verdict(value: Any) -> str:
 
 
 def clamp_adjustment(value: Any) -> float:
-    """clamp_adjustment 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM Critic confidence 보정값을 과도하지 않은 범위로 제한한다."""
     try:
         parsed = float(value)
     except (TypeError, ValueError):
@@ -92,12 +92,12 @@ def clamp_adjustment(value: Any) -> float:
 
 
 def deterministic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any]) -> str:
-    """deterministic_verdict 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM이 실패하거나 과도하게 보수적일 때 기준점으로 쓸 rule-based verdict를 계산한다."""
     return deterministic_critic_verdict(candidate, evaluation)
 
 
 def calibrate_critic_verdict(candidate: dict[str, Any], evaluation: dict[str, Any], critic: dict[str, Any]) -> dict[str, Any]:
-    """calibrate_critic_verdict 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM Critic 결과가 deterministic 기준과 크게 어긋나면 pass/replan 쪽으로 보정한다."""
     expected = deterministic_verdict(candidate, evaluation)
     verdict = normalize_verdict(critic.get("critic_verdict"))
 
@@ -131,7 +131,7 @@ def fallback_critic(
     reason: str,
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """fallback_critic 함수. LLM 기반 2차 비평자 역할을 수행한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LLM Critic 호출 실패 시 rule-based verdict로 동일한 critic payload 형식을 채운다."""
     verdict = deterministic_verdict(candidate, evaluation)
     adjustment = -0.05 if verdict == "insufficient_evidence" else (-0.03 if verdict == "needs_replan" else 0.0)
     return {
@@ -151,7 +151,7 @@ def run_llm_critic(
     evaluation: dict[str, Any],
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """run_llm_critic 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """단일 후보를 LLM Critic으로 검토하고 실패하면 deterministic fallback으로 되돌린다."""
     try:
         prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("human", USER_PROMPT)])
         # LLM Critic은 Evaluation Agent 내부 도구지만 실제 모델은
@@ -182,7 +182,7 @@ def apply_llm_critic_to_evaluation(
     agent_evaluation: dict[str, Any],
     model_assignment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """apply_llm_critic_to_evaluation 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
+    """후보별 LLM Critic verdict를 agent_evaluation 항목에 병합한다."""
     evaluation_map = {
         int(item.get("process_id") or 0): dict(item)
         for item in agent_evaluation.get("items", [])

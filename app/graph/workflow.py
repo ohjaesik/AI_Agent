@@ -84,11 +84,11 @@ def incoming_handoffs_for_agent(state: dict[str, Any], agent_id: str) -> list[di
 
 
 def merge_stage_result(accumulator: dict[str, Any], node_result: dict[str, Any]) -> dict[str, Any]:
-    """Merge internal node outputs inside an Agent-stage node.
+    """Agent stage 내부 node들의 결과를 LangGraph 반환용 변경분으로 병합한다.
 
-    LangGraph reducers merge across graph nodes, but here several old nodes run
-    inside one Agent node. Preserve list-like trace fields instead of replacing
-    them with the last internal node's value.
+    LangGraph reducer는 graph node 사이의 병합만 담당한다. 지금 구조에서는 여러
+    내부 node가 하나의 Expert Agent stage 안에서 순차 실행되므로, list형 trace를
+    마지막 node 값으로 덮어쓰지 않고 누적해야 한다.
     """
     merged = dict(accumulator)
     list_keys = {
@@ -150,13 +150,12 @@ def build_agent_stage_loop_request(stage_name: str, agent_id: str, reflection: d
 
 
 def expert_agent_stage(stage_name: str):
-    """Create one LLM-command-driven LangGraph node for one Expert Agent.
+    """하나의 Expert Agent stage를 graph 실행 callable로 만든다.
 
-    The top-level graph moves by Agent stage. At the start of each stage, the
-    owning Expert Agent receives a prompt with its role, handoff context, assigned
-    internal nodes, and assigned tools. The Agent returns a node command plan, the
-    runtime executes only those assigned nodes/tools, then the Agent receives a
-    reflection prompt and decides whether to hand off or request another bounded loop.
+    최상위 graph는 Agent stage 단위로 움직인다. 각 stage 시작 시 소유 Expert Agent는
+    자신의 역할, handoff context, 실행 가능한 내부 node/tool 목록을 prompt로 받는다.
+    Agent가 node 실행 계획을 만들면 runtime이 허용된 node/tool만 실행하고,
+    마지막 reflection prompt와 Supervisor autonomy policy가 handoff/반복을 결정한다.
     """
     internal_nodes = AGENT_STAGE_NODES[stage_name]
     agent_id = AGENT_STAGE_TO_AGENT_ID[stage_name]
@@ -398,21 +397,23 @@ def build_ax_planner_graph():
 
     builder.add_edge(START, "context_evidence_agent")
 
-    # Context/Evidence package is handed to both diagnostic and governance Agents.
+    # Context/Evidence 산출물은 이후 진단 Agent와 거버넌스 Agent가 모두 필요로 한다.
+    # 그래서 이 지점부터 두 branch가 병렬로 실행될 수 있다.
     builder.add_edge("context_evidence_agent", "process_diagnosis_agent")
     builder.add_edge("context_evidence_agent", "governance_compliance_agent")
 
-    # Business Case Agent waits for diagnosis and governance packages.
+    # Business Case는 ROI와 우선순위를 계산하므로 진단 결과와 거버넌스 결과가
+    # 모두 준비된 뒤에만 실행된다.
     builder.add_edge(
         ["process_diagnosis_agent", "governance_compliance_agent"],
         "business_case_agent",
     )
 
-    # Evaluation & Critic Agent validates the ranked business-case package.
+    # Evaluation & Critic은 ranking이 근거 부족/과도한 리스크를 숨기지 않았는지 검증한다.
     builder.add_edge("business_case_agent", "evaluation_critic_agent")
 
-    # If the critic requests evidence refresh, the Evaluation Agent performs a bounded replan
-    # and hands control back to Context & Evidence. Otherwise, delivery starts.
+    # 근거 보강이 필요하면 bounded replan으로 공식/내부 출처를 다시 모으고,
+    # 아니면 Human Review/PoC/보고서 생성 단계로 넘어간다.
     builder.add_conditional_edges(
         "evaluation_critic_agent",
         should_replan,

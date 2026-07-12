@@ -15,7 +15,7 @@ from app.chains.report_writer import generate_report_data_with_llm
 
 
 def percent(value: Any) -> str:
-    """percent 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """0-1 비율 또는 이미 퍼센트인 값을 보고서 표시용 % 문자열로 변환한다."""
     try:
         return f"{float(value) * 100:.1f}%" if float(value) <= 1 else f"{float(value):.1f}%"
     except (TypeError, ValueError):
@@ -23,12 +23,12 @@ def percent(value: Any) -> str:
 
 
 def strip_heading_number(heading: str) -> str:
-    """strip_heading_number 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """section heading 앞의 '1. ' 같은 번호 prefix를 제거한다."""
     return re.sub(r"^\d+\.\s*", "", heading or "").strip()
 
 
 def renumber_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """renumber_sections 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """section 삭제 후 남은 번호형 heading을 1부터 다시 매긴다."""
     result = []
     number = 1
     for section in sections:
@@ -42,14 +42,14 @@ def renumber_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def is_agent_evaluation_section(section: dict[str, Any]) -> bool:
-    """is_agent_evaluation_section 함수. 조건을 검사해 True/False 판단값을 반환한다."""
+    """보고서 section이 Agent Evaluation/신뢰도 검증 섹션인지 heading으로 판단한다."""
     heading = str(section.get("heading") or "")
     normalized = strip_heading_number(heading)
     return "Agent Evaluation" in normalized or "신뢰도 검증" in normalized
 
 
 def remove_agent_evaluation_sections(report_data: dict[str, Any]) -> dict[str, Any]:
-    """remove_agent_evaluation_sections 함수. 분석 state를 report_data 구조로 조립한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """final report에서 중복 노출될 수 있는 Agent Evaluation 섹션을 제거하고 번호를 재정렬한다."""
     sections = list(report_data.get("sections", []) or [])
     filtered_sections = [section for section in sections if not is_agent_evaluation_section(section)]
     if len(filtered_sections) == len(sections):
@@ -61,7 +61,7 @@ def remove_agent_evaluation_sections(report_data: dict[str, Any]) -> dict[str, A
 
 
 def build_agent_registry_rows(state: dict[str, Any]) -> list[list[Any]]:
-    """build_agent_registry_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """Agent registry 정보를 보고서 표 row 형태로 변환한다."""
     rows = []
     for agent in state.get("agent_registry", []) or state.get("agent_evaluation", {}).get("agent_registry", []):
         rows.append([
@@ -74,7 +74,7 @@ def build_agent_registry_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_agent_decision_rows(state: dict[str, Any]) -> list[list[Any]]:
-    """build_agent_decision_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """post-tool Agent decision trace를 보고서 표 row 형태로 변환한다."""
     rows = []
     for decision in state.get("agent_decisions", []) or []:
         if decision.get("phase") != "post_tool_observation":
@@ -90,7 +90,7 @@ def build_agent_decision_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_agent_evaluation_rows(state: dict[str, Any]) -> list[list[Any]]:
-    """build_agent_evaluation_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """후보별 confidence/evidence/critic 결과를 보고서 표 row 형태로 변환한다."""
     rows = []
     for item in state.get("agent_evaluation", {}).get("items", []):
         critic = item.get("llm_critic") or {}
@@ -110,7 +110,7 @@ def build_agent_evaluation_rows(state: dict[str, Any]) -> list[list[Any]]:
 
 
 def build_agent_evaluation_summary_rows(state: dict[str, Any]) -> list[list[Any]]:
-    """build_agent_evaluation_summary_rows 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """Agent evaluation summary 숫자를 key-value 표 row로 만든다."""
     summary = state.get("agent_evaluation", {}).get("summary", {})
     rows = [
         ["평가 후보 수", summary.get("evaluated_candidates", 0)],

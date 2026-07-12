@@ -15,7 +15,7 @@ OFFICIAL_DISCOVERY_PATTERN = re.compile(r"^\[(공식URL-\d+|DART-기업개황)\]
 
 
 def collect_allowed_citation_labels(evidence_items: list[dict[str, Any]]) -> set[str]:
-    """collect_allowed_citation_labels 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """evidence_items에서 보고서가 인용해도 되는 citation label 집합을 만든다."""
     return {
         str(item["citation_label"])
         for item in evidence_items
@@ -41,7 +41,7 @@ def normalize_citation_label(label: str) -> list[str]:
 
 
 def normalize_citation_labels(labels: list[str]) -> list[str]:
-    """normalize_citation_labels 함수. 비교/저장/출력을 안정화하기 위해 입력값 형식을 정규화한다."""
+    """복합 citation label을 개별 label로 풀고 중복 없이 순서를 유지한다."""
     result: list[str] = []
     for label in labels:
         for normalized in normalize_citation_label(label):
@@ -51,7 +51,7 @@ def normalize_citation_labels(labels: list[str]) -> list[str]:
 
 
 def collect_official_discovery_labels(report_data: dict[str, Any]) -> set[str]:
-    """collect_official_discovery_labels 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """후보 discovery metadata와 본문에서 공식자료 citation label을 추가 수집한다."""
     labels: set[str] = set()
 
     for candidate in report_data.get("top_candidates", []):
@@ -77,7 +77,7 @@ def collect_official_discovery_labels(report_data: dict[str, Any]) -> set[str]:
 
 
 def collect_texts_from_report_data(report_data: dict[str, Any]) -> list[str]:
-    """collect_texts_from_report_data 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """citation 검사를 위해 report section과 top candidate 설명 문장을 모두 모은다."""
     texts: list[str] = []
 
     for section in report_data.get("sections", []):
@@ -95,7 +95,7 @@ def collect_texts_from_report_data(report_data: dict[str, Any]) -> list[str]:
 
 
 def find_citation_labels(text: str) -> list[str]:
-    """find_citation_labels 함수. 보고서 citation label 검증 tool. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """문장 안의 대괄호 citation label 패턴을 모두 찾는다."""
     return CITATION_PATTERN.findall(text or "")
 
 

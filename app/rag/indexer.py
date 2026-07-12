@@ -22,7 +22,7 @@ from app.rag.chunker import chunk_text
 
 
 def batched(items: list[str], batch_size: int) -> Iterable[list[str]]:
-    """batched 함수. 문서 chunk를 embedding으로 색인하는 CLI/service 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """embedding API 호출량을 제어하기 위해 텍스트 목록을 batch_size 단위로 나눈다."""
     for start in range(0, len(items), batch_size):
         yield items[start : start + batch_size]
 
@@ -31,7 +31,7 @@ def load_documents(
     db: Session,
     company_id: int | None = None,
 ) -> list[ProcessDocument]:
-    """load_documents 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
+    """색인 대상 ProcessDocument를 회사 단위로 필터링해 DB에서 읽어온다."""
     stmt = select(ProcessDocument).order_by(ProcessDocument.id)
 
     if company_id is not None:
@@ -44,7 +44,7 @@ def delete_existing_chunks(
     db: Session,
     company_id: int | None = None,
 ) -> None:
-    """delete_existing_chunks 함수. 재색인/정리 과정에서 기존 데이터를 안전하게 삭제한다."""
+    """reset 색인 시 기존 DocumentChunk를 삭제해 중복 embedding이 쌓이지 않게 한다."""
     stmt = delete(DocumentChunk)
 
     if company_id is not None:
@@ -62,7 +62,7 @@ def build_chunk_payloads(
     semantic_similarity_threshold: float,
     semantic_min_chunk_chars: int,
 ) -> list[dict]:
-    """build_chunk_payloads 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """문서 본문을 선택한 chunk 전략으로 나누고 DB 저장 전 metadata payload로 만든다."""
     payloads: list[dict] = []
     settings = get_settings()
 
@@ -108,7 +108,7 @@ def embed_payloads(
     payloads: list[dict],
     batch_size: int = 64,
 ) -> list[dict]:
-    """embed_payloads 함수. 문서 chunk를 embedding으로 색인하는 CLI/service 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """chunk payload의 content를 embedding 벡터로 변환하고 차원 불일치를 검증한다."""
     if not payloads:
         return []
 
@@ -140,7 +140,7 @@ def save_chunks(
     db: Session,
     embedded_payloads: list[dict],
 ) -> int:
-    """save_chunks 함수. 분석 결과나 사용자 결정을 DB 또는 파일에 저장한다."""
+    """embedding이 붙은 payload를 DocumentChunk row로 저장하고 삽입 개수를 반환한다."""
     rows = [
         DocumentChunk(
             document_id=item["document_id"],
@@ -170,7 +170,7 @@ def index_documents(
     semantic_similarity_threshold: float | None = None,
     semantic_min_chunk_chars: int | None = None,
 ) -> int:
-    """index_documents 함수. 문서 chunk를 embedding으로 색인하는 CLI/service 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """문서 로드, chunking, embedding, DB 저장을 한 번에 수행하는 색인 진입점이다."""
     with SessionLocal() as db:
         settings = get_settings()
         resolved_chunk_strategy = chunk_strategy or settings.rag_chunk_strategy

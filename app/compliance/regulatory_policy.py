@@ -14,7 +14,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class RegulatoryControl:
-    """RegulatoryControl 클래스. 규제 수준, 위험 flag, 통제 문구의 기준값을 정의한다.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """보고서와 compliance summary에 재사용되는 통제 항목의 설명/근거 필드 정의다."""
     id: str
     name: str
     source_frameworks: list[str]
@@ -167,12 +167,12 @@ REGULATORY_CONTROLS: list[RegulatoryControl] = [
 
 
 def get_regulatory_controls() -> list[dict[str, Any]]:
-    """get_regulatory_controls 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """전체 regulatory control catalog를 JSON 직렬화 가능한 목록으로 반환한다."""
     return [item.to_dict() for item in REGULATORY_CONTROLS]
 
 
 def get_control(control_id: str) -> dict[str, Any] | None:
-    """get_control 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """control_id에 해당하는 단일 규제 통제 항목을 찾는다."""
     for item in REGULATORY_CONTROLS:
         if item.id == control_id:
             return item.to_dict()
@@ -180,5 +180,5 @@ def get_control(control_id: str) -> dict[str, Any] | None:
 
 
 def get_korea_ai_basic_act_reference() -> dict[str, Any]:
-    """get_korea_ai_basic_act_reference 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """한국 AI 기본법 대응 문구를 report/compliance payload에 넣을 수 있게 반환한다."""
     return KOREA_AI_BASIC_ACT_REFERENCE

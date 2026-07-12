@@ -25,7 +25,7 @@ from app.db.database import engine
 
 @dataclass(frozen=True)
 class CheckResult:
-    """CheckResult 클래스. 운영 실행 전 환경 preflight 점검 script.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """preflight 개별 점검의 이름, 상태, 메시지, 필수 여부를 담는 결과 객체다."""
     name: str
     status: str
     message: str
@@ -33,22 +33,22 @@ class CheckResult:
 
 
 def ok(name: str, message: str, required: bool = True) -> CheckResult:
-    """ok 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """성공한 preflight check result를 만든다."""
     return CheckResult(name=name, status="ok", message=message, required=required)
 
 
 def warn(name: str, message: str, required: bool = False) -> CheckResult:
-    """warn 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """실행은 가능하지만 주의가 필요한 preflight check result를 만든다."""
     return CheckResult(name=name, status="warn", message=message, required=required)
 
 
 def fail(name: str, message: str, required: bool = True) -> CheckResult:
-    """fail 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """필수/선택 점검 실패를 표현하는 preflight check result를 만든다."""
     return CheckResult(name=name, status="fail", message=message, required=required)
 
 
 def check_env() -> list[CheckResult]:
-    """check_env 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """필수 환경변수, production 보안값, storage 설정을 점검한다."""
     settings = get_settings()
     results = []
     results.append(ok("DATABASE_URL", "configured") if settings.database_url else fail("DATABASE_URL", "missing"))
@@ -84,7 +84,7 @@ def check_env() -> list[CheckResult]:
 
 
 def check_public_web_discovery() -> CheckResult:
-    """check_public_web_discovery 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """외부 public web discovery provider와 API key 설정을 점검한다."""
     settings = get_settings()
     if not settings.external_web_discovery_enabled:
         return warn("public_web_discovery", "disabled; replan uses same-domain discovery only")
@@ -98,7 +98,7 @@ def check_public_web_discovery() -> CheckResult:
 
 
 def check_graph_worker() -> CheckResult:
-    """check_graph_worker 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """LangGraph node 실행 모드와 Docker worker image 준비 상태를 점검한다."""
     settings = get_settings()
     mode = settings.graph_node_execution_mode.lower()
     if mode == "direct":
@@ -119,7 +119,7 @@ def check_graph_worker() -> CheckResult:
 
 
 def check_database() -> CheckResult:
-    """check_database 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """DATABASE_URL로 실제 DB 연결이 가능한지 SELECT 1로 확인한다."""
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -129,7 +129,7 @@ def check_database() -> CheckResult:
 
 
 def check_vllm_endpoint() -> CheckResult:
-    """check_vllm_endpoint 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """vLLM OpenAI-compatible endpoint의 host/port 연결 가능 여부를 선택 점검한다."""
     settings = get_settings()
     parsed = urlparse(settings.vllm_base_url)
     if not parsed.hostname:
@@ -143,7 +143,7 @@ def check_vllm_endpoint() -> CheckResult:
 
 
 def check_sandbox() -> CheckResult:
-    """check_sandbox 함수. 운영 실행 전 환경 preflight 점검 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Agent tool sandbox 설정이 현재 환경에서 실행 가능한지 확인한다."""
     try:
         assert_sandbox_available()
         return ok("agent_sandbox", "configured")
@@ -152,7 +152,7 @@ def check_sandbox() -> CheckResult:
 
 
 def run_preflight(include_optional: bool = True) -> dict[str, object]:
-    """run_preflight 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """모든 preflight check를 실행하고 필수 실패/경고 개수를 요약한다."""
     checks = []
     checks.extend(check_env())
     checks.append(check_database())

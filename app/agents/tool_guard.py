@@ -24,7 +24,7 @@ class AgentToolPermissionError(PermissionError):
     pass
 
 def get_allowed_tools(agent_id: str) -> set[str]:
-    """get_allowed_tools 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """registry에 선언된 Agent별 tool 이름을 정규화해 permission set으로 반환한다."""
     spec = get_agent_spec(agent_id)
     if not spec:
         raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
@@ -74,11 +74,11 @@ def enforce_agent_tools(agent_id: str, requested_tools: list[str]) -> Callable[[
     Command-style tools can use run_allowed_command_tool for Docker isolation.
     """
     def decorator(fn: F) -> F:
-        """decorator 함수. Agent별 tool permission을 검증하는 guard 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+        """실제 함수 호출 직전에 permission 검사를 삽입하는 decorator를 만든다."""
 
         @wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            """wrapper 함수. Agent별 tool permission을 검증하는 guard 모듈. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+            """허용되지 않은 tool 요청이면 실행 전에 차단하고, 통과하면 원 함수를 호출한다."""
             assert_tools_allowed(agent_id=agent_id, requested_tools=requested_tools)
             return fn(*args, **kwargs)
 

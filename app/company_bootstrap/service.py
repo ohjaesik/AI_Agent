@@ -123,7 +123,7 @@ def create_company(
     combined_text: str,
     dart_company: DartCompany | None = None,
 ) -> Company:
-    """create_company 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """공식자료 텍스트와 OpenDART profile을 바탕으로 새 Company row를 생성한다."""
     company = Company(
         name=company_name,
         industry=infer_industry(combined_text, dart_company=dart_company),
@@ -141,7 +141,7 @@ def create_company(
 
 
 def create_default_departments(db: Session, company_id: int) -> dict[str, Department]:
-    """create_default_departments 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """bootstrap fallback 경로에서 사용할 기본 부서 row를 생성한다."""
     specs = [
         ("AX전략/기획", "AX 과제 발굴, PoC 기획, 성과관리", "공식자료 기반 업무 후보 구체화 필요"),
         ("IT/데이터", "시스템 연동, 데이터 접근권한, RAG/Agent 운영", "데이터 품질과 권한 관리 필요"),
@@ -168,7 +168,7 @@ def create_default_departments(db: Session, company_id: int) -> dict[str, Depart
 
 
 def create_default_systems(db: Session, company_id: int) -> list[EnterpriseSystem]:
-    """create_default_systems 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """bootstrap fallback 경로에서 사용할 기본 시스템 row를 생성한다."""
     specs = [
         ("공식자료/RAG 문서 저장소", "knowledge_base", "IT/데이터", 4, True, "공식 URL, 공시, 업로드 문서를 검색 가능한 지식베이스로 활용"),
         ("업무 프로세스 분석 DB", "analysis_db", "AX전략/기획", 4, True, "AX 후보 업무와 평가 결과 저장"),
@@ -196,7 +196,7 @@ def create_default_systems(db: Session, company_id: int) -> list[EnterpriseSyste
 
 
 def contains_any(text: str, keywords: list[str]) -> bool:
-    """contains_any 함수. 조건을 검사해 True/False 판단값을 반환한다."""
+    """텍스트에 keyword 목록 중 하나라도 포함되는지 대소문자 무시로 확인한다."""
     lowered = text.lower()
     return any(keyword.lower() in lowered for keyword in keywords)
 
@@ -219,7 +219,7 @@ def process_spec(
     risk_score: int,
     implementation_cost_score: int,
 ) -> dict[str, Any]:
-    """process_spec 함수. 회사 bootstrap을 서비스 함수 형태로 제공한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """fallback process 후보를 BusinessProcess 생성에 필요한 표준 dict로 묶는다."""
     return {
         "department": department,
         "name": name,
@@ -241,7 +241,7 @@ def process_spec(
 
 
 def build_process_specs(combined_text: str) -> list[dict[str, Any]]:
-    """build_process_specs 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """공식자료 keyword를 참고해 LLM 실패 시 사용할 fallback 업무 후보 목록을 만든다."""
     specs = [
         process_spec(
             "AX전략/기획",
@@ -399,7 +399,7 @@ def build_official_source_payloads(
 
 
 def build_discovery_metadata(spec: dict[str, Any]) -> dict[str, Any]:
-    """build_discovery_metadata 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """후보 업무가 어떤 discovery 방식/근거/점수 사유로 생성됐는지 metadata로 남긴다."""
     return {
         "discovery_mode": spec.get("discovery_mode"),
         "discovery_warning": spec.get("discovery_warning"),
@@ -416,7 +416,7 @@ def create_business_processes(
     departments: dict[str, Department],
     process_specs: list[dict[str, Any]],
 ) -> list[BusinessProcess]:
-    """create_business_processes 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """process_specs를 BusinessProcess row로 저장하고 discovery metadata를 함께 기록한다."""
     ensure_discovery_metadata_column()
     rows: list[BusinessProcess] = []
 
@@ -465,7 +465,7 @@ def create_source_documents(
     official_docs: list[OfficialUrlDocument],
     dart_company: DartCompany | None,
 ) -> list[ProcessDocument]:
-    """create_source_documents 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """OpenDART/공식 URL 본문을 RAG 색인 가능한 ProcessDocument row로 저장한다."""
     rows: list[ProcessDocument] = []
 
     if dart_company is not None:
@@ -504,7 +504,7 @@ def create_source_documents(
 
 
 def create_analysis_project(db: Session, company_id: int, company_name: str) -> AnalysisProject:
-    """create_analysis_project 함수. DB record 또는 domain 객체를 생성하고 필요한 기본값/관계를 함께 설정한다."""
+    """bootstrap으로 만든 회사 데이터를 분석할 기본 AnalysisProject row를 생성한다."""
     project = AnalysisProject(
         company_id=company_id,
         title=f"{company_name} 공식자료 기반 AX 전환 진단",
@@ -527,7 +527,7 @@ def bootstrap_company(
     index: bool = True,
     reset_company_chunks: bool = False,
 ) -> BootstrapResult:
-    """bootstrap_company 함수. 회사 bootstrap을 서비스 함수 형태로 제공한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """단일 함수 경로로 회사 profile, 공식문서, 후보업무, 프로젝트, 색인을 한 번에 구성한다."""
     warnings: list[str] = []
     official_urls = official_urls or []
 

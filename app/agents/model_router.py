@@ -118,9 +118,10 @@ class ModelProfile:
     unavailable_reason: str | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
+        """workflow_state에 남겨도 되는 모델 후보 정보를 반환한다."""
+
         # API key 같은 비밀값은 절대 trace에 넣지 않는다. 모델 선택 근거에
         # 필요한 공개 메타데이터만 남긴다.
-        """to_public_dict 함수. Supervisor가 LLM 호출별 모델을 선택하는 비용/성능 라우터다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
         return {
             "provider": self.provider,
             "model": self.model,
@@ -157,9 +158,10 @@ def compact_json_size(value: Any, max_chars: int = 300_000) -> int:
 
 
 def estimate_tokens_from_chars(char_count: int) -> int:
+    """문자 수를 LLM 비용 산정용 token 수로 근사한다."""
+
     # 너무 작은 입력도 모델 호출에는 system/user prompt가 붙기 때문에
     # 최소 128 token으로 잡아 과소평가를 피한다.
-    """estimate_tokens_from_chars 함수. Supervisor가 LLM 호출별 모델을 선택하는 비용/성능 라우터다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
     return max(128, int(char_count / 4))
 
 
@@ -346,6 +348,9 @@ def build_model_profiles() -> list[ModelProfile]:
     anthropic_available = has_value(settings.anthropic_api_key) and settings.model_router_enable_anthropic
     vllm_available = settings.model_router_enable_vllm
 
+    # 여기 적힌 품질/속도 점수는 절대 성능 benchmark가 아니라 "라우터가 같은
+    # 단위로 비교하기 위한 상대 점수"다. 실제 가격이나 모델명이 바뀌면 .env의
+    # cost/profile 설정을 바꾸고, 이 기본값은 로컬 개발의 기준표로 유지한다.
     profiles = [
         ModelProfile(
             provider="vllm",
@@ -469,6 +474,9 @@ def score_model(profile: ModelProfile, metrics: WorkloadMetrics, max_candidate_c
     score = utility - penalty
     """
 
+    # context_fit은 hard filter와 scoring 양쪽에 모두 쓰인다. context window를
+    # 넘는 모델을 완전히 배제하지는 않지만, 점수에서 강하게 불리하게 만들어
+    # 극단적인 fallback 상황 외에는 선택되지 않게 한다.
     total_tokens = metrics.estimated_input_tokens + metrics.estimated_output_tokens
     context_fit = 1.0 if total_tokens <= profile.context_window_tokens else 0.15
     reliability = 0.86 if profile.provider == "vllm" else 0.92
@@ -731,6 +739,9 @@ def select_agent_model(
         for profile in available_profiles
         if total_tokens <= profile.context_window_tokens
     ]
+    # 품질 하한은 "무조건 가장 비싼 모델을 쓰자"가 아니라 "현재 업무 난이도보다
+    # 너무 약한 모델은 제외하자"에 가깝다. 하한을 통과한 후보 안에서는 비용
+    # 민감도와 속도 점수 때문에 하위 GPT/vLLM이 충분히 선택될 수 있다.
     eligible_profiles = [
         profile
         for profile in context_fitting_profiles

@@ -16,13 +16,13 @@ DEFAULT_OUTPUT_PATH = Path("outputs/llm_quality_cases_real.jsonl")
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
-    """load_json 함수. 외부/DB/파일 입력을 읽어 workflow에서 사용할 구조로 적재한다."""
+    """workflow_state JSON 파일을 case 생성용 dict로 읽는다."""
     with Path(path).open("r", encoding="utf-8") as file:
         return json.load(file)
 
 
 def dump_jsonl(path: str | Path, rows: list[dict[str, Any]], append: bool = False) -> None:
-    """dump_jsonl 함수. 실제 LLM 호출/결과를 품질 평가 case로 캡처한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """생성한 품질 평가 case를 JSONL 파일에 저장하거나 append한다."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = "a" if append else "w"
@@ -32,7 +32,7 @@ def dump_jsonl(path: str | Path, rows: list[dict[str, Any]], append: bool = Fals
 
 
 def collect_allowed_labels(state: dict[str, Any]) -> list[str]:
-    """collect_allowed_labels 함수. 실제 LLM 호출/결과를 품질 평가 case로 캡처한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """workflow_state에서 LLM discovery 평가에 허용할 evidence/citation label을 모은다."""
     labels: list[str] = []
     for source in state.get("official_sources", []) or []:
         label = source.get("label") if isinstance(source, dict) else None
@@ -46,7 +46,7 @@ def collect_allowed_labels(state: dict[str, Any]) -> list[str]:
 
 
 def build_discovery_case(state: dict[str, Any], case_prefix: str, expected_min_processes: int, expected_max_processes: int) -> dict[str, Any] | None:
-    """build_discovery_case 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """bootstrap process_specs를 company_process_discovery 품질 case로 변환한다."""
     process_specs = state.get("process_specs")
     if not isinstance(process_specs, list) or not process_specs:
         return None
@@ -73,7 +73,7 @@ def build_discovery_case(state: dict[str, Any], case_prefix: str, expected_min_p
 
 
 def evaluation_by_process_id(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """evaluation_by_process_id 함수. 실제 LLM 호출/결과를 품질 평가 case로 캡처한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """agent_evaluation items를 process_id 기준 map으로 바꿔 critic case 생성에 사용한다."""
     result: dict[str, dict[str, Any]] = {}
     for item in (state.get("agent_evaluation") or {}).get("items", []) or []:
         if isinstance(item, dict) and item.get("process_id") is not None:
@@ -94,7 +94,7 @@ def infer_expected_not_pass(candidate: dict[str, Any], evaluation: dict[str, Any
 
 
 def build_critic_cases(state: dict[str, Any], case_prefix: str, freeze_current_verdict: bool = False) -> list[dict[str, Any]]:
-    """build_critic_cases 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """priority candidate와 llm_critic 결과를 LLM Critic 품질 case 목록으로 변환한다."""
     cases: list[dict[str, Any]] = []
     evaluations = evaluation_by_process_id(state)
 

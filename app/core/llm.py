@@ -41,7 +41,7 @@ def is_model_availability_exception(exc: Exception) -> bool:
 
 
 def get_embedding_model() -> OpenAIEmbeddings:
-    """get_embedding_model 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """settings의 embedding 모델명/차원/API key로 OpenAIEmbeddings client를 만든다."""
     settings = get_settings()
 
     return OpenAIEmbeddings(

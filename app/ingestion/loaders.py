@@ -16,7 +16,7 @@ SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx"}
 
 
 def read_text_file(path: Path) -> str:
-    """read_text_file 함수. 파일 확장자별 텍스트 추출 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """UTF-8, UTF-8 BOM, CP949 순서로 시도해 한국어 텍스트 파일을 읽는다."""
     for encoding in ["utf-8", "utf-8-sig", "cp949"]:
         try:
             return path.read_text(encoding=encoding)
@@ -27,7 +27,7 @@ def read_text_file(path: Path) -> str:
 
 
 def read_docx_file(path: Path) -> str:
-    """read_docx_file 함수. 파일 확장자별 텍스트 추출 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """DOCX의 문단과 표 cell 텍스트를 RAG 색인 가능한 plain text로 이어붙인다."""
     document = Document(str(path))
     paragraphs = [paragraph.text.strip() for paragraph in document.paragraphs]
     table_texts: list[str] = []
@@ -43,7 +43,7 @@ def read_docx_file(path: Path) -> str:
 
 
 def read_pdf_file(path: Path) -> str:
-    """read_pdf_file 함수. 파일 확장자별 텍스트 추출 helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """PDF 각 page에서 추출 가능한 텍스트를 page label과 함께 모은다."""
     reader = PdfReader(str(path))
     page_texts = []
 

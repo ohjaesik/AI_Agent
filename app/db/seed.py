@@ -22,7 +22,7 @@ from app.db.models import (
 
 
 def seed_company(db):
-    """seed_company 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """데모 분석의 기준 회사 Company row를 생성한다."""
     company = Company(
         name="Hanbit Precision Manufacturing",
         industry="자동차 부품 제조",
@@ -39,7 +39,7 @@ def seed_company(db):
 
 
 def seed_departments(db, company_id: int):
-    """seed_departments 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """데모 회사에 생산/정비/품질/구매/IT 부서 row를 생성한다."""
     departments = [
         Department(
             company_id=company_id,
@@ -85,7 +85,7 @@ def seed_departments(db, company_id: int):
 
 
 def seed_systems(db, company_id: int):
-    """seed_systems 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """데모 회사의 ERP/MES/QMS/CMMS 등 enterprise system row를 생성한다."""
     systems = [
         EnterpriseSystem(
             company_id=company_id,
@@ -158,7 +158,7 @@ def seed_systems(db, company_id: int):
 
 
 def seed_processes(db, company_id: int, departments: dict[str, Department]):
-    """seed_processes 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """AX 후보가 될 제조/품질/구매/IT 업무 프로세스 row를 생성한다."""
     processes = [
         BusinessProcess(
             company_id=company_id,
@@ -378,7 +378,7 @@ def seed_processes(db, company_id: int, departments: dict[str, Department]):
 
 
 def seed_documents(db, company_id: int, processes: dict[str, BusinessProcess]):
-    """seed_documents 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """RAG 색인과 근거 평가에 사용할 데모 업무 문서 row를 생성한다."""
     documents = [
         ProcessDocument(
             company_id=company_id,
@@ -503,7 +503,7 @@ def seed_documents(db, company_id: int, processes: dict[str, BusinessProcess]):
 
 
 def seed_project(db, company_id: int):
-    """seed_project 함수. 데모용 초기 데이터를 DB에 넣는 script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """데모 분석 실행에 사용할 AnalysisProject row를 생성한다."""
     project = AnalysisProject(
         company_id=company_id,
         title="2026 제조기업 AX 전환 사전진단 프로젝트",
@@ -515,7 +515,7 @@ def seed_project(db, company_id: int):
 
 
 def run_seed(reset: bool = False) -> None:
-    """run_seed 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """선택적 reset 후 데모 회사, 부서, 시스템, 업무, 문서, 프로젝트를 순서대로 적재한다."""
     with SessionLocal() as db:
         if reset:
             delete_seed_data(db)

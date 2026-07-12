@@ -28,12 +28,12 @@ from app.db.models import (
 
 
 def get_company(db: Session, company_id: int) -> Company | None:
-    """get_company 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """company_id로 Company ORM 객체를 조회한다."""
     return db.get(Company, company_id)
 
 
 def get_company_profile(db: Session, company_id: int) -> dict[str, Any]:
-    """get_company_profile 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """Company row를 LangGraph state에 넣을 profile dict로 변환한다."""
     company = db.get(Company, company_id)
 
     if company is None:
@@ -49,7 +49,7 @@ def get_company_profile(db: Session, company_id: int) -> dict[str, Any]:
 
 
 def get_departments(db: Session, company_id: int) -> list[dict[str, Any]]:
-    """get_departments 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """해당 회사의 부서 목록을 분석 node가 소비하는 dict 목록으로 조회한다."""
     stmt = (
         select(Department)
         .where(Department.company_id == company_id)
@@ -70,7 +70,7 @@ def get_departments(db: Session, company_id: int) -> list[dict[str, Any]]:
 
 
 def get_systems(db: Session, company_id: int) -> list[dict[str, Any]]:
-    """get_systems 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """해당 회사의 enterprise system 목록을 분석용 dict 목록으로 조회한다."""
     stmt = (
         select(EnterpriseSystem)
         .where(EnterpriseSystem.company_id == company_id)
@@ -94,7 +94,7 @@ def get_systems(db: Session, company_id: int) -> list[dict[str, Any]]:
 
 
 def get_business_processes(db: Session, company_id: int) -> list[dict[str, Any]]:
-    """get_business_processes 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """AX 후보 업무/프로세스 row를 scoring과 RAG가 사용할 payload로 조회한다."""
     stmt = (
         select(BusinessProcess)
         .where(BusinessProcess.company_id == company_id)
@@ -131,7 +131,7 @@ def get_business_processes(db: Session, company_id: int) -> list[dict[str, Any]]
 
 
 def get_process_documents(db: Session, company_id: int) -> list[dict[str, Any]]:
-    """get_process_documents 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """회사 문서를 RAG/증거 수집 node가 사용할 metadata 포함 dict 목록으로 조회한다."""
     stmt = (
         select(ProcessDocument)
         .where(ProcessDocument.company_id == company_id)
@@ -157,12 +157,12 @@ def get_process_documents(db: Session, company_id: int) -> list[dict[str, Any]]:
 
 
 def get_project(db: Session, project_id: int) -> AnalysisProject | None:
-    """get_project 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """project_id로 AnalysisProject ORM 객체를 조회한다."""
     return db.get(AnalysisProject, project_id)
 
 
 def get_project_payload(db: Session, project_id: int) -> dict[str, Any]:
-    """get_project_payload 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """AnalysisProject를 찾고 없으면 명확한 오류를 낸 뒤 payload dict로 변환한다."""
     project = db.get(AnalysisProject, project_id)
 
     if project is None:
@@ -172,7 +172,7 @@ def get_project_payload(db: Session, project_id: int) -> dict[str, Any]:
 
 
 def project_to_payload(project: AnalysisProject) -> dict[str, Any]:
-    """project_to_payload 함수. DB 읽기/쓰기 helper 모음. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """AnalysisProject ORM 객체를 API/graph 공통 payload로 변환한다."""
     return {
         "id": project.id,
         "company_id": project.company_id,
@@ -186,7 +186,7 @@ def get_latest_project(
     db: Session,
     company_id: int | None = None,
 ) -> dict[str, Any]:
-    """get_latest_project 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """회사 필터가 있으면 해당 회사의, 없으면 전체 최신 AnalysisProject를 반환한다."""
     stmt = select(AnalysisProject)
 
     if company_id is not None:
@@ -212,7 +212,7 @@ def resolve_project_selection(
     project_id: int | None = None,
     company_id: int | None = None,
 ) -> dict[str, int]:
-    """resolve_project_selection 함수. DB 읽기/쓰기 helper 모음. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """project_id/company_id 입력 조합을 검증하고 실행에 사용할 최종 id 쌍을 결정한다."""
     if project_id is not None:
         project = get_project_payload(db, project_id)
 
@@ -341,4 +341,3 @@ def delete_seed_data(db: Session) -> None:
     db.execute(delete(Department))
     db.execute(delete(Company))
     db.commit()
-

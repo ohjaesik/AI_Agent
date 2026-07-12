@@ -181,12 +181,12 @@ HANDOFF_RULES = {
 
 
 def present_keys(state: dict[str, Any], keys: list[str]) -> list[str]:
-    """present_keys 함수. Expert Agent 사이의 package/handoff trace를 만든다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """state에 실제 값이 존재하는 key만 골라 package/handoff payload 목록에 남긴다."""
     return [key for key in keys if state.get(key) not in (None, {}, [])]
 
 
 def unique_preserve_order(values: list[str]) -> list[str]:
-    """unique_preserve_order 함수. Expert Agent 사이의 package/handoff trace를 만든다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """tool/key 목록의 최초 등장 순서는 유지하면서 중복과 빈 값을 제거한다."""
     seen: set[str] = set()
     result: list[str] = []
     for value in values:
@@ -250,7 +250,7 @@ def supervisor_tool_policy_trace(state: dict[str, Any], stage_name: str) -> list
 
 
 def should_emit_rule(rule: dict[str, Any], state: dict[str, Any]) -> bool:
-    """should_emit_rule 함수. Expert Agent 사이의 package/handoff trace를 만든다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """조건부 handoff rule이 현재 state에서 workflow_state에 기록될지 판단한다."""
     condition = rule.get("condition")
     if condition == "replan_request_present":
         return bool(state.get("replan_request"))
@@ -258,7 +258,7 @@ def should_emit_rule(rule: dict[str, Any], state: dict[str, Any]) -> bool:
 
 
 def build_agent_package(agent_id: str, state: dict[str, Any], produced_by: str, executed_nodes: list[str] | None = None) -> dict[str, Any]:
-    """build_agent_package 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """Agent stage가 생산한 핵심 산출물, 입력/출력 key, tool trace를 요약 패키지로 만든다."""
     output_keys = AGENT_OUTPUT_KEYS.get(agent_id, [])
     selected_tool_trace = selected_tool_trace_for_stage(result=state, agent_id=agent_id, executed_nodes=executed_nodes)
     return {
@@ -291,7 +291,7 @@ def build_supervisor_step(
     selected_tool_trace: list[dict[str, Any]] | None = None,
     supervisor_tool_policy: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """build_supervisor_step 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """Supervisor가 특정 Agent/stage에 무엇을 맡겼는지 감사 가능한 step trace로 만든다."""
     selected_tool_trace = selected_tool_trace or []
     return {
         "supervisor_agent_id": SUPERVISOR_AGENT_ID,
@@ -319,7 +319,7 @@ def build_handoffs(
     selected_tool_trace: list[dict[str, Any]] | None = None,
     supervisor_tool_policy: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """build_handoffs 함수. 입력 state나 domain 객체를 조합해 downstream에서 사용할 구조화된 payload를 만든다."""
+    """정적 handoff rule과 현재 state를 결합해 downstream Agent에게 넘길 payload trace를 만든다."""
     handoffs: list[dict[str, Any]] = []
     selected_tool_trace = selected_tool_trace or []
     selected_tools = unique_preserve_order([str(item.get("tool_name") or "") for item in selected_tool_trace])
@@ -354,7 +354,7 @@ def attach_agent_flow_outputs(
     contract: dict[str, Any],
     loop_index: int | None = None,
 ) -> dict[str, Any]:
-    """attach_agent_flow_outputs 함수. Expert Agent 사이의 package/handoff trace를 만든다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """단일 node 실행 결과에 package, Supervisor step, handoff trace를 덧붙인다."""
     merged_state = {**state, **result}
     package_key = NODE_TO_PACKAGE.get(node_name) or AGENT_TO_PACKAGE.get(agent_id)
     selected_tool_trace = selected_tool_trace_for_stage(result=result, agent_id=agent_id, executed_nodes=[node_name])
@@ -396,7 +396,7 @@ def attach_agent_stage_outputs(
     executed_nodes: list[str],
     loop_index: int | None = None,
 ) -> dict[str, Any]:
-    """attach_agent_stage_outputs 함수. Expert Agent 사이의 package/handoff trace를 만든다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """여러 internal node가 함께 돈 Agent stage 결과에 package/handoff trace를 덧붙인다."""
     merged_state = {**state, **result}
     package_key = AGENT_TO_PACKAGE.get(agent_id)
     selected_tool_trace = selected_tool_trace_for_stage(result=result, agent_id=agent_id, executed_nodes=executed_nodes)

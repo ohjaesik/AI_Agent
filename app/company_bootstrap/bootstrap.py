@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def initialize_database() -> None:
-    """initialize_database 함수. 회사 bootstrap CLI 진입점. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """bootstrap 실행 전 pgvector, table, migration을 순서대로 준비한다."""
     from app.db.create_tables import main as create_tables
     from app.db.init_pgvector import main as init_pgvector
     from app.db.migrate_discovery_metadata import main as migrate_discovery_metadata

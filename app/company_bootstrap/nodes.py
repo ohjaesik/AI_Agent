@@ -35,7 +35,7 @@ def utc_now() -> str:
 
 
 def audit(node_name: str, status: str, payload: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """audit 함수. 회사 bootstrap LangGraph node 구현. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """bootstrap node 실행 결과를 workflow_state audit_logs 형식으로 기록한다."""
     return [
         {
             "node": node_name,
@@ -47,12 +47,12 @@ def audit(node_name: str, status: str, payload: dict[str, Any] | None = None) ->
 
 
 def error(node_name: str, exc: Exception) -> list[str]:
-    """error 함수. 회사 bootstrap LangGraph node 구현. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """예외를 node 이름이 포함된 사람이 읽기 쉬운 오류 문자열로 변환한다."""
     return [f"[{node_name}] {type(exc).__name__}: {exc}"]
 
 
 def company_profile_agent_node(state: BootstrapState) -> dict[str, Any]:
-    """company_profile_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """회사명/OpenDART 입력을 바탕으로 Company profile을 생성 또는 갱신한다."""
     node_name = "company_profile_agent"
 
     try:
@@ -117,7 +117,7 @@ def company_profile_agent_node(state: BootstrapState) -> dict[str, Any]:
 
 
 def source_ingestion_agent_node(state: BootstrapState) -> dict[str, Any]:
-    """source_ingestion_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """공식 URL/OpenDART 자료를 ProcessDocument로 저장하고 선택적으로 RAG chunk를 색인한다."""
     node_name = "source_ingestion_agent"
 
     try:
@@ -191,7 +191,7 @@ def source_ingestion_agent_node(state: BootstrapState) -> dict[str, Any]:
 
 
 def process_discovery_agent_node(state: BootstrapState) -> dict[str, Any]:
-    """process_discovery_agent_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """수집된 공식자료를 기반으로 AX 후보 업무를 발굴하고 DB에 upsert한다."""
     node_name = "process_discovery_agent"
 
     try:

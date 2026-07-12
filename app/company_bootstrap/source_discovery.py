@@ -68,7 +68,7 @@ class LinkParser(HTMLParser):
         self.links: list[str] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:  # type: ignore[no-untyped-def]
-        """handle_starttag 함수. 공식 URL 주변의 추가 공식자료 URL을 탐색한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+        """HTML anchor tag의 href만 모아 같은 도메인 후보 URL 탐색에 사용한다."""
         if tag.lower() != "a":
             return
         attrs_dict = dict(attrs)
@@ -85,14 +85,14 @@ def normalize_url(url: str) -> str:
 
 
 def same_domain(url: str, base_url: str) -> bool:
-    """same_domain 함수. 공식 URL 주변의 추가 공식자료 URL을 탐색한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """후보 URL이 seed 공식 URL과 같은 scheme/domain에 있는지 확인한다."""
     parsed = urllib.parse.urlparse(url)
     base = urllib.parse.urlparse(base_url)
     return parsed.scheme in {"http", "https"} and parsed.netloc == base.netloc
 
 
 def is_candidate_url(url: str) -> bool:
-    """is_candidate_url 함수. 조건을 검사해 True/False 판단값을 반환한다."""
+    """이미지/정적 파일을 제외하고 분석 근거로 쓸 만한 keyword URL인지 판단한다."""
     lowered = url.lower()
     if any(lowered.endswith(ext) for ext in BLOCKED_EXTENSIONS):
         return False
@@ -100,14 +100,14 @@ def is_candidate_url(url: str) -> bool:
 
 
 def score_url(url: str) -> int:
-    """score_url 함수. 후보/문서/검색 결과에 대해 비교 가능한 점수를 계산한다."""
+    """URL 안에 포함된 discovery keyword 수로 공식자료 후보 우선순위를 계산한다."""
     lowered = url.lower()
     return sum(1 for keyword in DISCOVERY_KEYWORDS if keyword in lowered)
 
 
 def discover_links_from_page(base_url: str, max_candidates: int = 5) -> list[DiscoveredSource]:
-    """discover_links_from_page 함수. 공식 URL 주변의 추가 공식자료 URL을 탐색한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
-    html = fetch_url(base_url, timeout=12, retries=1)
+    """seed page의 anchor link에서 같은 도메인의 공식자료 후보 URL을 찾는다."""
+    html, _content_type = fetch_url(base_url, timeout=12, retries=1)
     parser = LinkParser()
     parser.feed(html)
 
@@ -133,10 +133,10 @@ def discover_links_from_page(base_url: str, max_candidates: int = 5) -> list[Dis
 
 
 def discover_from_sitemap(base_url: str, max_candidates: int = 5) -> list[DiscoveredSource]:
-    """discover_from_sitemap 함수. 공식 URL 주변의 추가 공식자료 URL을 탐색한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """seed domain의 sitemap.xml에서 공식자료 후보 URL을 찾는다."""
     parsed = urllib.parse.urlparse(base_url)
     sitemap_url = f"{parsed.scheme}://{parsed.netloc}/sitemap.xml"
-    text = fetch_url(sitemap_url, timeout=12, retries=1)
+    text, _content_type = fetch_url(sitemap_url, timeout=12, retries=1)
     urls = re.findall(r"<loc>(.*?)</loc>", text, flags=re.IGNORECASE | re.DOTALL)
 
     candidates = []
@@ -159,7 +159,7 @@ def discover_from_sitemap(base_url: str, max_candidates: int = 5) -> list[Discov
 
 
 def discover_official_sources(seed_urls: list[str], existing_urls: set[str] | None = None, max_total: int = 5) -> list[DiscoveredSource]:
-    """discover_official_sources 함수. 공식 URL 주변의 추가 공식자료 URL을 탐색한다. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """sitemap과 page link 탐색을 조합해 중복 없는 공식자료 후보를 최대 max_total개 반환한다."""
     existing = {normalize_url(url) for url in (existing_urls or set()) if url}
     output: list[DiscoveredSource] = []
     seen = set(existing)

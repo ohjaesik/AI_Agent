@@ -33,7 +33,7 @@ def utc_now() -> str:
 
 
 def compact_json(value: Any, max_chars: int = 900) -> str:
-    """compact_json 함수. Agent tool 호출을 표준 trace와 함께 실행하는 runtime. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """audit log에 넣을 수 있도록 큰 dict/list를 짧은 JSON 문자열로 압축한다."""
     try:
         text = json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
     except TypeError:
@@ -42,7 +42,7 @@ def compact_json(value: Any, max_chars: int = 900) -> str:
 
 
 def is_langgraph_interrupt(exc: BaseException) -> bool:
-    """is_langgraph_interrupt 함수. 조건을 검사해 True/False 판단값을 반환한다."""
+    """Human Review interrupt처럼 LangGraph가 의도적으로 던진 중단 예외인지 식별한다."""
     name = type(exc).__name__.lower()
     module = type(exc).__module__.lower()
     return "interrupt" in name and "langgraph" in module
@@ -106,10 +106,10 @@ def call_agent_tool(
     runner: Callable[[dict[str, Any]], dict[str, Any]],
     node_name: str | None = None,
 ) -> ToolCallResult:
-    """Execute a tool through the Agent Registry contract.
+    """Agent Registry 권한 검사를 통과한 뒤 tool runner를 실행하고 표준 trace를 만든다.
 
-    The caller supplies the concrete runner so existing deterministic/RAG/LLM node
-    implementations can be reused while still flowing through a tool-calling gate.
+    caller가 실제 runner를 넘기므로 기존 deterministic/RAG/LLM node 구현은 그대로
+    재사용하면서, 모든 tool 실행을 동일한 audit log와 observation 구조로 남길 수 있다.
     """
     agent_spec = get_agent_spec(agent_id)
     if not agent_spec:

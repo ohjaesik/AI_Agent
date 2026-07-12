@@ -58,13 +58,13 @@ DENIED_ARGUMENT_TOKENS = {
 
 
 class AgentSandboxError(RuntimeError):
-    """AgentSandboxError 클래스. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """허용되지 않은 command 또는 sandbox 실행 실패를 나타내는 오류다."""
     pass
 
 
 @dataclass(frozen=True)
 class SandboxResult:
-    """SandboxResult 클래스. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper.에서 사용하는 구조화된 데이터/동작 단위다."""
+    """sandbox command 실행 결과를 audit log에 남기기 쉬운 형태로 운반한다."""
     mode: str
     returncode: int
     stdout: str
@@ -83,12 +83,12 @@ class SandboxResult:
 
 
 def command_basename(command: str) -> str:
-    """command_basename 함수. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """절대/상대 경로가 섞여 들어와도 실행 파일 이름만 소문자로 추출한다."""
     return Path(command).name.lower()
 
 
 def validate_command_safety(command: list[str]) -> None:
-    """validate_command_safety 함수. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """allowlist 실행 파일과 denylist 인자를 검사해 위험한 shell/network/권한 명령을 차단한다."""
     if not command:
         raise AgentSandboxError("Sandbox command cannot be empty.")
 
@@ -110,7 +110,7 @@ def validate_command_safety(command: list[str]) -> None:
 
 
 def run_direct_command(command: list[str], timeout_seconds: int) -> SandboxResult:
-    """run_direct_command 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """안전성 검사를 통과한 command를 현재 환경에서 timeout과 함께 실행한다."""
     validate_command_safety(command)
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout_seconds, check=False)
@@ -120,7 +120,7 @@ def run_direct_command(command: list[str], timeout_seconds: int) -> SandboxResul
 
 
 def run_docker_command(command: list[str], timeout_seconds: int) -> SandboxResult:
-    """run_docker_command 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """안전성 검사를 통과한 command를 제한된 Docker sandbox에서 실행한다."""
     validate_command_safety(command)
     settings = get_settings()
     with tempfile.TemporaryDirectory(prefix="ax-agent-sandbox-") as temp_dir:
@@ -156,7 +156,7 @@ def run_docker_command(command: list[str], timeout_seconds: int) -> SandboxResul
 
 
 def run_sandboxed_command(command: list[str], timeout_seconds: int | None = None) -> SandboxResult:
-    """run_sandboxed_command 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """설정된 sandbox mode에 따라 direct 또는 docker command 실행 경로를 선택한다."""
     settings = get_settings()
     timeout = timeout_seconds or settings.agent_tool_sandbox_timeout_seconds
     mode = settings.agent_tool_sandbox_mode.lower()
@@ -169,7 +169,7 @@ def run_sandboxed_command(command: list[str], timeout_seconds: int | None = None
 
 
 def assert_sandbox_available() -> None:
-    """assert_sandbox_available 함수. Agent tool을 격리 환경에서 실행하기 위한 sandbox helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Docker sandbox mode일 때 Docker daemon 접근 가능 여부를 preflight에서 확인한다."""
     settings = get_settings()
     if settings.agent_tool_sandbox_mode.lower() != "docker":
         return

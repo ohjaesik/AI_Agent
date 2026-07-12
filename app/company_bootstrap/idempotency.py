@@ -24,7 +24,7 @@ from app.db.models import AnalysisProject, BusinessProcess, Company, Department,
 
 
 def safe_text(value: object, max_chars: int | None = None) -> str:
-    """safe_text 함수. bootstrap 데이터의 중복 생성을 막는 idempotency helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """DB text 필드에 안전하게 저장되도록 제어문자를 제거하고 필요하면 길이를 제한한다."""
     text = sanitize_text(str(value or ""))
     if max_chars is not None:
         return text[:max_chars]
@@ -37,7 +37,7 @@ def get_or_update_company(
     combined_text: str,
     dart_company: DartCompany | None = None,
 ) -> tuple[Company, bool]:
-    """get_or_update_company 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """회사명이 이미 있으면 profile을 갱신하고, 없으면 새 Company row를 만든다."""
     company = db.execute(
         select(Company).where(Company.name == company_name).order_by(Company.id.asc())
     ).scalars().first()
@@ -63,7 +63,7 @@ def get_or_update_company(
 
 
 def get_or_create_departments(db: Session, company_id: int) -> tuple[dict[str, Department], int]:
-    """get_or_create_departments 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """bootstrap 기본 부서를 회사별로 upsert하고 이름별 Department map을 반환한다."""
     specs = [
         ("AX전략/기획", "AX 과제 발굴, PoC 기획, 성과관리", "공식자료 기반 업무 후보 구체화 필요"),
         ("IT/데이터", "시스템 연동, 데이터 접근권한, RAG/Agent 운영", "데이터 품질과 권한 관리 필요"),
@@ -95,7 +95,7 @@ def get_or_create_departments(db: Session, company_id: int) -> tuple[dict[str, D
 
 
 def get_or_create_systems(db: Session, company_id: int) -> tuple[list[EnterpriseSystem], int]:
-    """get_or_create_systems 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """bootstrap 기본 시스템 목록을 회사별로 upsert하고 생성 개수를 반환한다."""
     specs = [
         ("공식자료/RAG 문서 저장소", "knowledge_base", "IT/데이터", 4, True, "공식 URL, 공시, 업로드 문서를 검색 가능한 지식베이스로 활용"),
         ("업무 프로세스 분석 DB", "analysis_db", "AX전략/기획", 4, True, "AX 후보 업무와 평가 결과 저장"),
@@ -130,7 +130,7 @@ def get_or_create_systems(db: Session, company_id: int) -> tuple[list[Enterprise
 
 
 def find_official_url_document(db: Session, company_id: int, url: str) -> ProcessDocument | None:
-    """find_official_url_document 함수. bootstrap 데이터의 중복 생성을 막는 idempotency helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """source_url 또는 이전 content prefix 방식으로 기존 공식 URL 문서를 찾는다."""
     row = db.execute(
         select(ProcessDocument).where(
             ProcessDocument.company_id == company_id,
@@ -161,7 +161,7 @@ def upsert_source_documents(
     official_docs: list[OfficialUrlDocument],
     dart_company: DartCompany | None,
 ) -> tuple[list[ProcessDocument], int, int]:
-    """upsert_source_documents 함수. bootstrap 데이터의 중복 생성을 막는 idempotency helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """OpenDART/공식 URL 문서를 중복 생성하지 않고 생성 또는 갱신한다."""
     rows: list[ProcessDocument] = []
     created_count = 0
     updated_count = 0
@@ -244,7 +244,7 @@ def upsert_business_processes(
     departments: dict[str, Department],
     process_specs: list[dict],
 ) -> tuple[list[BusinessProcess], int, int]:
-    """upsert_business_processes 함수. bootstrap 데이터의 중복 생성을 막는 idempotency helper. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """후보 업무를 이름과 candidate_agent_name 기준으로 upsert해 반복 bootstrap 중복을 막는다."""
     ensure_discovery_metadata_column()
     rows: list[BusinessProcess] = []
     created_count = 0
@@ -300,7 +300,7 @@ def upsert_business_processes(
 
 
 def get_or_create_project(db: Session, company_id: int, company_name: str) -> tuple[AnalysisProject, bool]:
-    """get_or_create_project 함수. DB나 설정/state에서 필요한 값을 조회해 호출자에게 반환한다."""
+    """회사 공식자료 기반 분석 프로젝트를 재사용하거나 새로 만든다."""
     title = f"{company_name} 공식자료 기반 AX 전환 진단"
     project = db.execute(
         select(AnalysisProject).where(

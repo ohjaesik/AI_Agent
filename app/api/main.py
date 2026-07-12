@@ -10,36 +10,29 @@ CLI와 같은 core workflow를 HTTP로 노출한다. UI/외부 시스템은 이 
 - `/analysis/run` 응답에는 최근 model decision, Supervisor delegation, autonomy loop
   decision을 함께 넣어 UI에서 Agent 동작을 확인할 수 있게 한다.
 - 문서 재색인은 admin role만 허용한다.
+- dashboard summary, analysis response, 내장 테스트 HTML은 별도 모듈로 분리해
+  route 함수가 orchestration만 담당하게 한다.
 """
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
+from app.api.dashboard import build_dashboard_summary
+from app.api.responses import build_analysis_response
 from app.api.security import create_access_token, require_api_key, validate_api_key
+from app.api.test_ui import TEST_UI_HTML
 from app.auth.users import authenticate_user, create_user
 from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
-from app.db.crud import resolve_project_selection
 from app.db.database import SessionLocal
-from app.db.models import (
-    AnalysisProject,
-    AuditLog,
-    BusinessProcess,
-    Company,
-    Department,
-    DocumentChunk,
-    EnterpriseSystem,
-    ProcessDocument,
-)
 from app.ingestion.service import ingest_file
 from app.main import DEFAULT_STATE_OUTPUT_PATH, run_demo
 from app.monitoring.metrics import RequestMetricsMiddleware, metrics
@@ -47,7 +40,6 @@ from app.rag.indexer import index_documents
 from app.rag.retriever import search_similar_chunks
 from app.security.access_control import AccessContext
 from app.tools.review_applier import apply_human_review_to_ranking
-from sqlalchemy import func, select
 
 app = FastAPI(title="AX Delivery Planner API", version="0.1.0")
 app.add_middleware(RequestMetricsMiddleware)
@@ -64,8 +56,6 @@ app.add_middleware(
 OUTPUTS_DIR = Path("outputs")
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
-
-WORKFLOW_STATE_PATH = Path(DEFAULT_STATE_OUTPUT_PATH)
 
 
 class CompanyBootstrapRequest(BaseModel):
@@ -113,59 +103,6 @@ class LoginRequest(BaseModel):
     expires_minutes: int | None = None
 
 
-def _count_rows(db: Any, model: Any, *conditions: Any) -> int:
-    """대시보드 숫자 카드에 사용할 table row 수를 안전하게 계산한다."""
-
-    stmt = select(func.count()).select_from(model)
-    for condition in conditions:
-        stmt = stmt.where(condition)
-    return int(db.scalar(stmt) or 0)
-
-
-def _load_workflow_state_snapshot() -> dict[str, Any]:
-    """최근 Supervisor 실행 결과 JSON을 읽어 홈 대시보드 요약에 붙인다.
-
-    파일이 아직 없거나 깨져 있어도 홈 화면 자체가 죽지 않도록 빈 dict를 반환한다.
-    실제 분석은 `/analysis/run` 또는 CLI 실행 후 이 파일을 생성한다.
-    """
-
-    if not WORKFLOW_STATE_PATH.exists():
-        return {}
-    try:
-        return json.loads(WORKFLOW_STATE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _extract_workflow_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """workflow_state 전체 중 프론트 홈 화면에 필요한 값만 작게 추린다."""
-
-    priority_items = (snapshot.get("priority_ranking") or {}).get("items") or []
-    if not priority_items:
-        priority_items = snapshot.get("top_candidates") or []
-
-    report_data = snapshot.get("report_data") or {}
-    citation_validation = snapshot.get("citation_validation") or report_data.get("citation_validation") or {}
-    total_cost_summary = snapshot.get("total_cost_summary") or {}
-
-    return {
-        "state_file_path": str(WORKFLOW_STATE_PATH) if WORKFLOW_STATE_PATH.exists() else None,
-        "report_docx_path": snapshot.get("report_docx_path"),
-        "report_status": (report_data.get("generation") or {}).get("status"),
-        "top_candidate_count": len(priority_items),
-        "top_candidates": priority_items[:5],
-        "agent_tool_call_count": len(snapshot.get("agent_tool_calls") or []),
-        "agent_model_decision_count": len(snapshot.get("agent_model_decisions") or []),
-        "supervisor_delegation_count": len(snapshot.get("agent_supervisor_delegations") or []),
-        "autonomy_loop_decision_count": len(snapshot.get("agent_autonomy_loop_decisions") or []),
-        "error_count": len(snapshot.get("errors") or []),
-        "citation_validated": citation_validation.get("valid"),
-        "citation_issue_count": len(citation_validation.get("issues") or []),
-        "total_cost_summary": total_cost_summary,
-        "estimated_total_cost_usd": total_cost_summary.get("estimated_total_cost_usd"),
-    }
-
-
 @app.get("/health")
 def health() -> dict[str, str]:
     """서버 생존 확인 endpoint."""
@@ -188,50 +125,7 @@ def dashboard_summary(
 
     try:
         with SessionLocal() as db:
-            resolved = resolve_project_selection(db=db, project_id=project_id, company_id=company_id)
-            resolved_company_id = resolved["company_id"]
-            resolved_project_id = resolved["project_id"]
-
-            company = db.get(Company, resolved_company_id)
-            project = db.get(AnalysisProject, resolved_project_id)
-
-            counts = {
-                "departments": _count_rows(db, Department, Department.company_id == resolved_company_id),
-                "enterprise_systems": _count_rows(db, EnterpriseSystem, EnterpriseSystem.company_id == resolved_company_id),
-                "business_processes": _count_rows(db, BusinessProcess, BusinessProcess.company_id == resolved_company_id),
-                "documents": _count_rows(db, ProcessDocument, ProcessDocument.company_id == resolved_company_id),
-                "document_chunks": _count_rows(db, DocumentChunk, DocumentChunk.company_id == resolved_company_id),
-                "sensitive_documents": _count_rows(
-                    db,
-                    ProcessDocument,
-                    ProcessDocument.company_id == resolved_company_id,
-                    ProcessDocument.contains_sensitive_info.is_(True),
-                ),
-                "audit_logs": _count_rows(db, AuditLog, AuditLog.project_id == resolved_project_id),
-            }
-
-        workflow_summary = _extract_workflow_summary(_load_workflow_state_snapshot())
-
-        return {
-            "status": "ok",
-            "access": {"user_id": access.user_id, "role": access.role},
-            "company": {
-                "id": company.id,
-                "name": company.name,
-                "industry": company.industry,
-                "size": company.size,
-                "description": company.description,
-            } if company else None,
-            "project": {
-                "id": project.id,
-                "company_id": project.company_id,
-                "title": project.title,
-                "status": project.status,
-                "created_at": project.created_at.isoformat() if project.created_at else None,
-            } if project else None,
-            "counts": counts,
-            "workflow": workflow_summary,
-        }
+            return build_dashboard_summary(db=db, access=access, company_id=company_id, project_id=project_id)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Dashboard summary failed: {type(exc).__name__}: {exc}") from exc
 
@@ -245,13 +139,13 @@ def prometheus_metrics() -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
-    """home 함수. FastAPI 기반 AX Delivery Planner API 서버. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """백엔드 단독 smoke-test HTML을 반환한다."""
     return TEST_UI_HTML
 
 
 @app.get("/ui", response_class=HTMLResponse)
 def ui() -> str:
-    """ui 함수. FastAPI 기반 AX Delivery Planner API 서버. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """백엔드 단독 smoke-test HTML을 `/ui` 경로에서도 제공한다."""
     return TEST_UI_HTML
 
 
@@ -444,157 +338,15 @@ def run_analysis(
             allow_agent_extra_loop=allow_agent_extra_loop,
             supervisor_goal=supervisor_goal,
         )
-        if "__interrupt__" in result:
-            return {
-                "status": "interrupted",
-                "interrupt": str(result.get("__interrupt__")),
-                "report_docx_path": result.get("report_docx_path"),
-                "generation": result.get("report_data", {}).get("generation", {}),
-                "report_data": result.get("report_data"),
-                "citation_validation": result.get("report_data", {}).get("citation_validation", {}),
-                "top_candidates": result.get("priority_ranking", {}).get("items", [])[:5],
-                "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),
-                "model_decisions": result.get("agent_model_decisions", [])[-10:],
-                "total_cost_summary": result.get("total_cost_summary", {}),
-                "supervisor_delegations": result.get("agent_supervisor_delegations", [])[-10:],
-                "supervisor_autonomy_policy": result.get("supervisor_autonomy_policy", {}),
-                "autonomy_loop_decisions": result.get("agent_autonomy_loop_decisions", [])[-10:],
-                "errors": result.get("errors", []),
-            }
-        return {
-            "status": "ok",
-            "access": {"user_id": access.user_id, "role": access.role},
-            "report_docx_path": result.get("report_docx_path"),
-            "generation": result.get("report_data", {}).get("generation", {}),
-            "report_data": result.get("report_data"),
-            "citation_validation": result.get("report_data", {}).get("citation_validation", {}),
-            "top_candidates": result.get("priority_ranking", {}).get("items", [])[:5],
-            "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),
-            "model_decisions": result.get("agent_model_decisions", [])[-10:],
-            "total_cost_summary": result.get("total_cost_summary", {}),
-            "supervisor_delegations": result.get("agent_supervisor_delegations", [])[-10:],
-            "supervisor_autonomy_policy": result.get("supervisor_autonomy_policy", {}),
-            "autonomy_loop_decisions": result.get("agent_autonomy_loop_decisions", [])[-10:],
-            "errors": result.get("errors", []),
-        }
+        return build_analysis_response(result=result, access=access)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Analysis failed: {type(exc).__name__}: {exc}") from exc
 
 
 @app.post("/reviews/apply-ranking")
 def apply_review_to_ranking(request: ReviewApplyRequest, access: AccessContext = Depends(require_api_key)) -> dict[str, Any]:
-    """apply_review_to_ranking 함수. 계산된 결정이나 검토 결과를 기존 payload에 반영한다."""
+    """Human Review 결정으로 우선순위 payload를 수정한다."""
     if access.role not in {"manager", "admin"}:
         raise HTTPException(status_code=403, detail="Only manager/admin role can apply human review decisions.")
     result = apply_human_review_to_ranking(priority_ranking=request.priority_ranking, human_review=request.human_review)
     return {"status": "ok", "priority_ranking": result}
-
-
-TEST_UI_HTML = """
-<!doctype html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <title>AX Delivery Planner Test UI</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 40px; max-width: 920px; }
-    section { border: 1px solid #ddd; padding: 20px; margin-bottom: 20px; border-radius: 10px; }
-    label { display:block; margin: 8px 0 4px; font-weight: 600; }
-    input, button { padding: 8px; margin-bottom: 8px; }
-    button { cursor: pointer; }
-    pre { background:#111; color:#eee; padding:16px; overflow:auto; min-height:120px; }
-  </style>
-</head>
-<body>
-  <h1>AX Delivery Planner Test UI</h1>
-  <section>
-    <h2>0. Local API Key</h2>
-    <label>APP_API_KEY(optional)</label>
-    <input id="apiKey" type="password" placeholder="local-test-key" style="width: 300px" />
-    <label>User Role</label>
-    <input id="userRole" type="text" value="admin" style="width: 120px" />
-    <button onclick="saveApiKey()">Save</button>
-  </section>
-  <section>
-    <h2>1. 회사명 기반 DB 생성</h2>
-    <label>Company Name</label>
-    <input id="bootstrapCompanyName" type="text" value="삼성전자" style="width: 300px" />
-    <label>Official URL</label>
-    <input id="officialUrl" type="text" placeholder="https://..." style="width: 640px" />
-    <button onclick="bootstrapCompany()">Bootstrap Company</button>
-  </section>
-  <section>
-    <h2>2. 문서 업로드 + RAG 색인</h2>
-    <label>Company ID</label>
-    <input id="companyId" type="number" value="1" />
-    <label>Process ID(optional)</label>
-    <input id="processId" type="number" placeholder="optional" />
-    <label>File</label>
-    <input id="file" type="file" />
-    <button onclick="ingest()">Upload & Index</button>
-  </section>
-  <section>
-    <h2>3. RAG 검색 확인</h2>
-    <label>Query</label>
-    <input id="ragQuery" type="text" value="SOP 검색 작업표준서" style="width: 420px" />
-    <button onclick="ragSearch()">Search RAG</button>
-  </section>
-  <section>
-    <h2>4. 분석 실행</h2>
-    <label>Project ID(optional)</label>
-    <input id="projectId" type="number" placeholder="optional" />
-    <label>Company ID(optional)</label>
-    <input id="analysisCompanyId" type="number" placeholder="optional" />
-    <button onclick="runAnalysis()">Run Analysis</button>
-  </section>
-  <pre id="output">ready</pre>
-<script>
-function saveApiKey() {
-  localStorage.setItem('AX_APP_API_KEY', document.getElementById('apiKey').value || '');
-  localStorage.setItem('AX_USER_ROLE', document.getElementById('userRole').value || 'analyst');
-  document.getElementById('output').textContent = 'saved';
-}
-async function show(promise) {
-  const out = document.getElementById('output');
-  out.textContent = 'loading...';
-  try { const res = await promise; const data = await res.json(); out.textContent = JSON.stringify(data, null, 2); }
-  catch (e) { out.textContent = String(e); }
-}
-function authHeaders(json=true) {
-  const key = localStorage.getItem('AX_APP_API_KEY') || '';
-  const role = localStorage.getItem('AX_USER_ROLE') || 'analyst';
-  const headers = json ? {'Content-Type':'application/json'} : {};
-  if (key) headers['X-API-Key'] = key;
-  if (role) headers['X-User-Role'] = role;
-  return headers;
-}
-function bootstrapCompany() {
-  const companyName = document.getElementById('bootstrapCompanyName').value;
-  const officialUrl = document.getElementById('officialUrl').value;
-  show(fetch('/companies/bootstrap', {method: 'POST', headers: authHeaders(), body: JSON.stringify({company_name: companyName, official_urls: officialUrl ? [officialUrl] : [], create_project: true, index: true, thread_id: 'bootstrap-supervisor-ui'})}));
-}
-function ingest() {
-  const fd = new FormData();
-  fd.append('company_id', document.getElementById('companyId').value);
-  const processId = document.getElementById('processId').value;
-  if (processId) fd.append('process_id', processId);
-  fd.append('file', document.getElementById('file').files[0]);
-  show(fetch('/documents/ingest', {method:'POST', headers: authHeaders(false), body: fd}));
-}
-function ragSearch() {
-  const q = encodeURIComponent(document.getElementById('ragQuery').value);
-  const companyId = document.getElementById('companyId').value;
-  show(fetch(`/rag/search?query=${q}&company_id=${companyId}`, {headers: authHeaders(false)}));
-}
-function runAnalysis() {
-  const projectId = document.getElementById('projectId').value;
-  const companyId = document.getElementById('analysisCompanyId').value;
-  const params = new URLSearchParams({auto_approve: 'true'});
-  if (projectId) params.append('project_id', projectId);
-  if (companyId) params.append('company_id', companyId);
-  show(fetch(`/analysis/run?${params.toString()}`, {method:'POST', headers: authHeaders(false)}));
-}
-</script>
-</body>
-</html>
-"""

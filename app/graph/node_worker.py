@@ -43,9 +43,9 @@ NODE_TARGETS = {
     "docx_generator": "app.graph.nodes:docx_generator_node",
 }
 
-# LangGraph interrupt() requires runnable/checkpointer context. If this node is
-# executed in a subprocess or Docker worker, langgraph.config.get_config() is not
-# available and interrupt() fails. Keep it in the parent graph process.
+# LangGraph interrupt()는 runnable/checkpointer context 안에서만 동작한다.
+# subprocess/docker worker에서는 langgraph.config.get_config() context가 없어 실패하므로
+# Human Review node는 항상 parent graph process에서 직접 실행한다.
 NON_WORKERIZABLE_NODES = {"human_review"}
 
 
@@ -55,7 +55,7 @@ class NodeWorkerError(RuntimeError):
 
 
 def import_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]]:
-    """import_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """NODE_TARGETS의 "module:function" 문자열을 실제 graph 실행 callable로 import한다."""
     target = NODE_TARGETS.get(node_name)
     if not target:
         raise NodeWorkerError(f"Unknown graph node: {node_name}")
@@ -66,12 +66,12 @@ def import_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]]:
 
 
 def run_node_direct(node_name: str, state: AXPlannerState) -> dict[str, Any]:
-    """run_node_direct 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """현재 프로세스에서 node 함수를 바로 실행한다."""
     return import_node(node_name)(state)
 
 
 def run_node_subprocess(node_name: str, state: AXPlannerState, timeout_seconds: int) -> dict[str, Any]:
-    """run_node_subprocess 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """state를 임시 JSON으로 넘겨 별도 Python subprocess에서 node를 실행한다."""
     with tempfile.TemporaryDirectory(prefix="ax-node-worker-") as temp_dir:
         state_path = Path(temp_dir) / "state.json"
         output_path = Path(temp_dir) / "output.json"
@@ -102,7 +102,7 @@ def run_node_subprocess(node_name: str, state: AXPlannerState, timeout_seconds: 
 
 
 def run_node_docker(node_name: str, state: AXPlannerState, timeout_seconds: int) -> dict[str, Any]:
-    """run_node_docker 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """Docker sandbox 안에서 node를 실행해 timeout/메모리/권한 경계를 더 강하게 둔다."""
     settings = get_settings()
     repo_root = Path.cwd().resolve()
     with tempfile.TemporaryDirectory(prefix="ax-node-worker-") as temp_dir:
@@ -158,7 +158,7 @@ def run_node_docker(node_name: str, state: AXPlannerState, timeout_seconds: int)
 
 
 def run_node_via_worker(node_name: str, state: AXPlannerState) -> dict[str, Any]:
-    """run_node_via_worker 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """설정값에 따라 direct/subprocess/docker 실행 경로 중 하나를 선택한다."""
     if node_name in NON_WORKERIZABLE_NODES:
         return run_node_direct(node_name, state)
 
@@ -174,9 +174,9 @@ def run_node_via_worker(node_name: str, state: AXPlannerState) -> dict[str, Any]
 
 
 def workerized_node(node_name: str) -> Callable[[AXPlannerState], dict[str, Any]]:
-    """workerized_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+    """LangGraph에 등록할 수 있도록 node 실행 함수에 worker 선택과 metric 기록을 감싼다."""
     def _node(state: AXPlannerState) -> dict[str, Any]:
-        """_node 함수. LangGraph node 함수로, 입력 state를 읽고 변경된 state 조각을 dict로 반환한다."""
+        """실제 graph tick에서 호출되는 wrapper로, 성공/실패 latency metric을 남긴다."""
         settings = get_settings()
         mode = "direct" if node_name in NON_WORKERIZABLE_NODES else settings.graph_node_execution_mode.lower()
         start = time.perf_counter()

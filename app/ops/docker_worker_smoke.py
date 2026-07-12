@@ -17,7 +17,7 @@ from app.core.config import get_settings
 
 
 def run_command(command: list[str], timeout: int = 120) -> tuple[int, str, str]:
-    """run_command 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """smoke test용 외부 명령을 timeout과 함께 실행하고 returncode/stdout/stderr를 돌려준다."""
     try:
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
         return completed.returncode, completed.stdout, completed.stderr
@@ -28,7 +28,7 @@ def run_command(command: list[str], timeout: int = 120) -> tuple[int, str, str]:
 
 
 def ensure_image(image: str, build: bool) -> dict[str, object]:
-    """ensure_image 함수. Docker node worker 실행을 확인하는 smoke test script. 입력을 검증/변환해 다음 단계가 사용할 값을 반환한다."""
+    """Docker worker image가 있는지 확인하고 옵션이 켜져 있으면 빌드까지 시도한다."""
     code, stdout, stderr = run_command(["docker", "image", "inspect", image], timeout=30)
     if code == 0:
         return {"name": "docker_image", "ok": True, "message": f"image exists: {image}"}
@@ -46,7 +46,7 @@ def ensure_image(image: str, build: bool) -> dict[str, object]:
 
 
 def run_worker_probe(skip_vllm: bool) -> dict[str, object]:
-    """run_worker_probe 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """Docker 컨테이너 안에서 worker_probe를 실행해 DB/vLLM 접근 가능성을 확인한다."""
     settings = get_settings()
     repo_root = Path.cwd().resolve()
     command = [
@@ -90,7 +90,7 @@ def run_worker_probe(skip_vllm: bool) -> dict[str, object]:
 
 
 def run_smoke(build_image: bool = False, skip_vllm: bool = False) -> dict[str, object]:
-    """run_smoke 함수. 외부 API, graph, worker, 평가 루틴 같은 실행 단위를 호출하고 결과를 반환한다."""
+    """Docker daemon, worker image, 컨테이너 probe를 순서대로 실행하고 결과를 요약한다."""
     settings = get_settings()
     checks = []
 
