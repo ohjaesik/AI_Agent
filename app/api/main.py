@@ -14,6 +14,7 @@ CLI와 같은 core workflow를 HTTP로 노출한다. UI/외부 시스템은 이 
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -27,14 +28,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.security import create_access_token, require_api_key, validate_api_key
 from app.auth.users import authenticate_user, create_user
 from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
+from app.db.crud import resolve_project_selection
 from app.db.database import SessionLocal
+from app.db.models import (
+    AnalysisProject,
+    AuditLog,
+    BusinessProcess,
+    Company,
+    Department,
+    DocumentChunk,
+    EnterpriseSystem,
+    ProcessDocument,
+)
 from app.ingestion.service import ingest_file
-from app.main import run_demo
+from app.main import DEFAULT_STATE_OUTPUT_PATH, run_demo
 from app.monitoring.metrics import RequestMetricsMiddleware, metrics
 from app.rag.indexer import index_documents
 from app.rag.retriever import search_similar_chunks
 from app.security.access_control import AccessContext
 from app.tools.review_applier import apply_human_review_to_ranking
+from sqlalchemy import func, select
 
 app = FastAPI(title="AX Delivery Planner API", version="0.1.0")
 app.add_middleware(RequestMetricsMiddleware)
@@ -48,7 +61,11 @@ app.add_middleware(
 )
 
 # Mount outputs folder to serve generated docx files for download
-app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
+OUTPUTS_DIR = Path("outputs")
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
+
+WORKFLOW_STATE_PATH = Path(DEFAULT_STATE_OUTPUT_PATH)
 
 
 class CompanyBootstrapRequest(BaseModel):
@@ -96,11 +113,127 @@ class LoginRequest(BaseModel):
     expires_minutes: int | None = None
 
 
+def _count_rows(db: Any, model: Any, *conditions: Any) -> int:
+    """대시보드 숫자 카드에 사용할 table row 수를 안전하게 계산한다."""
+
+    stmt = select(func.count()).select_from(model)
+    for condition in conditions:
+        stmt = stmt.where(condition)
+    return int(db.scalar(stmt) or 0)
+
+
+def _load_workflow_state_snapshot() -> dict[str, Any]:
+    """최근 Supervisor 실행 결과 JSON을 읽어 홈 대시보드 요약에 붙인다.
+
+    파일이 아직 없거나 깨져 있어도 홈 화면 자체가 죽지 않도록 빈 dict를 반환한다.
+    실제 분석은 `/analysis/run` 또는 CLI 실행 후 이 파일을 생성한다.
+    """
+
+    if not WORKFLOW_STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(WORKFLOW_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _extract_workflow_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """workflow_state 전체 중 프론트 홈 화면에 필요한 값만 작게 추린다."""
+
+    priority_items = (snapshot.get("priority_ranking") or {}).get("items") or []
+    if not priority_items:
+        priority_items = snapshot.get("top_candidates") or []
+
+    report_data = snapshot.get("report_data") or {}
+    citation_validation = snapshot.get("citation_validation") or report_data.get("citation_validation") or {}
+    total_cost_summary = snapshot.get("total_cost_summary") or {}
+
+    return {
+        "state_file_path": str(WORKFLOW_STATE_PATH) if WORKFLOW_STATE_PATH.exists() else None,
+        "report_docx_path": snapshot.get("report_docx_path"),
+        "report_status": (report_data.get("generation") or {}).get("status"),
+        "top_candidate_count": len(priority_items),
+        "top_candidates": priority_items[:5],
+        "agent_tool_call_count": len(snapshot.get("agent_tool_calls") or []),
+        "agent_model_decision_count": len(snapshot.get("agent_model_decisions") or []),
+        "supervisor_delegation_count": len(snapshot.get("agent_supervisor_delegations") or []),
+        "autonomy_loop_decision_count": len(snapshot.get("agent_autonomy_loop_decisions") or []),
+        "error_count": len(snapshot.get("errors") or []),
+        "citation_validated": citation_validation.get("valid"),
+        "citation_issue_count": len(citation_validation.get("issues") or []),
+        "total_cost_summary": total_cost_summary,
+        "estimated_total_cost_usd": total_cost_summary.get("estimated_total_cost_usd"),
+    }
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     """서버 생존 확인 endpoint."""
 
     return {"status": "ok"}
+
+
+@app.get("/dashboard/summary")
+def dashboard_summary(
+    company_id: int | None = None,
+    project_id: int | None = None,
+    access: AccessContext = Depends(require_api_key),
+) -> dict[str, Any]:
+    """프론트 홈 대시보드가 표시할 실제 DB/최근 실행 요약을 반환한다.
+
+    이 endpoint는 화면에 demo/mock 숫자를 만들지 않는다. 회사/프로젝트/업무/문서/chunk
+    수는 DB에서 직접 읽고, 최근 분석 후보·모델 결정·비용은 workflow_state JSON이 있을
+    때만 보여준다.
+    """
+
+    try:
+        with SessionLocal() as db:
+            resolved = resolve_project_selection(db=db, project_id=project_id, company_id=company_id)
+            resolved_company_id = resolved["company_id"]
+            resolved_project_id = resolved["project_id"]
+
+            company = db.get(Company, resolved_company_id)
+            project = db.get(AnalysisProject, resolved_project_id)
+
+            counts = {
+                "departments": _count_rows(db, Department, Department.company_id == resolved_company_id),
+                "enterprise_systems": _count_rows(db, EnterpriseSystem, EnterpriseSystem.company_id == resolved_company_id),
+                "business_processes": _count_rows(db, BusinessProcess, BusinessProcess.company_id == resolved_company_id),
+                "documents": _count_rows(db, ProcessDocument, ProcessDocument.company_id == resolved_company_id),
+                "document_chunks": _count_rows(db, DocumentChunk, DocumentChunk.company_id == resolved_company_id),
+                "sensitive_documents": _count_rows(
+                    db,
+                    ProcessDocument,
+                    ProcessDocument.company_id == resolved_company_id,
+                    ProcessDocument.contains_sensitive_info.is_(True),
+                ),
+                "audit_logs": _count_rows(db, AuditLog, AuditLog.project_id == resolved_project_id),
+            }
+
+        workflow_summary = _extract_workflow_summary(_load_workflow_state_snapshot())
+
+        return {
+            "status": "ok",
+            "access": {"user_id": access.user_id, "role": access.role},
+            "company": {
+                "id": company.id,
+                "name": company.name,
+                "industry": company.industry,
+                "size": company.size,
+                "description": company.description,
+            } if company else None,
+            "project": {
+                "id": project.id,
+                "company_id": project.company_id,
+                "title": project.title,
+                "status": project.status,
+                "created_at": project.created_at.isoformat() if project.created_at else None,
+            } if project else None,
+            "counts": counts,
+            "workflow": workflow_summary,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Dashboard summary failed: {type(exc).__name__}: {exc}") from exc
 
 
 @app.get("/metrics", response_class=PlainTextResponse)
@@ -307,11 +440,27 @@ def run_analysis(
             thread_id=thread_id,
             auto_approve=auto_approve,
             verbose=False,
+            state_output_path=DEFAULT_STATE_OUTPUT_PATH,
             allow_agent_extra_loop=allow_agent_extra_loop,
             supervisor_goal=supervisor_goal,
         )
         if "__interrupt__" in result:
-            return {"status": "interrupted", "interrupt": str(result.get("__interrupt__"))}
+            return {
+                "status": "interrupted",
+                "interrupt": str(result.get("__interrupt__")),
+                "report_docx_path": result.get("report_docx_path"),
+                "generation": result.get("report_data", {}).get("generation", {}),
+                "report_data": result.get("report_data"),
+                "citation_validation": result.get("report_data", {}).get("citation_validation", {}),
+                "top_candidates": result.get("priority_ranking", {}).get("items", [])[:5],
+                "compliance_summary": result.get("compliance_assessment", {}).get("summary", {}),
+                "model_decisions": result.get("agent_model_decisions", [])[-10:],
+                "total_cost_summary": result.get("total_cost_summary", {}),
+                "supervisor_delegations": result.get("agent_supervisor_delegations", [])[-10:],
+                "supervisor_autonomy_policy": result.get("supervisor_autonomy_policy", {}),
+                "autonomy_loop_decisions": result.get("agent_autonomy_loop_decisions", [])[-10:],
+                "errors": result.get("errors", []),
+            }
         return {
             "status": "ok",
             "access": {"user_id": access.user_id, "role": access.role},

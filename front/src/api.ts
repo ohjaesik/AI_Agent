@@ -2,7 +2,7 @@
 // 화면 컴포넌트가 fetch 세부 구현을 몰라도 되도록 backend endpoint별 함수를 제공한다.
 
 // Vite 환경변수는 build 시점에 주입된다. 값이 없으면 로컬 FastAPI 기본 주소를 사용한다.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8001';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8001';
 const ENV_API_KEY = import.meta.env.VITE_API_KEY ?? '';
 const ENV_USER_ROLE = import.meta.env.VITE_USER_ROLE ?? 'admin';
 const ENV_USER_ID = import.meta.env.VITE_USER_ID ?? 'admin-user';
@@ -92,13 +92,78 @@ export interface AnalysisResponse {
   top_candidates?: Array<any>;
   compliance_summary?: Record<string, any>;
   model_decisions?: Array<any>;
+  total_cost_summary?: Record<string, any>;
   supervisor_delegations?: Array<any>;
+  supervisor_autonomy_policy?: Record<string, any>;
+  autonomy_loop_decisions?: Array<any>;
   errors?: Array<any>;
+}
+
+export interface DashboardSummaryResponse {
+  // /dashboard/summary 응답. 홈 대시보드는 mock 값 없이 이 구조만 표시한다.
+  status: string;
+  company?: {
+    id: number;
+    name: string;
+    industry?: string;
+    size?: string;
+    description?: string | null;
+  } | null;
+  project?: {
+    id: number;
+    company_id: number;
+    title: string;
+    status?: string;
+    created_at?: string | null;
+  } | null;
+  counts?: {
+    departments?: number;
+    enterprise_systems?: number;
+    business_processes?: number;
+    documents?: number;
+    document_chunks?: number;
+    sensitive_documents?: number;
+    audit_logs?: number;
+  };
+  workflow?: {
+    state_file_path?: string | null;
+    report_docx_path?: string | null;
+    report_status?: string | null;
+    top_candidate_count?: number;
+    top_candidates?: Array<any>;
+    agent_tool_call_count?: number;
+    agent_model_decision_count?: number;
+    supervisor_delegation_count?: number;
+    autonomy_loop_decision_count?: number;
+    error_count?: number;
+    citation_validated?: boolean | null;
+    citation_issue_count?: number;
+    estimated_total_cost_usd?: number;
+    total_cost_summary?: Record<string, any>;
+  };
+}
+
+export function buildBackendAssetUrl(path?: string) {
+  // 보고서 다운로드 경로처럼 backend가 상대 경로를 줄 때 현재 API base URL을 붙인다.
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE_URL.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
 }
 
 export function getHealth() {
   // API 서버 연결 상태를 확인해 header의 상태 badge를 갱신한다.
   return request<HealthResponse>('/health');
+}
+
+export function getDashboardSummary(params: { projectId?: number; companyId?: number } = {}) {
+  // 홈 대시보드용 실제 DB/최근 workflow 요약을 가져온다.
+  return request<DashboardSummaryResponse>('/dashboard/summary', {
+    method: 'GET',
+    params: {
+      project_id: params.projectId,
+      company_id: params.companyId,
+    },
+  });
 }
 
 export function runAnalysis(params: { projectId?: number; companyId?: number; autoApprove?: boolean }) {
