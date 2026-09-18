@@ -400,7 +400,8 @@ write tool을 추가할 때는 registry의 해당 Agent `write_scopes`와 runtim
 `write_scopes`를 함께 갱신하고, 권한 허용/거부 테스트를 추가해야 한다.
 `call_agent_tool()`은 명시된 `read_scopes`, `network_policy`,
 `approval_requirements`를 Agent registry와 대조한다. `human_required` 또는
-`human_review_required` 정책은 승인 context 없이는 실행되지 않는다. 다만 이
+`human_review_required` 정책은 `approved_by`, `approved_at`, `decision_id`를
+포함한 구조화된 approval record 없이는 실행되지 않는다. 다만 이
 guard는 tool이 요청한 정책 계약을 검증하는 경계이며, 모든 외부 network/database
 동작을 자동으로 sandboxing하는 기능은 아니므로 실제 network client와 command
 tool도 별도의 adapter/sandbox를 사용해야 한다.

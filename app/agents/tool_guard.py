@@ -19,6 +19,7 @@ from app.agents.tool_names import normalize_tool_name
 F = TypeVar("F", bound=Callable[..., Any])
 
 ALLOWED_NETWORK_POLICIES = {"none", "official_sources_only", "delegated_only", "restricted", "any"}
+APPROVAL_RECORD_FIELDS = {"approved_by", "approved_at", "decision_id"}
 
 
 class AgentToolPermissionError(PermissionError):
@@ -75,9 +76,17 @@ def assert_approval_requirements_allowed(
     context = approval_context or {}
     for requirement in requirements:
         decision = policy.get(requirement)
-        if decision in {"human_required", "human_review_required", "human_review"} and not context.get(requirement):
+        if decision not in {"human_required", "human_review_required", "human_review"}:
+            continue
+        record = context.get(requirement)
+        if not isinstance(record, dict) or not APPROVAL_RECORD_FIELDS <= set(record):
             raise AgentToolPermissionError(
-                f"Agent '{agent_id}' requires approval for '{requirement}'."
+                f"Agent '{agent_id}' requires a complete approval record for '{requirement}' "
+                f"({sorted(APPROVAL_RECORD_FIELDS)})."
+            )
+        if not all(isinstance(record[field], str) and record[field].strip() for field in APPROVAL_RECORD_FIELDS):
+            raise AgentToolPermissionError(
+                f"Approval record for '{requirement}' must contain non-empty string fields."
             )
 
 def get_allowed_tools(agent_id: str) -> set[str]:

@@ -58,8 +58,20 @@ def test_policy_guards_enforce_network_and_approval_contracts():
 
     with pytest.raises(AgentToolPermissionError):
         assert_approval_requirements_allowed("delivery_orchestration_agent", ["final_report"])
+    with pytest.raises(AgentToolPermissionError):
+        assert_approval_requirements_allowed(
+            "delivery_orchestration_agent",
+            ["final_report"],
+            {"final_report": True},
+        )
     assert_approval_requirements_allowed(
         "delivery_orchestration_agent",
         ["final_report"],
-        {"final_report": True},
+        {
+            "final_report": {
+                "approved_by": "manager-1",
+                "approved_at": "2026-09-18T16:00:00Z",
+                "decision_id": "decision-123",
+            }
+        },
     )
