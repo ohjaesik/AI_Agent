@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from app.core.config import get_settings
@@ -21,7 +21,14 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class AnalysisJobRegistry:
+class AnalysisJobBackend(Protocol):
+    """Durable storage/queue contract used by the MCP adapter."""
+
+    def submit(self, runner: Callable[[], dict[str, Any]]) -> str: ...
+    def get(self, analysis_id: str) -> JobSnapshot | None: ...
+
+
+class InMemoryAnalysisJobBackend:
     def __init__(self) -> None:
         settings = get_settings()
         self._max_jobs = max(1, settings.mcp_max_jobs)
@@ -80,5 +87,7 @@ class AnalysisJobRegistry:
             self._jobs.pop(key, None)
 
 
-jobs = AnalysisJobRegistry()
+# Backward-compatible name for callers/tests while the backend is replaceable.
+AnalysisJobRegistry = InMemoryAnalysisJobBackend
 
+jobs: AnalysisJobBackend = InMemoryAnalysisJobBackend()

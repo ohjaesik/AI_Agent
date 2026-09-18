@@ -375,12 +375,13 @@ uvicorn app.mcp.http:app --host 127.0.0.1 --port 8765
 
 인증은 기존 HTTP API와 같은 JWT/API key 규칙을 사용한다. 개발/내부 환경에서는
 `MCP_AUTH_TOKEN`을 설정하고 요청의 `api_key`로 전달할 수 있다. JWT를 사용하는
-경우 기존 `APP_JWT_SECRET`과 `/auth/login`에서 발급된 token을 `auth_token`으로
-전달한다. `role`은 문서 보안 등급과 Human Review 권한에 적용된다. 현재 MCP
-tool schema에는 호환성을 위해 `auth_token`, `api_key`, `user_id`, `role`이
-입력 필드로 노출되어 있으므로, 외부 공개 환경에서는 MCP gateway 또는 reverse
-proxy에서 header 기반 인증과 tenant/user context 주입을 사용하고 client가
-credential을 tool argument로 직접 보내지 않도록 해야 한다.
+경우 기존 `APP_JWT_SECRET`과 `/auth/login`에서 발급된 token을 `Authorization:
+Bearer ...` header로 전달한다. MCP tool schema에는 인증 credential이나 사용자
+role 필드를 노출하지 않으며, Streamable HTTP에서는 `Authorization`, `X-API-Key`,
+`X-User-Id`, `X-User-Role` header를 transport context에서 읽는다. stdio client를
+외부에 공개할 때는 별도 gateway에서 동일한 인증/사용자 context를 주입해야 한다.
+`DART_API_KEY`도 tool argument로 받지 않고 서버 설정에서만 읽는다.
+`role`은 문서 보안 등급과 Human Review 권한에 적용된다.
 
 각 Expert Agent에는 `read_scopes`, `write_scopes`, `network_policy`,
 `approval_policy`가 선언되어 있다. `call_agent_tool()`은 tool contract뿐

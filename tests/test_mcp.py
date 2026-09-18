@@ -17,6 +17,9 @@ def test_mcp_registers_business_tools_and_report_resource():
     names = set(mcp._tool_manager._tools)
     assert {"search_evidence_tool", "run_delivery_analysis", "get_analysis_status", "get_report_tool"} <= names
     assert any(getattr(route, "path", None) == "/mcp" for route in mcp.streamable_http_app().routes)
+    for tool_name, tool in mcp._tool_manager._tools.items():
+        properties = set(tool.parameters.get("properties", {}))
+        assert not properties & {"auth_token", "api_key", "user_id", "role", "dart_api_key"}, tool_name
 
 
 def test_analysis_job_completes():
