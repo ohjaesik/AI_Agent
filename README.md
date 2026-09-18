@@ -375,7 +375,7 @@ Human Review 권한에 적용된다.
 
 각 Expert Agent에는 `read_scopes`, `write_scopes`, `network_policy`,
 `approval_policy`가 선언되어 있다. `call_agent_tool()`은 tool contract뿐
-아니라 호출 payload의 `_write_scopes`도 검사하므로 다른 Agent의 결과 field나
+아니라 `call_agent_tool(..., write_scopes=[...])`로 전달된 권한 요구사항도 검사하므로 다른 Agent의 결과 field나
 MCP job 영역을 임의로 변경할 수 없다. 새로운 write tool을 추가할 때는
 registry의 해당 Agent `write_scopes`와 payload scope를 함께 갱신해야 한다.
 

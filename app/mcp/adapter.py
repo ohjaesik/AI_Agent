@@ -88,9 +88,10 @@ def search_evidence(
     return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_search_evidence",
-        payload={"query": query, "company_id": company_id, "process_id": process_id, "top_k": bounded_top_k, "role": access.role, "_write_scopes": ["mcp.audit"]},
+        payload={"query": query, "company_id": company_id, "process_id": process_id, "top_k": bounded_top_k, "role": access.role},
         runner=tool_runner,
         node_name="mcp_gateway",
+        write_scopes=["mcp.audit"],
     ))
 
 
@@ -123,9 +124,10 @@ def submit_analysis(
     return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_run_delivery_analysis",
-        payload={"project_id": project_id, "company_id": company_id, "thread_id": thread_id, "_write_scopes": ["mcp.job", "mcp.audit"]},
+        payload={"project_id": project_id, "company_id": company_id, "thread_id": thread_id},
         runner=enqueue,
         node_name="mcp_gateway",
+        write_scopes=["mcp.job", "mcp.audit"],
     ))
 
 
@@ -159,9 +161,10 @@ def bootstrap_company(
     return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_bootstrap_company",
-        payload={"company_name": company_name, "official_urls": official_urls, "_write_scopes": ["mcp.audit"]},
+        payload={"company_name": company_name, "official_urls": official_urls},
         runner=tool_runner,
         node_name="mcp_gateway",
+        write_scopes=["mcp.audit"],
     ))
 
 
@@ -203,9 +206,10 @@ def apply_review(*, priority_ranking: dict[str, Any], human_review: dict[str, An
     return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_apply_human_review",
-        payload={"priority_ranking": priority_ranking, "human_review": human_review, "_write_scopes": ["mcp.audit"]},
+        payload={"priority_ranking": priority_ranking, "human_review": human_review},
         runner=tool_runner,
         node_name="mcp_gateway",
+        write_scopes=["mcp.audit"],
     ))
 
 
@@ -251,9 +255,10 @@ def ingest_text(
         return _runtime_payload(call_agent_tool(
             agent_id="mcp_gateway_agent",
             tool_name="mcp_ingest_document",
-            payload={"company_id": company_id, "filename": filename, "security_level": security_level, "_write_scopes": ["mcp.audit"]},
+            payload={"company_id": company_id, "filename": filename, "security_level": security_level},
             runner=tool_runner,
             node_name="mcp_gateway",
+            write_scopes=["mcp.audit"],
         ))
     finally:
         if temp_path:
