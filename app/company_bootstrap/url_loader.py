@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
+from app.agents.network_policy import assert_network_target_allowed
+
 
 PDF_PLACEHOLDER = (
     "이 URL은 PDF 또는 바이너리 문서로 감지되어 HTML 본문 자동 추출을 수행하지 않았다. "
@@ -122,6 +124,7 @@ def normalize_text(text: str) -> str:
 
 def fetch_url_once(url: str, timeout: int = 15) -> tuple[str, str]:
     """공식 URL을 한 번 요청하고 body text와 content_type을 반환한다."""
+    assert_network_target_allowed(url, "official_sources_only")
     request = urllib.request.Request(
         url,
         headers={

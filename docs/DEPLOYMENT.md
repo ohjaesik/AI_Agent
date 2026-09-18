@@ -164,3 +164,4 @@ pytest
 - HTTPS reverse proxy
 - Prometheus/Grafana 대시보드와 alert rule
 - 법무 검토 기반 한국 AI 기본법 조항별 compliance mapping 최종화
+- 외부 URL allowlist와 egress proxy를 도입해 공식 출처 수집 범위를 운영 정책으로 고정

@@ -404,6 +404,8 @@ write tool을 추가할 때는 registry의 해당 Agent `write_scopes`와 runtim
 guard는 tool이 요청한 정책 계약을 검증하는 경계이며, 모든 외부 network/database
 동작을 자동으로 sandboxing하는 기능은 아니므로 실제 network client와 command
 tool도 별도의 adapter/sandbox를 사용해야 한다.
+공식 URL 수집 adapter는 HTTPS만 허용하고 DNS 해석 결과가 private/link-local
+주소인 경우 요청 전에 차단해 SSRF 위험을 줄인다.
 
 ### 9.1 Install
 
