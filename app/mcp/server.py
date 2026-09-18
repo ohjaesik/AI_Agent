@@ -75,7 +75,7 @@ def run_delivery_analysis(
 
 @mcp.tool()
 def get_analysis_status(analysis_id: str, ctx: Context) -> dict[str, Any]:
-    """Get queued/running/human_review/completed/failed analysis state."""
+    """Get queued/running/recoverable/human_review/completed/failed analysis state."""
     return analysis_status(analysis_id, access=access_context_from_mcp(ctx))
 
 

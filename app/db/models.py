@@ -44,6 +44,7 @@ class MCPAnalysisJob(Base):
     owner_user_id: Mapped[str] = mapped_column(String(100), nullable=False, default="mcp-user")
     company_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    job_type: Mapped[str] = mapped_column(String(80), nullable=False, default="delivery_analysis")
 
 
 class Company(Base):

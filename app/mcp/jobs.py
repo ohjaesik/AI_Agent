@@ -32,6 +32,7 @@ class AnalysisJobBackend(Protocol):
     def submit(self, runner: Callable[[], dict[str, Any]], *, owner_user_id: str = "mcp-user",
                company_id: int | None = None, project_id: int | None = None) -> str: ...
     def get(self, analysis_id: str) -> JobSnapshot | None: ...
+    def retry(self, analysis_id: str, runner: Callable[[], dict[str, Any]]) -> None: ...
 
 
 class InMemoryAnalysisJobBackend:
@@ -86,6 +87,16 @@ class InMemoryAnalysisJobBackend:
             snapshot = self._jobs.get(analysis_id)
             return dict(snapshot) if snapshot else None
 
+    def retry(self, analysis_id: str, runner: Callable[[], dict[str, Any]]) -> None:
+        with self._lock:
+            snapshot = self._jobs.get(analysis_id)
+            if not snapshot or snapshot["status"] != "recoverable":
+                raise ValueError("Only recoverable MCP jobs can be retried.")
+            snapshot["status"] = "queued"
+            snapshot["error"] = None
+            snapshot["updated_at"] = _now()
+        self._executor.submit(self._run, analysis_id, runner)
+
     def _prune(self) -> None:
         now = datetime.now(timezone.utc).timestamp()
         expired = [
@@ -112,6 +123,7 @@ class DatabaseAnalysisJobBackend:
         self._executor = ThreadPoolExecutor(max_workers=min(4, self._max_jobs), thread_name_prefix="mcp-analysis")
         MCPAnalysisJob.__table__.create(bind=engine, checkfirst=True)
         self._ensure_owner_columns()
+        self._recover_stale_jobs()
         self._lock = threading.RLock()
 
     def _ensure_owner_columns(self) -> None:
@@ -121,11 +133,21 @@ class DatabaseAnalysisJobBackend:
             "owner_user_id": "VARCHAR(100) NOT NULL DEFAULT 'mcp-user'",
             "company_id": "INTEGER",
             "project_id": "INTEGER",
+            "job_type": "VARCHAR(80) NOT NULL DEFAULT 'delivery_analysis'",
         }
         with engine.begin() as connection:
             for name, definition in additions.items():
                 if name not in columns:
                     connection.execute(text(f"ALTER TABLE mcp_analysis_jobs ADD COLUMN {name} {definition}"))
+
+    def _recover_stale_jobs(self) -> None:
+        """Make interrupted work explicit instead of falsely leaving it running."""
+        with SessionLocal() as db:
+            db.query(MCPAnalysisJob).filter(MCPAnalysisJob.status == "running").update(
+                {"status": "recoverable", "error": "Worker stopped before completion."},
+                synchronize_session=False,
+            )
+            db.commit()
 
     def submit(self, runner: Callable[[], dict[str, Any]], *, owner_user_id: str = "mcp-user",
                company_id: int | None = None, project_id: int | None = None) -> str:
@@ -190,6 +212,17 @@ class DatabaseAnalysisJobBackend:
                 "company_id": job.company_id,
                 "project_id": job.project_id,
             }
+
+    def retry(self, analysis_id: str, runner: Callable[[], dict[str, Any]]) -> None:
+        with self._lock, SessionLocal() as db:
+            job = db.get(MCPAnalysisJob, analysis_id)
+            if not job or job.status != "recoverable":
+                raise ValueError("Only recoverable MCP jobs can be retried.")
+            job.status = "queued"
+            job.error = None
+            job.updated_at = _now()
+            db.commit()
+        self._executor.submit(self._run, analysis_id, runner)
 
     def _prune(self, db: Any) -> None:
         now = datetime.now(timezone.utc).timestamp()

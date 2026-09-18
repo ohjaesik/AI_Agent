@@ -367,6 +367,9 @@ uvicorn app.mcp.http:app --host 127.0.0.1 --port 8765
 `get_analysis_status`, `bootstrap_company`, `ingest_document_text`,
 `apply_human_review`, `get_report_tool`이다. 분석 workflow는 장시간 실행을
 고려해 즉시 `analysis_id`를 반환하고 `get_analysis_status`로 상태를 확인한다.
+프로세스 중단으로 실행 중 작업이 끝나지 않으면 DB backend는 이를
+`recoverable`로 표시해 실패와 미완료 상태를 구분한다. 재시도는 원래 작업 입력을
+다시 구성할 수 있는 별도 worker/queue가 `retry` 계약으로 수행해야 한다.
 상태가 `completed` 또는 `human_review`가 되면
 `analysis://{analysis_id}/report` resource 또는 `get_report_tool`로 보고서
 요약을 읽는다. 작업 큐는 현재 프로세스 내부의 bounded in-memory registry이므로

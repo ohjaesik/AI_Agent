@@ -73,6 +73,20 @@ def test_analysis_job_owner_cannot_read_another_users_job():
     )["owner_user_id"] == "owner-1"
 
 
+def test_recoverable_job_can_be_retried_with_explicit_runner():
+    registry = AnalysisJobRegistry()
+    analysis_id = registry.submit(lambda: {"status": "initial"})
+    registry._update(analysis_id, status="recoverable", error="worker stopped")
+    registry.retry(analysis_id, lambda: {"status": "retried"})
+    deadline = time.time() + 2
+    snapshot = registry.get(analysis_id)
+    while snapshot and snapshot["status"] in {"queued", "running"} and time.time() < deadline:
+        time.sleep(0.01)
+        snapshot = registry.get(analysis_id)
+    assert snapshot["status"] == "completed"
+    assert snapshot["result"] == {"status": "retried"}
+
+
 def test_human_review_requires_manager_or_admin():
     try:
         apply_review(
