@@ -353,31 +353,45 @@ LangGraph node를 직접 복제하지 않고 기존 service와 `call_agent_tool(
 
 ```bash
 # 로컬 MCP client (Claude Desktop/Cursor 등)
+# MCP_ENABLED=true인 환경에서 실행
 python -m app.mcp.server --transport stdio
 
-# 내부/원격 client
+# 내부/원격 client (기본 endpoint: http://127.0.0.1:8765/mcp)
 python -m app.mcp.server --transport streamable-http
 
 # ASGI process manager로 실행할 때
 uvicorn app.mcp.http:app --host 127.0.0.1 --port 8765
 ```
 
-주요 tool은 `search_evidence`, `run_delivery_analysis`,
+주요 MCP tool은 `search_evidence_tool`, `run_delivery_analysis`,
 `get_analysis_status`, `bootstrap_company`, `ingest_document_text`,
-`apply_human_review`이다. 분석 workflow는 장시간 실행을 고려해 즉시
-`analysis_id`를 반환하고 `get_analysis_status`로 상태를 확인한다. 완료된
-보고서는 `analysis://{analysis_id}/report` resource로 읽는다.
+`apply_human_review`, `get_report_tool`이다. 분석 workflow는 장시간 실행을
+고려해 즉시 `analysis_id`를 반환하고 `get_analysis_status`로 상태를 확인한다.
+상태가 `completed` 또는 `human_review`가 되면
+`analysis://{analysis_id}/report` resource 또는 `get_report_tool`로 보고서
+요약을 읽는다. 작업 큐는 현재 프로세스 내부의 bounded in-memory registry이므로
+프로세스 재시작 시 작업 상태가 사라진다. 운영 환경에서는 durable queue와
+공유 상태 저장소로 교체해야 한다.
 
-운영 환경에서는 `MCP_AUTH_TOKEN`을 설정하고 MCP 요청의 `api_key` 인자로
-전달한다. JWT를 사용하는 경우 기존 `APP_JWT_SECRET`과 `/auth/login`에서
-발급된 bearer token을 `auth_token`으로 전달한다. `role`은 문서 보안 등급과
-Human Review 권한에 적용된다.
+인증은 기존 HTTP API와 같은 JWT/API key 규칙을 사용한다. 개발/내부 환경에서는
+`MCP_AUTH_TOKEN`을 설정하고 요청의 `api_key`로 전달할 수 있다. JWT를 사용하는
+경우 기존 `APP_JWT_SECRET`과 `/auth/login`에서 발급된 token을 `auth_token`으로
+전달한다. `role`은 문서 보안 등급과 Human Review 권한에 적용된다. 현재 MCP
+tool schema에는 호환성을 위해 `auth_token`, `api_key`, `user_id`, `role`이
+입력 필드로 노출되어 있으므로, 외부 공개 환경에서는 MCP gateway 또는 reverse
+proxy에서 header 기반 인증과 tenant/user context 주입을 사용하고 client가
+credential을 tool argument로 직접 보내지 않도록 해야 한다.
 
 각 Expert Agent에는 `read_scopes`, `write_scopes`, `network_policy`,
 `approval_policy`가 선언되어 있다. `call_agent_tool()`은 tool contract뿐
-아니라 `call_agent_tool(..., write_scopes=[...])`로 전달된 권한 요구사항도 검사하므로 다른 Agent의 결과 field나
-MCP job 영역을 임의로 변경할 수 없다. 새로운 write tool을 추가할 때는
-registry의 해당 Agent `write_scopes`와 payload scope를 함께 갱신해야 한다.
+아니라 `call_agent_tool(..., write_scopes=[...])`로 전달된 권한 요구사항도
+검사하므로 다른 Agent의 결과 field나 MCP job 영역을 임의로 변경할 수 없다.
+write scope는 payload의 magic key가 아니라 runtime 호출의 명시적 인자다. 새로운
+write tool을 추가할 때는 registry의 해당 Agent `write_scopes`와 runtime 호출의
+`write_scopes`를 함께 갱신하고, 권한 허용/거부 테스트를 추가해야 한다.
+현재 `read_scopes`, `network_policy`, `approval_policy`는 registry contract와
+일부 workflow guard에서 사용되며, 모든 외부 network/database 동작을 자동으로
+sandboxing하는 기능은 아니다.
 
 ### 9.1 Install
 
