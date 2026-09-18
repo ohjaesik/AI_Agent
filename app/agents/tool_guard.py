@@ -18,6 +18,8 @@ from app.agents.tool_names import normalize_tool_name
 
 F = TypeVar("F", bound=Callable[..., Any])
 
+ALLOWED_NETWORK_POLICIES = {"none", "official_sources_only", "delegated_only", "restricted", "any"}
+
 
 class AgentToolPermissionError(PermissionError):
     """Agent가 허용되지 않은 tool을 요청했을 때 발생시키는 권한 오류다."""
@@ -37,6 +39,46 @@ def assert_agent_scopes_allowed(agent_id: str, requested_scopes: list[str], oper
             f"Agent '{agent_id}' requested forbidden {operation} scopes: {denied}. "
             f"Allowed scopes: {sorted(allowed)}"
         )
+
+
+def assert_network_policy_allowed(agent_id: str, requested_policy: str) -> None:
+    """Ensure a tool declares only the network access permitted to its Agent."""
+    if requested_policy not in ALLOWED_NETWORK_POLICIES:
+        raise AgentToolPermissionError(f"Unknown network policy: {requested_policy}")
+    spec = get_agent_spec(agent_id)
+    if not spec:
+        raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
+    allowed = spec.get("network_policy", "none")
+    permitted = {
+        "none": {"none"},
+        "delegated_only": {"none", "delegated_only"},
+        "official_sources_only": {"none", "official_sources_only"},
+        "restricted": {"none", "restricted"},
+        "any": ALLOWED_NETWORK_POLICIES,
+    }[allowed]
+    if requested_policy not in permitted:
+        raise AgentToolPermissionError(
+            f"Agent '{agent_id}' requested network policy '{requested_policy}', allowed policy is '{allowed}'."
+        )
+
+
+def assert_approval_requirements_allowed(
+    agent_id: str,
+    requirements: list[str],
+    approval_context: dict[str, Any] | None = None,
+) -> None:
+    """Require explicit approval context for policy entries that demand it."""
+    spec = get_agent_spec(agent_id)
+    if not spec:
+        raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
+    policy = spec.get("approval_policy", {})
+    context = approval_context or {}
+    for requirement in requirements:
+        decision = policy.get(requirement)
+        if decision in {"human_required", "human_review_required", "human_review"} and not context.get(requirement):
+            raise AgentToolPermissionError(
+                f"Agent '{agent_id}' requires approval for '{requirement}'."
+            )
 
 def get_allowed_tools(agent_id: str) -> set[str]:
     """registry에 선언된 Agent별 tool 이름을 정규화해 permission set으로 반환한다."""

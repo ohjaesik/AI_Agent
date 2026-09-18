@@ -16,7 +16,12 @@ from typing import Any
 from uuid import uuid4
 
 from app.agents.registry import get_agent_spec
-from app.agents.tool_guard import assert_agent_scopes_allowed, assert_tool_spec_allowed
+from app.agents.tool_guard import (
+    assert_agent_scopes_allowed,
+    assert_approval_requirements_allowed,
+    assert_network_policy_allowed,
+    assert_tool_spec_allowed,
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +111,10 @@ def call_agent_tool(
     runner: Callable[[dict[str, Any]], dict[str, Any]],
     node_name: str | None = None,
     write_scopes: list[str] | None = None,
+    read_scopes: list[str] | None = None,
+    network_policy: str | None = None,
+    approval_requirements: list[str] | None = None,
+    approval_context: dict[str, Any] | None = None,
 ) -> ToolCallResult:
     """Agent Registry 권한 검사를 통과한 뒤 tool runner를 실행하고 표준 trace를 만든다.
 
@@ -122,6 +131,12 @@ def call_agent_tool(
         if not isinstance(requested_write_scopes, list) or not all(isinstance(item, str) for item in requested_write_scopes):
             raise ValueError("write_scopes must be a list of strings")
         assert_agent_scopes_allowed(agent_id, requested_write_scopes, operation="write")
+    if read_scopes:
+        assert_agent_scopes_allowed(agent_id, read_scopes, operation="read")
+    if network_policy is not None:
+        assert_network_policy_allowed(agent_id, network_policy)
+    if approval_requirements:
+        assert_approval_requirements_allowed(agent_id, approval_requirements, approval_context)
     call_id = str(uuid4())
 
     start_log = build_tool_audit_log(

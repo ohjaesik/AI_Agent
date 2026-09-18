@@ -3,7 +3,13 @@
 
 import pytest
 
-from app.agents.tool_guard import AgentToolPermissionError, assert_agent_scopes_allowed, assert_tools_allowed
+from app.agents.tool_guard import (
+    AgentToolPermissionError,
+    assert_agent_scopes_allowed,
+    assert_approval_requirements_allowed,
+    assert_network_policy_allowed,
+    assert_tools_allowed,
+)
 from app.agents.tool_runtime import call_agent_tool
 
 
@@ -43,3 +49,17 @@ def test_runtime_enforces_explicit_write_scopes():
             runner=lambda _: {"status": "ok"},
             write_scopes=["priority_ranking"],
         )
+
+
+def test_policy_guards_enforce_network_and_approval_contracts():
+    assert_network_policy_allowed("company_onboarding_agent", "official_sources_only")
+    with pytest.raises(AgentToolPermissionError):
+        assert_network_policy_allowed("business_case_agent", "official_sources_only")
+
+    with pytest.raises(AgentToolPermissionError):
+        assert_approval_requirements_allowed("delivery_orchestration_agent", ["final_report"])
+    assert_approval_requirements_allowed(
+        "delivery_orchestration_agent",
+        ["final_report"],
+        {"final_report": True},
+    )

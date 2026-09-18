@@ -108,6 +108,8 @@ def search_evidence(
         runner=tool_runner,
         node_name="mcp_gateway",
         write_scopes=["mcp.audit"],
+        read_scopes=["company.metadata"],
+        network_policy="none",
     ))
 
 
@@ -145,6 +147,8 @@ def submit_analysis(
         runner=enqueue,
         node_name="mcp_gateway",
         write_scopes=["mcp.job", "mcp.audit"],
+        read_scopes=["project.metadata", "company.metadata"],
+        network_policy="delegated_only",
     ))
 
 
@@ -182,6 +186,8 @@ def bootstrap_company(
         runner=tool_runner,
         node_name="mcp_gateway",
         write_scopes=["mcp.audit"],
+        read_scopes=["company.metadata"],
+        network_policy="delegated_only",
     ))
 
 
@@ -227,6 +233,10 @@ def apply_review(*, priority_ranking: dict[str, Any], human_review: dict[str, An
         runner=tool_runner,
         node_name="mcp_gateway",
         write_scopes=["mcp.audit"],
+        read_scopes=["priority_ranking"],
+        network_policy="none",
+        approval_requirements=["business_operation"],
+        approval_context={"business_operation": access.role in {"manager", "admin"}},
     ))
 
 
@@ -276,6 +286,8 @@ def ingest_text(
             runner=tool_runner,
             node_name="mcp_gateway",
             write_scopes=["mcp.audit"],
+            read_scopes=["company.metadata", "documents.metadata"],
+            network_policy="none",
         ))
     finally:
         if temp_path:
