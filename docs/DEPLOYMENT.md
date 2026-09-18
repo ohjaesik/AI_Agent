@@ -38,6 +38,10 @@ S3_SECRET_ACCESS_KEY=<SET_SECRET_KEY>
 S3_REGION_NAME=ap-northeast-2
 
 APP_ENV=production
+MCP_JOB_BACKEND=database
+MCP_ALLOWED_ORIGINS=https://mcp.example.com
+MCP_RATE_LIMIT_PER_MINUTE=120
+MCP_MAX_REQUEST_BYTES=1048576
 ```
 
 ## 2. 실행
@@ -165,3 +169,4 @@ pytest
 - Prometheus/Grafana 대시보드와 alert rule
 - 법무 검토 기반 한국 AI 기본법 조항별 compliance mapping 최종화
 - 외부 URL allowlist와 egress proxy를 도입해 공식 출처 수집 범위를 운영 정책으로 고정
+- API key가 있는 별도 환경에서 LLM online quality evaluation을 실행하고 모델/비용/latency 결과를 보관

@@ -408,6 +408,18 @@ tool도 별도의 adapter/sandbox를 사용해야 한다.
 공식 URL 수집 adapter는 HTTPS만 허용하고 DNS 해석 결과가 private/link-local
 주소인 경우 요청 전에 차단해 SSRF 위험을 줄인다.
 
+Streamable HTTP transport에는 허용 origin, 요청 body 크기, client별 분당
+호출 수 제한, `X-Request-ID` 응답 header, 구조화 request log가 적용된다.
+기본값은 origin 제한 없음, 분당 120회, body 1 MiB이며 운영 환경에서는
+`MCP_ALLOWED_ORIGINS`, `MCP_RATE_LIMIT_PER_MINUTE`, `MCP_MAX_REQUEST_BYTES`를
+명시적으로 설정한다.
+
+품질 평가는 두 계층으로 분리한다. CI의 regression/holdout gate는 API key 없이
+재현 가능한 deterministic evaluator 정책 회귀를 검증하고, 실제 LLM/API key 기반
+online 평가는 별도 환경에서 실행해야 한다. 따라서 CI baseline floor 통과를
+실제 LLM 품질 향상으로 해석하지 않으며, online 평가 결과에는 모델/endpoint,
+dataset version, latency와 비용을 함께 기록해야 한다.
+
 ### 9.1 Install
 
 ```bash
