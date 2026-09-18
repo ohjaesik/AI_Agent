@@ -35,6 +35,8 @@ def register_pgvector(dbapi_connection, connection_record):
     """
     psycopg3 connection에 pgvector type을 등록한다.
     """
+    if dbapi_connection.__class__.__module__.startswith("sqlite3"):
+        return
     register_vector(dbapi_connection)
 
 

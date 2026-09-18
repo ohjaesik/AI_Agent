@@ -370,8 +370,10 @@ uvicorn app.mcp.http:app --host 127.0.0.1 --port 8765
 상태가 `completed` 또는 `human_review`가 되면
 `analysis://{analysis_id}/report` resource 또는 `get_report_tool`로 보고서
 요약을 읽는다. 작업 큐는 현재 프로세스 내부의 bounded in-memory registry이므로
-프로세스 재시작 시 작업 상태가 사라진다. 운영 환경에서는 durable queue와
-공유 상태 저장소로 교체해야 한다.
+프로세스 재시작 시 작업 상태가 사라진다. 운영 환경에서는
+`MCP_JOB_BACKEND=database`로 durable job metadata 저장을 활성화할 수 있다.
+이 모드는 상태/결과를 DB에 보존하지만, 실행 중 프로세스가 중단된 callable을
+자동 재개하지는 않으므로 별도 worker/queue 도입이 필요하다.
 
 인증은 기존 HTTP API와 같은 JWT/API key 규칙을 사용한다. 개발/내부 환경에서는
 `MCP_AUTH_TOKEN`을 설정하고 요청의 `api_key`로 전달할 수 있다. JWT를 사용하는

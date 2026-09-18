@@ -9,7 +9,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///./mcp-test.db")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
 from app.mcp.adapter import access_context, apply_review
-from app.mcp.jobs import AnalysisJobRegistry
+from app.mcp.jobs import AnalysisJobRegistry, DatabaseAnalysisJobBackend
 from app.mcp.server import mcp
 
 
@@ -33,6 +33,21 @@ def test_analysis_job_completes():
     assert snapshot is not None
     assert snapshot["status"] == "completed"
     assert snapshot["result"] == {"status": "ok", "value": 3}
+
+
+def test_database_job_backend_survives_backend_recreation():
+    backend = DatabaseAnalysisJobBackend()
+    analysis_id = backend.submit(lambda: {"status": "durable", "value": 7})
+    deadline = time.time() + 2
+    snapshot = backend.get(analysis_id)
+    while snapshot and snapshot["status"] in {"queued", "running"} and time.time() < deadline:
+        time.sleep(0.01)
+        snapshot = backend.get(analysis_id)
+    assert snapshot is not None
+    assert snapshot["status"] == "completed"
+
+    recreated_backend = DatabaseAnalysisJobBackend()
+    assert recreated_backend.get(analysis_id)["result"] == {"status": "durable", "value": 7}
 
 
 def test_human_review_requires_manager_or_admin():
