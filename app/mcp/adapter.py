@@ -10,7 +10,7 @@ from typing import Any
 
 from app.api.responses import build_analysis_response
 from app.api.security import decode_access_token, normalize_role, validate_api_key
-from app.agents.tool_runtime import call_agent_tool
+from app.agents.tool_runtime import ToolCallResult, call_agent_tool
 from app.company_bootstrap.runner import run_bootstrap_supervisor_graph
 from app.db.database import SessionLocal
 from app.ingestion.service import ingest_file
@@ -47,6 +47,14 @@ def _summary(result: dict[str, Any], access: AccessContext) -> dict[str, Any]:
     return build_analysis_response(result=result, access=access)
 
 
+def _runtime_payload(call: ToolCallResult) -> dict[str, Any]:
+    """Preserve the common runtime audit trace in every MCP response."""
+    result = dict(call.result)
+    result["audit_logs"] = call.audit_logs
+    result["observation"] = call.observation
+    return result
+
+
 def search_evidence(
     *,
     query: str,
@@ -77,13 +85,13 @@ def search_evidence(
             "results": results,
         }
 
-    return call_agent_tool(
+    return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_search_evidence",
         payload={"query": query, "company_id": company_id, "process_id": process_id, "top_k": bounded_top_k, "role": access.role, "_write_scopes": ["mcp.audit"]},
         runner=tool_runner,
         node_name="mcp_gateway",
-    ).result
+    ))
 
 
 def submit_analysis(
@@ -112,13 +120,13 @@ def submit_analysis(
     def enqueue(_: dict[str, Any]) -> dict[str, Any]:
         return {"status": "queued", "analysis_id": jobs.submit(runner)}
 
-    return call_agent_tool(
+    return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_run_delivery_analysis",
         payload={"project_id": project_id, "company_id": company_id, "thread_id": thread_id, "_write_scopes": ["mcp.job", "mcp.audit"]},
         runner=enqueue,
         node_name="mcp_gateway",
-    ).result
+    ))
 
 
 def bootstrap_company(
@@ -148,13 +156,13 @@ def bootstrap_company(
         )
         return {"status": "ok", "result": result.to_dict()}
 
-    return call_agent_tool(
+    return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_bootstrap_company",
         payload={"company_name": company_name, "official_urls": official_urls, "_write_scopes": ["mcp.audit"]},
         runner=tool_runner,
         node_name="mcp_gateway",
-    ).result
+    ))
 
 
 def analysis_status(analysis_id: str) -> dict[str, Any]:
@@ -192,13 +200,13 @@ def apply_review(*, priority_ranking: dict[str, Any], human_review: dict[str, An
             ),
         }
 
-    return call_agent_tool(
+    return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
         tool_name="mcp_apply_human_review",
         payload={"priority_ranking": priority_ranking, "human_review": human_review, "_write_scopes": ["mcp.audit"]},
         runner=tool_runner,
         node_name="mcp_gateway",
-    ).result
+    ))
 
 
 def ingest_text(
@@ -240,13 +248,13 @@ def ingest_text(
                 )
             return {"status": "ok", "result": result.to_dict()}
 
-        return call_agent_tool(
+        return _runtime_payload(call_agent_tool(
             agent_id="mcp_gateway_agent",
             tool_name="mcp_ingest_document",
             payload={"company_id": company_id, "filename": filename, "security_level": security_level, "_write_scopes": ["mcp.audit"]},
             runner=tool_runner,
             node_name="mcp_gateway",
-        ).result
+        ))
     finally:
         if temp_path:
             temp_path.unlink(missing_ok=True)

@@ -43,3 +43,14 @@ def test_human_review_requires_manager_or_admin():
         assert "manager/admin" in str(exc)
     else:
         raise AssertionError("analyst must not apply Human Review")
+
+
+def test_mcp_runtime_result_preserves_audit_trace():
+    result = apply_review(
+        priority_ranking={"items": []},
+        human_review={},
+        access=access_context(role="manager", api_key=os.environ.get("APP_API_KEY")),
+    )
+    assert result["audit_logs"][0]["status"] == "agent_tool_call_started"
+    assert result["audit_logs"][-1]["status"] == "agent_tool_call_succeeded"
+    assert result["observation"]["result_keys"]
