@@ -63,14 +63,14 @@ jobs:
         run: pytest
       - name: Run regression quality gate
         # 고정 regression set으로 evaluator 정책이 깨졌는지 확인한다.
+        # Floors are calibrated from the current main baseline
+        # (0.85 / 0.69 / 0.8854 / 0.7304) so this gate detects degradation
+        # instead of requiring an unreachable absolute target.
         run: |
           mkdir -p outputs
           python -m app.evaluation.agent_quality_eval \
             --dataset regression \
             --strict \
-            # These are regression floors calibrated from the current main baseline
-            # (0.85 / 0.69 / 0.8854 / 0.7304). The gate must detect degradation,
-            # not require an unreachable absolute target on the existing dataset.
             --min-status-accuracy 0.84 \
             --min-review-accuracy 0.68 \
             --min-status-macro-f1 0.88 \
