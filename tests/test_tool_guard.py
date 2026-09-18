@@ -3,7 +3,7 @@
 
 import pytest
 
-from app.agents.tool_guard import AgentToolPermissionError, assert_tools_allowed
+from app.agents.tool_guard import AgentToolPermissionError, assert_agent_scopes_allowed, assert_tools_allowed
 
 
 def test_tool_guard_allows_declared_tool():
@@ -13,3 +13,12 @@ def test_tool_guard_allows_declared_tool():
 def test_tool_guard_rejects_forbidden_tool():
     with pytest.raises(AgentToolPermissionError):
         assert_tools_allowed("business_case_agent", ["official URL loader"])
+
+
+def test_scope_guard_rejects_cross_agent_mutation():
+    with pytest.raises(AgentToolPermissionError):
+        assert_agent_scopes_allowed("business_case_agent", ["compliance_assessment"])
+
+
+def test_scope_guard_allows_declared_mutation():
+    assert_agent_scopes_allowed("business_case_agent", ["priority_ranking"])

@@ -184,6 +184,15 @@ class Settings(BaseSettings):
     # App
     app_env: str = Field(default="local", alias="APP_ENV")
 
+    # MCP transport and request guard. The standalone server supports stdio for local
+    # clients and Streamable HTTP for remote/internal clients.
+    mcp_enabled: bool = Field(default=True, alias="MCP_ENABLED")
+    mcp_host: str = Field(default="127.0.0.1", alias="MCP_HOST")
+    mcp_port: int = Field(default=8765, alias="MCP_PORT")
+    mcp_auth_token: str | None = Field(default=None, alias="MCP_AUTH_TOKEN")
+    mcp_max_jobs: int = Field(default=32, alias="MCP_MAX_JOBS")
+    mcp_job_ttl_seconds: int = Field(default=3600, alias="MCP_JOB_TTL_SECONDS")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

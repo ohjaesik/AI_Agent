@@ -344,6 +344,41 @@ AX Delivery Planner는 추천과 근거 생성을 자동화하지만, 고위험 
 
 ## 9. 실행 방법
 
+### MCP interface
+
+기존 `app/agents/registry.py` → `tool_guard.py` → `tool_runtime.py` 경계를
+그대로 사용하면서, 업무 단위 MCP tool을 추가로 제공한다. MCP handler가 DB나
+LangGraph node를 직접 복제하지 않고 기존 service와 `call_agent_tool()`을
+호출하므로 FastAPI/CLI와 실행 trace가 일관된다.
+
+```bash
+# 로컬 MCP client (Claude Desktop/Cursor 등)
+python -m app.mcp.server --transport stdio
+
+# 내부/원격 client
+python -m app.mcp.server --transport streamable-http
+
+# ASGI process manager로 실행할 때
+uvicorn app.mcp.http:app --host 127.0.0.1 --port 8765
+```
+
+주요 tool은 `search_evidence`, `run_delivery_analysis`,
+`get_analysis_status`, `bootstrap_company`, `ingest_document_text`,
+`apply_human_review`이다. 분석 workflow는 장시간 실행을 고려해 즉시
+`analysis_id`를 반환하고 `get_analysis_status`로 상태를 확인한다. 완료된
+보고서는 `analysis://{analysis_id}/report` resource로 읽는다.
+
+운영 환경에서는 `MCP_AUTH_TOKEN`을 설정하고 MCP 요청의 `api_key` 인자로
+전달한다. JWT를 사용하는 경우 기존 `APP_JWT_SECRET`과 `/auth/login`에서
+발급된 bearer token을 `auth_token`으로 전달한다. `role`은 문서 보안 등급과
+Human Review 권한에 적용된다.
+
+각 Expert Agent에는 `read_scopes`, `write_scopes`, `network_policy`,
+`approval_policy`가 선언되어 있다. `call_agent_tool()`은 tool contract뿐
+아니라 호출 payload의 `_write_scopes`도 검사하므로 다른 Agent의 결과 field나
+MCP job 영역을 임의로 변경할 수 없다. 새로운 write tool을 추가할 때는
+registry의 해당 Agent `write_scopes`와 payload scope를 함께 갱신해야 한다.
+
 ### 9.1 Install
 
 ```bash
