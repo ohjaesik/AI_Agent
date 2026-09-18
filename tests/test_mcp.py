@@ -34,7 +34,11 @@ def test_analysis_job_completes():
 
 def test_human_review_requires_manager_or_admin():
     try:
-        apply_review(priority_ranking={"items": []}, human_review={}, access=access_context(role="analyst"))
+        apply_review(
+            priority_ranking={"items": []},
+            human_review={},
+            access=access_context(role="analyst", api_key=os.environ.get("APP_API_KEY")),
+        )
     except PermissionError as exc:
         assert "manager/admin" in str(exc)
     else:
