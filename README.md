@@ -463,6 +463,7 @@ python -m app.db.init_pgvector
 python -m app.db.create_tables
 python -m app.db.migrate_discovery_metadata
 python -m app.db.migrate_operational_hardening
+python -m app.db.migrate_mcp_jobs
 ```
 
 ### 9.4 Bootstrap company

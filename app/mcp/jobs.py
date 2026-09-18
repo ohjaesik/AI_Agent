@@ -14,11 +14,10 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
-from sqlalchemy import inspect, text
-
 from app.core.config import get_settings
-from app.db.database import SessionLocal, engine
+from app.db.database import SessionLocal
 from app.db.models import MCPAnalysisJob
+from app.db.migrate_mcp_jobs import migrate_mcp_jobs
 from app.mcp.schemas import JobSnapshot, JobStatus
 
 
@@ -121,24 +120,9 @@ class DatabaseAnalysisJobBackend:
         self._max_jobs = max(1, settings.mcp_max_jobs)
         self._ttl_seconds = max(60, settings.mcp_job_ttl_seconds)
         self._executor = ThreadPoolExecutor(max_workers=min(4, self._max_jobs), thread_name_prefix="mcp-analysis")
-        MCPAnalysisJob.__table__.create(bind=engine, checkfirst=True)
-        self._ensure_owner_columns()
+        migrate_mcp_jobs()
         self._recover_stale_jobs()
         self._lock = threading.RLock()
-
-    def _ensure_owner_columns(self) -> None:
-        """Upgrade the small standalone table for installations without migrations yet."""
-        columns = {item["name"] for item in inspect(engine).get_columns("mcp_analysis_jobs")}
-        additions = {
-            "owner_user_id": "VARCHAR(100) NOT NULL DEFAULT 'mcp-user'",
-            "company_id": "INTEGER",
-            "project_id": "INTEGER",
-            "job_type": "VARCHAR(80) NOT NULL DEFAULT 'delivery_analysis'",
-        }
-        with engine.begin() as connection:
-            for name, definition in additions.items():
-                if name not in columns:
-                    connection.execute(text(f"ALTER TABLE mcp_analysis_jobs ADD COLUMN {name} {definition}"))
 
     def _recover_stale_jobs(self) -> None:
         """Make interrupted work explicit instead of falsely leaving it running."""

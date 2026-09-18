@@ -54,6 +54,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec api python -m app.db.init_pgvector
 docker compose -f docker-compose.prod.yml exec api python -m app.db.create_tables
 docker compose -f docker-compose.prod.yml exec api python -m app.db.migrate_operational_hardening
+docker compose -f docker-compose.prod.yml exec api python -m app.db.migrate_mcp_jobs
 ```
 
 ## 4. 인증
