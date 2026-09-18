@@ -41,6 +41,9 @@ class MCPAnalysisJob(Base):
     updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_user_id: Mapped[str] = mapped_column(String(100), nullable=False, default="mcp-user")
+    company_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Company(Base):

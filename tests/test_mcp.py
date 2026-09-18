@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import time
 
+import pytest
+
 os.environ.setdefault("DATABASE_URL", "sqlite:///./mcp-test.db")
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from app.mcp.adapter import access_context, apply_review
+from app.mcp.adapter import access_context, analysis_status, apply_review
 from app.mcp.jobs import AnalysisJobRegistry, DatabaseAnalysisJobBackend
 from app.mcp.server import mcp
 
@@ -48,6 +50,27 @@ def test_database_job_backend_survives_backend_recreation():
 
     recreated_backend = DatabaseAnalysisJobBackend()
     assert recreated_backend.get(analysis_id)["result"] == {"status": "durable", "value": 7}
+
+
+def test_analysis_job_owner_cannot_read_another_users_job():
+    registry = AnalysisJobRegistry()
+    analysis_id = registry.submit(lambda: {"status": "ok"}, owner_user_id="owner-1", company_id=10)
+    deadline = time.time() + 2
+    snapshot = registry.get(analysis_id)
+    while snapshot and snapshot["status"] in {"queued", "running"} and time.time() < deadline:
+        time.sleep(0.01)
+        snapshot = registry.get(analysis_id)
+    with pytest.raises(PermissionError):
+        analysis_status(
+            analysis_id,
+            access=access_context(user_id="owner-2", api_key=os.environ.get("APP_API_KEY")),
+            job_backend=registry,
+        )
+    assert analysis_status(
+        analysis_id,
+        access=access_context(user_id="owner-1", api_key=os.environ.get("APP_API_KEY")),
+        job_backend=registry,
+    )["owner_user_id"] == "owner-1"
 
 
 def test_human_review_requires_manager_or_admin():

@@ -15,4 +15,6 @@ class JobSnapshot(TypedDict):
     updated_at: str
     result: dict[str, Any] | None
     error: str | None
-
+    owner_user_id: str
+    company_id: int | None
+    project_id: int | None

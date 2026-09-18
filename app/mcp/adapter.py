@@ -138,7 +138,9 @@ def submit_analysis(
         return _summary(result, access)
 
     def enqueue(_: dict[str, Any]) -> dict[str, Any]:
-        return {"status": "queued", "analysis_id": job_backend.submit(runner)}
+        return {"status": "queued", "analysis_id": job_backend.submit(
+            runner, owner_user_id=access.user_id, company_id=company_id, project_id=project_id
+        )}
 
     return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
@@ -191,15 +193,26 @@ def bootstrap_company(
     ))
 
 
-def analysis_status(analysis_id: str, job_backend: AnalysisJobBackend = jobs) -> dict[str, Any]:
+def _assert_job_access(snapshot: dict[str, Any], access: AccessContext) -> None:
+    if access.role == "admin" or snapshot["owner_user_id"] == access.user_id:
+        return
+    raise PermissionError("You do not have access to this analysis job.")
+
+
+def analysis_status(
+    analysis_id: str, *, access: AccessContext, job_backend: AnalysisJobBackend = jobs
+) -> dict[str, Any]:
     snapshot = job_backend.get(analysis_id)
     if not snapshot:
         raise KeyError(f"Unknown analysis_id: {analysis_id}")
+    _assert_job_access(snapshot, access)
     return snapshot
 
 
-def report_resource(analysis_id: str, job_backend: AnalysisJobBackend = jobs) -> str:
-    snapshot = analysis_status(analysis_id, job_backend=job_backend)
+def report_resource(
+    analysis_id: str, *, access: AccessContext, job_backend: AnalysisJobBackend = jobs
+) -> str:
+    snapshot = analysis_status(analysis_id, access=access, job_backend=job_backend)
     if snapshot["status"] not in {"completed", "human_review"} or not snapshot["result"]:
         return json.dumps({"analysis_id": analysis_id, "status": snapshot["status"]}, ensure_ascii=False)
     result = snapshot["result"]

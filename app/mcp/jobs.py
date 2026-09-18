@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+from sqlalchemy import inspect, text
+
 from app.core.config import get_settings
 from app.db.database import SessionLocal, engine
 from app.db.models import MCPAnalysisJob
@@ -27,7 +29,8 @@ def _now() -> str:
 class AnalysisJobBackend(Protocol):
     """Durable storage/queue contract used by the MCP adapter."""
 
-    def submit(self, runner: Callable[[], dict[str, Any]]) -> str: ...
+    def submit(self, runner: Callable[[], dict[str, Any]], *, owner_user_id: str = "mcp-user",
+               company_id: int | None = None, project_id: int | None = None) -> str: ...
     def get(self, analysis_id: str) -> JobSnapshot | None: ...
 
 
@@ -40,7 +43,8 @@ class InMemoryAnalysisJobBackend:
         self._jobs: dict[str, JobSnapshot] = {}
         self._lock = threading.RLock()
 
-    def submit(self, runner: Callable[[], dict[str, Any]]) -> str:
+    def submit(self, runner: Callable[[], dict[str, Any]], *, owner_user_id: str = "mcp-user",
+               company_id: int | None = None, project_id: int | None = None) -> str:
         with self._lock:
             self._prune()
             active = sum(item["status"] in {"queued", "running"} for item in self._jobs.values())
@@ -55,6 +59,9 @@ class InMemoryAnalysisJobBackend:
                 "updated_at": now,
                 "result": None,
                 "error": None,
+                "owner_user_id": owner_user_id,
+                "company_id": company_id,
+                "project_id": project_id,
             }
         self._executor.submit(self._run, analysis_id, runner)
         return analysis_id
@@ -104,9 +111,24 @@ class DatabaseAnalysisJobBackend:
         self._ttl_seconds = max(60, settings.mcp_job_ttl_seconds)
         self._executor = ThreadPoolExecutor(max_workers=min(4, self._max_jobs), thread_name_prefix="mcp-analysis")
         MCPAnalysisJob.__table__.create(bind=engine, checkfirst=True)
+        self._ensure_owner_columns()
         self._lock = threading.RLock()
 
-    def submit(self, runner: Callable[[], dict[str, Any]]) -> str:
+    def _ensure_owner_columns(self) -> None:
+        """Upgrade the small standalone table for installations without migrations yet."""
+        columns = {item["name"] for item in inspect(engine).get_columns("mcp_analysis_jobs")}
+        additions = {
+            "owner_user_id": "VARCHAR(100) NOT NULL DEFAULT 'mcp-user'",
+            "company_id": "INTEGER",
+            "project_id": "INTEGER",
+        }
+        with engine.begin() as connection:
+            for name, definition in additions.items():
+                if name not in columns:
+                    connection.execute(text(f"ALTER TABLE mcp_analysis_jobs ADD COLUMN {name} {definition}"))
+
+    def submit(self, runner: Callable[[], dict[str, Any]], *, owner_user_id: str = "mcp-user",
+               company_id: int | None = None, project_id: int | None = None) -> str:
         with self._lock, SessionLocal() as db:
             self._prune(db)
             active = db.query(MCPAnalysisJob).filter(
@@ -121,6 +143,9 @@ class DatabaseAnalysisJobBackend:
                 status="queued",
                 created_at=now,
                 updated_at=now,
+                owner_user_id=owner_user_id,
+                company_id=company_id,
+                project_id=project_id,
             ))
             db.commit()
         self._executor.submit(self._run, analysis_id, runner)
@@ -161,6 +186,9 @@ class DatabaseAnalysisJobBackend:
                 "updated_at": job.updated_at,
                 "result": json.loads(job.result_json) if job.result_json else None,
                 "error": job.error,
+                "owner_user_id": job.owner_user_id,
+                "company_id": job.company_id,
+                "project_id": job.project_id,
             }
 
     def _prune(self, db: Any) -> None:

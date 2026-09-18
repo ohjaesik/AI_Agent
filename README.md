@@ -374,6 +374,9 @@ uvicorn app.mcp.http:app --host 127.0.0.1 --port 8765
 `MCP_JOB_BACKEND=database`로 durable job metadata 저장을 활성화할 수 있다.
 이 모드는 상태/결과를 DB에 보존하지만, 실행 중 프로세스가 중단된 callable을
 자동 재개하지는 않으므로 별도 worker/queue 도입이 필요하다.
+각 job에는 요청자 user id와 company/project 범위가 함께 저장되며, status/report
+조회는 소유자 또는 admin만 허용한다. 따라서 `analysis_id`를 알고 있는 것만으로
+다른 사용자의 분석 결과를 읽을 수 없다.
 
 인증은 기존 HTTP API와 같은 JWT/API key 규칙을 사용한다. 개발/내부 환경에서는
 `MCP_AUTH_TOKEN`을 설정하고 요청의 `api_key`로 전달할 수 있다. JWT를 사용하는

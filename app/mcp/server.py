@@ -76,7 +76,7 @@ def run_delivery_analysis(
 @mcp.tool()
 def get_analysis_status(analysis_id: str, ctx: Context) -> dict[str, Any]:
     """Get queued/running/human_review/completed/failed analysis state."""
-    return analysis_status(analysis_id)
+    return analysis_status(analysis_id, access=access_context_from_mcp(ctx))
 
 
 @mcp.tool()
@@ -146,13 +146,13 @@ def apply_human_review(
 @mcp.resource("analysis://{analysis_id}/report", mime_type="application/json")
 def get_report(analysis_id: str, ctx: Context) -> str:
     """Read the report summary for a completed analysis."""
-    return report_resource(analysis_id)
+    return report_resource(analysis_id, access=access_context_from_mcp(ctx))
 
 
 @mcp.tool()
 def get_report_tool(analysis_id: str, ctx: Context) -> dict[str, Any]:
     """Return the report resource payload as JSON for clients without resource support."""
-    return json.loads(report_resource(analysis_id))
+    return json.loads(report_resource(analysis_id, access=access_context_from_mcp(ctx)))
 
 
 def main() -> None:
