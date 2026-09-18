@@ -23,6 +23,21 @@ class AgentToolPermissionError(PermissionError):
     """Agent가 허용되지 않은 tool을 요청했을 때 발생시키는 권한 오류다."""
     pass
 
+
+def assert_agent_scopes_allowed(agent_id: str, requested_scopes: list[str], operation: str = "write") -> None:
+    """Ensure a tool cannot mutate fields outside its Agent contract."""
+    spec = get_agent_spec(agent_id)
+    if not spec:
+        raise AgentToolPermissionError(f"Unknown agent_id: {agent_id}")
+    allowed_key = "write_scopes" if operation == "write" else "read_scopes"
+    allowed = set(spec.get(allowed_key, []))
+    denied = sorted(scope for scope in requested_scopes if scope not in allowed)
+    if denied:
+        raise AgentToolPermissionError(
+            f"Agent '{agent_id}' requested forbidden {operation} scopes: {denied}. "
+            f"Allowed scopes: {sorted(allowed)}"
+        )
+
 def get_allowed_tools(agent_id: str) -> set[str]:
     """registry에 선언된 Agent별 tool 이름을 정규화해 permission set으로 반환한다."""
     spec = get_agent_spec(agent_id)

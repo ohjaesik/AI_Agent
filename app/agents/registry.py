@@ -68,6 +68,10 @@ class AgentSpec:
     quality_checks: list[str] = field(default_factory=list)
     output_contract: list[str] = field(default_factory=list)
     handoff_notes: list[str] = field(default_factory=list)
+    read_scopes: list[str] = field(default_factory=list)
+    write_scopes: list[str] = field(default_factory=list)
+    network_policy: str = "none"
+    approval_policy: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """dataclass/value object를 JSON 직렬화 가능한 dict로 변환한다."""
@@ -332,17 +336,101 @@ AGENT_REGISTRY: list[AgentSpec] = [
     ),
 ]
 
+AGENT_POLICIES: dict[str, dict[str, Any]] = {
+    "company_onboarding_agent": {
+        "read_scopes": ["user_input", "official_sources", "company.metadata"],
+        "write_scopes": ["company.metadata", "project.metadata", "documents.metadata", "processes"],
+        "network_policy": "official_sources_only",
+        "approval_policy": {"sensitive_data": "human_review", "final_decision": "human_required"},
+    },
+    "context_evidence_agent": {
+        "read_scopes": ["company.metadata", "project.metadata", "processes", "documents.metadata", "documents.content"],
+        "write_scopes": ["retrieved_contexts", "evidence_items", "used_sources"],
+        "network_policy": "none",
+        "approval_policy": {"sensitive_data": "inherited"},
+    },
+    "process_diagnosis_agent": {
+        "read_scopes": ["processes", "retrieved_contexts", "evidence_items"],
+        "write_scopes": ["process_analysis", "data_readiness", "automation_feasibility"],
+        "network_policy": "none",
+        "approval_policy": {"autonomous_execution": "forbidden"},
+    },
+    "business_case_agent": {
+        "read_scopes": ["processes", "process_analysis", "data_readiness", "automation_feasibility", "risk_governance"],
+        "write_scopes": ["roi_cost", "priority_ranking"],
+        "network_policy": "none",
+        "approval_policy": {"financial_assumptions": "deterministic_only", "governance_block": "cannot_override"},
+    },
+    "governance_compliance_agent": {
+        "read_scopes": ["processes", "retrieved_contexts", "documents.metadata", "priority_ranking"],
+        "write_scopes": ["risk_governance", "compliance_assessment", "human_review.request"],
+        "network_policy": "none",
+        "approval_policy": {"sensitive_case": "human_review", "final_decision": "human_required"},
+    },
+    "evaluation_critic_agent": {
+        "read_scopes": ["evidence_items", "priority_ranking", "risk_governance", "compliance_assessment"],
+        "write_scopes": ["evaluation", "replan_request"],
+        "network_policy": "official_sources_only",
+        "approval_policy": {"final_decision": "human_required"},
+    },
+    "delivery_orchestration_agent": {
+        "read_scopes": ["priority_ranking", "risk_governance", "compliance_assessment", "human_review"],
+        "write_scopes": ["poc_plan", "report_data", "report_docx_path"],
+        "network_policy": "none",
+        "approval_policy": {"final_report": "human_review_required"},
+    },
+    "mcp_gateway_agent": {
+        "read_scopes": ["user_input", "company.metadata", "project.metadata"],
+        "write_scopes": ["mcp.job", "mcp.audit"],
+        "network_policy": "delegated_only",
+        "approval_policy": {"business_operation": "delegated_to_expert_agent"},
+    },
+}
+
+MCP_GATEWAY_SPEC = AgentSpec(
+    id="mcp_gateway_agent",
+    name="MCP Gateway Agent",
+    category="interface",
+    purpose="Expose bounded business tools through MCP without bypassing runtime policy or audit tracing.",
+    implementation="mcp_adapter_over_existing_services",
+    managed_nodes=["mcp_gateway"],
+    capabilities=[
+        {"name": "mcp_business_interface", "node_role": "MCP tool request validation and delegation", "nodes": ["mcp_gateway"]},
+    ],
+    tool_specs=[
+        tool_spec("mcp_search_evidence", "Search role-visible traceable evidence.", ["mcp_gateway"]),
+        tool_spec("mcp_run_delivery_analysis", "Queue the existing delivery analysis graph.", ["mcp_gateway"]),
+        tool_spec("mcp_bootstrap_company", "Run official company bootstrap and discovery.", ["mcp_gateway"]),
+        tool_spec("mcp_ingest_document", "Persist and optionally index document text.", ["mcp_gateway"]),
+        tool_spec("mcp_apply_human_review", "Apply manager/admin review to a ranking.", ["mcp_gateway"]),
+    ],
+    tools=["MCP", "existing service layer", "audit trace"],
+    controls=["runtime_tool_permission_check", "role_aware_access", "bounded_async_jobs"],
+    role_prompt="You are the MCP Gateway Agent. Delegate only to existing application services and preserve their validation, governance, and audit boundaries.",
+    task_instructions=["Validate MCP inputs.", "Use existing service implementations.", "Return bounded JSON-safe results."],
+    quality_checks=["Never expose an undeclared internal tool.", "Never bypass role or document access checks."],
+    output_contract=["Every write or workflow delegation must include standard tool audit logs."],
+    handoff_notes=["MCP clients receive a stable business-level interface, not internal LangGraph nodes."],
+)
+
 
 def get_agent_registry() -> list[dict[str, Any]]:
     """Supervisor prompt와 permission report가 사용할 전체 Agent catalog를 반환한다."""
-    return [item.to_dict() for item in AGENT_REGISTRY]
+    return [get_agent_spec(item.id) for item in AGENT_REGISTRY if get_agent_spec(item.id)]
 
 
 def get_agent_spec(agent_id: str) -> dict[str, Any] | None:
     """agent_id에 해당하는 Agent 계약서를 dict 형태로 조회한다."""
-    for item in AGENT_REGISTRY:
+    for item in [*AGENT_REGISTRY, MCP_GATEWAY_SPEC]:
         if item.id == agent_id:
-            return item.to_dict()
+            data = item.to_dict()
+            data.update(AGENT_POLICIES.get(agent_id, {
+                "read_scopes": [],
+                "write_scopes": [],
+                "network_policy": "none",
+                "approval_policy": {},
+            }))
+            return data
     return None
 
 
