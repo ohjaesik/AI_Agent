@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from mcp.server.fastmcp import Context
+
 from app.api.responses import build_analysis_response
 from app.api.security import decode_access_token, normalize_role, validate_api_key
 from app.agents.tool_runtime import ToolCallResult, call_agent_tool
@@ -19,7 +21,7 @@ from app.rag.retriever import search_similar_chunks
 from app.security.access_control import AccessContext
 from app.tools.review_applier import apply_human_review_to_ranking
 
-from app.mcp.jobs import jobs
+from app.mcp.jobs import AnalysisJobBackend, jobs
 
 
 def access_context(
@@ -41,6 +43,20 @@ def access_context(
         return AccessContext(user_id=user_id, role=normalize_role(role))
     validate_api_key(api_key)
     return AccessContext(user_id=user_id, role=normalize_role(role))
+
+
+def access_context_from_mcp(ctx: Context) -> AccessContext:
+    """Build identity from transport metadata, never from tool arguments."""
+    request = getattr(getattr(ctx, "request_context", None), "request", None)
+    headers = getattr(request, "headers", {}) or {}
+    authorization = headers.get("authorization", "")
+    token = authorization.removeprefix("Bearer ").strip() or None
+    return access_context(
+        auth_token=token,
+        api_key=headers.get("x-api-key"),
+        user_id=headers.get("x-user-id", "mcp-user"),
+        role=headers.get("x-user-role", "analyst"),
+    )
 
 
 def _summary(result: dict[str, Any], access: AccessContext) -> dict[str, Any]:
@@ -92,6 +108,8 @@ def search_evidence(
         runner=tool_runner,
         node_name="mcp_gateway",
         write_scopes=["mcp.audit"],
+        read_scopes=["company.metadata"],
+        network_policy="none",
     ))
 
 
@@ -104,6 +122,7 @@ def submit_analysis(
     allow_agent_extra_loop: bool | None,
     supervisor_goal: str | None,
     access: AccessContext,
+    job_backend: AnalysisJobBackend = jobs,
 ) -> dict[str, Any]:
     def runner() -> dict[str, Any]:
         result = run_demo(
@@ -119,7 +138,9 @@ def submit_analysis(
         return _summary(result, access)
 
     def enqueue(_: dict[str, Any]) -> dict[str, Any]:
-        return {"status": "queued", "analysis_id": jobs.submit(runner)}
+        return {"status": "queued", "analysis_id": job_backend.submit(
+            runner, owner_user_id=access.user_id, company_id=company_id, project_id=project_id
+        )}
 
     return _runtime_payload(call_agent_tool(
         agent_id="mcp_gateway_agent",
@@ -128,6 +149,8 @@ def submit_analysis(
         runner=enqueue,
         node_name="mcp_gateway",
         write_scopes=["mcp.job", "mcp.audit"],
+        read_scopes=["project.metadata", "company.metadata"],
+        network_policy="delegated_only",
     ))
 
 
@@ -165,18 +188,31 @@ def bootstrap_company(
         runner=tool_runner,
         node_name="mcp_gateway",
         write_scopes=["mcp.audit"],
+        read_scopes=["company.metadata"],
+        network_policy="delegated_only",
     ))
 
 
-def analysis_status(analysis_id: str) -> dict[str, Any]:
-    snapshot = jobs.get(analysis_id)
+def _assert_job_access(snapshot: dict[str, Any], access: AccessContext) -> None:
+    if access.role == "admin" or snapshot["owner_user_id"] == access.user_id:
+        return
+    raise PermissionError("You do not have access to this analysis job.")
+
+
+def analysis_status(
+    analysis_id: str, *, access: AccessContext, job_backend: AnalysisJobBackend = jobs
+) -> dict[str, Any]:
+    snapshot = job_backend.get(analysis_id)
     if not snapshot:
         raise KeyError(f"Unknown analysis_id: {analysis_id}")
+    _assert_job_access(snapshot, access)
     return snapshot
 
 
-def report_resource(analysis_id: str) -> str:
-    snapshot = analysis_status(analysis_id)
+def report_resource(
+    analysis_id: str, *, access: AccessContext, job_backend: AnalysisJobBackend = jobs
+) -> str:
+    snapshot = analysis_status(analysis_id, access=access, job_backend=job_backend)
     if snapshot["status"] not in {"completed", "human_review"} or not snapshot["result"]:
         return json.dumps({"analysis_id": analysis_id, "status": snapshot["status"]}, ensure_ascii=False)
     result = snapshot["result"]
@@ -210,6 +246,10 @@ def apply_review(*, priority_ranking: dict[str, Any], human_review: dict[str, An
         runner=tool_runner,
         node_name="mcp_gateway",
         write_scopes=["mcp.audit"],
+        read_scopes=["priority_ranking"],
+        network_policy="none",
+        approval_requirements=["business_operation"],
+        approval_context={"business_operation": access.role in {"manager", "admin"}},
     ))
 
 
@@ -259,6 +299,8 @@ def ingest_text(
             runner=tool_runner,
             node_name="mcp_gateway",
             write_scopes=["mcp.audit"],
+            read_scopes=["company.metadata", "documents.metadata"],
+            network_policy="none",
         ))
     finally:
         if temp_path:

@@ -192,6 +192,10 @@ class Settings(BaseSettings):
     mcp_auth_token: str | None = Field(default=None, alias="MCP_AUTH_TOKEN")
     mcp_max_jobs: int = Field(default=32, alias="MCP_MAX_JOBS")
     mcp_job_ttl_seconds: int = Field(default=3600, alias="MCP_JOB_TTL_SECONDS")
+    mcp_job_backend: str = Field(default="memory", alias="MCP_JOB_BACKEND")
+    mcp_allowed_origins: str = Field(default="", alias="MCP_ALLOWED_ORIGINS")
+    mcp_rate_limit_per_minute: int = Field(default=120, alias="MCP_RATE_LIMIT_PER_MINUTE")
+    mcp_max_request_bytes: int = Field(default=1_048_576, alias="MCP_MAX_REQUEST_BYTES")
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -353,31 +353,72 @@ LangGraph node를 직접 복제하지 않고 기존 service와 `call_agent_tool(
 
 ```bash
 # 로컬 MCP client (Claude Desktop/Cursor 등)
+# MCP_ENABLED=true인 환경에서 실행
 python -m app.mcp.server --transport stdio
 
-# 내부/원격 client
+# 내부/원격 client (기본 endpoint: http://127.0.0.1:8765/mcp)
 python -m app.mcp.server --transport streamable-http
 
 # ASGI process manager로 실행할 때
 uvicorn app.mcp.http:app --host 127.0.0.1 --port 8765
 ```
 
-주요 tool은 `search_evidence`, `run_delivery_analysis`,
+주요 MCP tool은 `search_evidence_tool`, `run_delivery_analysis`,
 `get_analysis_status`, `bootstrap_company`, `ingest_document_text`,
-`apply_human_review`이다. 분석 workflow는 장시간 실행을 고려해 즉시
-`analysis_id`를 반환하고 `get_analysis_status`로 상태를 확인한다. 완료된
-보고서는 `analysis://{analysis_id}/report` resource로 읽는다.
+`apply_human_review`, `get_report_tool`이다. 분석 workflow는 장시간 실행을
+고려해 즉시 `analysis_id`를 반환하고 `get_analysis_status`로 상태를 확인한다.
+프로세스 중단으로 실행 중 작업이 끝나지 않으면 DB backend는 이를
+`recoverable`로 표시해 실패와 미완료 상태를 구분한다. 재시도는 원래 작업 입력을
+다시 구성할 수 있는 별도 worker/queue가 `retry` 계약으로 수행해야 한다.
+상태가 `completed` 또는 `human_review`가 되면
+`analysis://{analysis_id}/report` resource 또는 `get_report_tool`로 보고서
+요약을 읽는다. 작업 큐는 현재 프로세스 내부의 bounded in-memory registry이므로
+프로세스 재시작 시 작업 상태가 사라진다. 운영 환경에서는
+`MCP_JOB_BACKEND=database`로 durable job metadata 저장을 활성화할 수 있다.
+이 모드는 상태/결과를 DB에 보존하지만, 실행 중 프로세스가 중단된 callable을
+자동 재개하지는 않으므로 별도 worker/queue 도입이 필요하다.
+각 job에는 요청자 user id와 company/project 범위가 함께 저장되며, status/report
+조회는 소유자 또는 admin만 허용한다. 따라서 `analysis_id`를 알고 있는 것만으로
+다른 사용자의 분석 결과를 읽을 수 없다.
 
-운영 환경에서는 `MCP_AUTH_TOKEN`을 설정하고 MCP 요청의 `api_key` 인자로
-전달한다. JWT를 사용하는 경우 기존 `APP_JWT_SECRET`과 `/auth/login`에서
-발급된 bearer token을 `auth_token`으로 전달한다. `role`은 문서 보안 등급과
-Human Review 권한에 적용된다.
+인증은 기존 HTTP API와 같은 JWT/API key 규칙을 사용한다. 개발/내부 환경에서는
+`MCP_AUTH_TOKEN`을 설정하고 요청의 `api_key`로 전달할 수 있다. JWT를 사용하는
+경우 기존 `APP_JWT_SECRET`과 `/auth/login`에서 발급된 token을 `Authorization:
+Bearer ...` header로 전달한다. MCP tool schema에는 인증 credential이나 사용자
+role 필드를 노출하지 않으며, Streamable HTTP에서는 `Authorization`, `X-API-Key`,
+`X-User-Id`, `X-User-Role` header를 transport context에서 읽는다. stdio client를
+외부에 공개할 때는 별도 gateway에서 동일한 인증/사용자 context를 주입해야 한다.
+`DART_API_KEY`도 tool argument로 받지 않고 서버 설정에서만 읽는다.
+`role`은 문서 보안 등급과 Human Review 권한에 적용된다.
 
 각 Expert Agent에는 `read_scopes`, `write_scopes`, `network_policy`,
 `approval_policy`가 선언되어 있다. `call_agent_tool()`은 tool contract뿐
-아니라 `call_agent_tool(..., write_scopes=[...])`로 전달된 권한 요구사항도 검사하므로 다른 Agent의 결과 field나
-MCP job 영역을 임의로 변경할 수 없다. 새로운 write tool을 추가할 때는
-registry의 해당 Agent `write_scopes`와 payload scope를 함께 갱신해야 한다.
+아니라 `call_agent_tool(..., write_scopes=[...])`로 전달된 권한 요구사항도
+검사하므로 다른 Agent의 결과 field나 MCP job 영역을 임의로 변경할 수 없다.
+write scope는 payload의 magic key가 아니라 runtime 호출의 명시적 인자다. 새로운
+write tool을 추가할 때는 registry의 해당 Agent `write_scopes`와 runtime 호출의
+`write_scopes`를 함께 갱신하고, 권한 허용/거부 테스트를 추가해야 한다.
+`call_agent_tool()`은 명시된 `read_scopes`, `network_policy`,
+`approval_requirements`를 Agent registry와 대조한다. `human_required` 또는
+`human_review_required` 정책은 `approved_by`, `approved_at`, `decision_id`를
+포함한 구조화된 approval record 없이는 실행되지 않는다. 다만 이
+guard는 tool이 요청한 정책 계약을 검증하는 경계이며, 모든 외부 network/database
+동작을 자동으로 sandboxing하는 기능은 아니므로 실제 network client와 command
+tool도 별도의 adapter/sandbox를 사용해야 한다.
+공식 URL 수집 adapter는 HTTPS만 허용하고 DNS 해석 결과가 private/link-local
+주소인 경우 요청 전에 차단해 SSRF 위험을 줄인다.
+
+Streamable HTTP transport에는 허용 origin, 요청 body 크기, client별 분당
+호출 수 제한, `X-Request-ID` 응답 header, 구조화 request log가 적용된다.
+기본값은 origin 제한 없음, 분당 120회, body 1 MiB이며 운영 환경에서는
+`MCP_ALLOWED_ORIGINS`, `MCP_RATE_LIMIT_PER_MINUTE`, `MCP_MAX_REQUEST_BYTES`를
+명시적으로 설정한다.
+
+품질 평가는 두 계층으로 분리한다. CI의 regression/holdout gate는 API key 없이
+재현 가능한 deterministic evaluator 정책 회귀를 검증하고, 실제 LLM/API key 기반
+online 평가는 별도 환경에서 실행해야 한다. 따라서 CI baseline floor 통과를
+실제 LLM 품질 향상으로 해석하지 않으며, online 평가 결과에는 모델/endpoint,
+dataset version, latency와 비용을 함께 기록해야 한다.
 
 ### 9.1 Install
 
@@ -437,6 +478,7 @@ python -m app.db.init_pgvector
 python -m app.db.create_tables
 python -m app.db.migrate_discovery_metadata
 python -m app.db.migrate_operational_hardening
+python -m app.db.migrate_mcp_jobs
 ```
 
 ### 9.4 Bootstrap company

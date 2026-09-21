@@ -30,6 +30,23 @@ class AppUser(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class MCPAnalysisJob(Base):
+    """Durable MCP analysis metadata; execution remains owned by the worker process."""
+
+    __tablename__ = "mcp_analysis_jobs"
+
+    analysis_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_user_id: Mapped[str] = mapped_column(String(100), nullable=False, default="mcp-user")
+    company_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    project_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    job_type: Mapped[str] = mapped_column(String(80), nullable=False, default="delivery_analysis")
+
+
 class Company(Base):
     """분석 대상 회사의 기본 식별 정보와 설명을 저장하는 table model이다."""
     __tablename__ = "companies"

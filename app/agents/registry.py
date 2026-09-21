@@ -380,7 +380,13 @@ AGENT_POLICIES: dict[str, dict[str, Any]] = {
         "approval_policy": {"final_report": "human_review_required"},
     },
     "mcp_gateway_agent": {
-        "read_scopes": ["user_input", "company.metadata", "project.metadata"],
+        "read_scopes": [
+            "user_input",
+            "company.metadata",
+            "project.metadata",
+            "documents.metadata",
+            "priority_ranking",
+        ],
         "write_scopes": ["mcp.job", "mcp.audit"],
         "network_policy": "delegated_only",
         "approval_policy": {"business_operation": "delegated_to_expert_agent"},
